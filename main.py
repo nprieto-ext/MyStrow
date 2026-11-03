@@ -243,8 +243,11 @@ def _install_freeze_watchdog(app, delai_s=5):
     _battement()
 
 
-_TOOLTIP_SS = ("color:#e8e8e8; background-color:#1e1e1e; border:1px solid #3a3a3a;"
-               " border-radius:4px; padding:4px 7px;")
+_TOOLTIP_COLORS = "color:#e8e8e8; background-color:#1e1e1e;"
+# Marge et bordure : dans la feuille d'application seulement, pour que la bulle
+# ait sa taille définitive dès son premier affichage.
+_TOOLTIP_APP_SS = ("QToolTip { " + _TOOLTIP_COLORS + " border:1px solid #3a3a3a;"
+                   " border-radius:4px; padding:1px 4px; }")
 
 
 def _install_tooltip_style(app):
@@ -253,39 +256,47 @@ def _install_tooltip_style(app):
     Une bulle hérite des règles du widget survolé ET de ses parents : un
     « background:#111 » sans `color` la passait en noir sur noir (texte de la
     palette Fusion), un « color:#444 » de conteneur en gris sur jaune… ~160
-    feuilles de style dans l'app. Le style posé sur la bulle elle-même passe
-    avant tout héritage. Il faut le poser au Show : au Polish, Qt le défait.
-    Sans sélecteur : « QLabel{…} » ne prend pas sur le QTipLabel.
+    feuilles de style dans l'app. La feuille d'application « QToolTip{…} » et
+    la palette donnent le bon rendu dès l'apparition dans le cas courant, mais
+    une règle héritée d'un parent l'emporte sur elles : seules les couleurs
+    posées sur la bulle elle-même passent avant tout héritage.
+
+    PAS de filtre d'événements sur QApplication : il faisait passer chaque
+    événement de l'app par Python, qui emballait des objets C++ en cours de
+    construction (requêtes de la vue 3D) → plantage au lancement sur tous les
+    Mac ARM en 3.2.10. Un minuteur regarde donc si une bulle est affichée ;
+    QToolTip.isVisible() ne touche à aucun objet, le coût est nul au repos.
     """
-    from PySide6.QtCore import QObject, QEvent
-
-    class _TooltipStyle(QObject):
-        def eventFilter(self, obj, ev):
-            if (ev.type() == QEvent.Show
-                    and obj.metaObject().className() == "QTipLabel"
-                    and obj.styleSheet() != _TOOLTIP_SS):
-                obj.setStyleSheet(_TOOLTIP_SS)
-                # Qt a déjà dimensionné la bulle sur l'ancien style : sans
-                # recalcul, marge et bordure rognaient le texte haut et bas.
-                obj.adjustSize()
-            return False
-
-    app._tooltip_style = _TooltipStyle(app)
-    app.installEventFilter(app._tooltip_style)
-
-    # Fondu d'apparition (Windows) : Qt anime une CAPTURE de la bulle prise
-    # avant son Show, donc avant le style ci-dessus — elle apparaissait jaune
-    # (palette Fusion) puis virait au noir, ou restait jaune selon le moment.
-    from PySide6.QtCore import Qt
-    app.setEffectEnabled(Qt.UI_FadeTooltip, False)
-    app.setEffectEnabled(Qt.UI_AnimateTooltip, False)
-    # Et si une bulle échappe malgré tout au filtre, sa palette est déjà sombre
+    from PySide6.QtCore import QTimer, Qt
     from PySide6.QtWidgets import QToolTip
     from PySide6.QtGui import QPalette, QColor
+
+    app.setStyleSheet(_TOOLTIP_APP_SS)
     _tp = QToolTip.palette()
     _tp.setColor(QPalette.ToolTipBase, QColor("#1e1e1e"))
     _tp.setColor(QPalette.ToolTipText, QColor("#e8e8e8"))
     QToolTip.setPalette(_tp)
+
+    def _restyle():
+        if not QToolTip.isVisible():
+            return
+        for w in app.topLevelWidgets():
+            if (w.isVisible() and w.metaObject().className() == "QTipLabel"
+                    and w.styleSheet() != _TOOLTIP_COLORS):
+                # Couleurs seules, sans adjustSize : la taille ne bouge pas,
+                # la bulle ne clignote pas (au pire elle change de couleur).
+                w.setStyleSheet(_TOOLTIP_COLORS)
+
+    app._tooltip_timer = QTimer(app)
+    app._tooltip_timer.setInterval(50)
+    app._tooltip_timer.timeout.connect(_restyle)
+    app._tooltip_timer.start()
+
+    # Fondu d'apparition (Windows) : Qt anime une CAPTURE de la bulle prise
+    # avant le style ci-dessus — elle apparaissait jaune (palette Fusion) puis
+    # virait au noir, ou restait jaune selon le moment.
+    app.setEffectEnabled(Qt.UI_FadeTooltip, False)
+    app.setEffectEnabled(Qt.UI_AnimateTooltip, False)
 
 
 def _mac_fatal(title: str, msg: str):
@@ -471,9 +482,9 @@ def main():
     app.aboutToQuit.connect(restore_timer_resolution)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
-    # Pas sur Mac : 3.2.10 y plantait au premier survol (SIGSEGV natif dans
-    # la boucle Qt, clients Julien et Mathieu du 30/10/2026) — restyler et
-    # redimensionner la bulle pendant son Show casse la fenêtre native.
+    # Pas sur Mac tant que la version au minuteur n'y a pas été essayée : la
+    # 3.2.10 (filtre sur QApplication) y plantait au lancement, clients Julien
+    # et Mathieu du 30/10/2026.
     if sys.platform != "darwin":
         _install_tooltip_style(app)
     icon_path = resource_path("mystrow.ico")

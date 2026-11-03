@@ -1990,12 +1990,12 @@ class GdtfUploadDialog(QDialog):
         self.btn_remove.setEnabled(False)
         self.log.clear()
 
-    _FIXTURE_EXTS = {".mystrow", ".xml"}
+    _FIXTURE_EXTS = {".mystrow", ".xml", ".qxf"}
 
     def _on_pick_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Choisir des fichiers fixture", "",
-            "Fixtures (*.xml *.mystrow);;Tous les fichiers (*)"
+            "Fixtures (*.xml *.qxf *.mystrow);;Tous les fichiers (*)"
         )
         if paths:
             self._process_paths(paths)

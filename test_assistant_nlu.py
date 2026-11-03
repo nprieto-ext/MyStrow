@@ -155,19 +155,29 @@ def test_traduction_modele():
     tr = lambda acts, text="x": to_nlu(acts, text, EFFECTS)
     a = tr([{"do": "light", "who": "all", "colors": ["red", "purple"], "level": 100}])[0]
     assert a["do"] == "pattern" and [s["color"] for s in a["slots"]] == ["red", "purple"], a
-    a = tr([{"do": "light", "who": "all", "except_numbers": [3], "level": 0}])[0]
+    a = tr([{"do": "light", "who": "all", "except_numbers": [3], "level": 0}], "éteins tout sauf le 3")[0]
     assert a == {"do": "level", "target": {"all": True, "except": {"nums": [3]}}, "level": 0}, a
-    a = tr([{"do": "light", "who": "front", "change": "down", "fade_seconds": 4}])[0]
+    a = tr([{"do": "light", "who": "front", "change": "down", "fade_seconds": 4}], "baisse la face progressivement")[0]
     assert a == {"do": "level_rel", "target": {"group": "A"}, "delta": -20, "fade": 4.0}, a
     assert tr([{"do": "fader", "faders": [1, 2], "level": 100, "fade_seconds": 3}])[0]["fade"] == 3.0
     assert tr([{"do": "memory", "memory": "3,1"}])[0] == {"do": "memory", "id": "3.1"}
     assert tr([{"do": "memory", "memory": "9.9"}]) == [{"do": "unknown", "text": "x"}]     # hors grille
-    assert tr([{"do": "playback", "playback": "previous"}])[0] == {"do": "playback", "what": "prev"}
+    assert tr([{"do": "playback", "playback": "previous"}], "chanson précédente")[0] == {"do": "playback", "what": "prev"}
     assert tr([{"do": "open", "window": "controller"}])[0] == {"do": "open", "window": "akai"}
     acts = tr([{"do": "question", "topic": "tablet"}])
     assert [x["do"] for x in acts] == ["answer", "open"], acts
     assert tr([{"do": "question", "topic": "other"}], "c'est quoi un gobo")[0]["topic"] == "generic"
     assert tr([{"do": "effect", "style": "fast"}], "effet rapide")[0]["speed"] == 85
+    # Ancrage : une action sans mot qui la demande tombe (bavardage dicté).
+    assert tr([{"do": "light", "who": "all", "level": 100}], "commence à le fondateur de Baistro") == [{"do": "chat"}]
+    assert tr([{"do": "light", "who": "all", "colors": ["red"]}, {"do": "playback", "playback": "next"}],
+              "mets-les en rouge et au rang")[1:] == []
+    assert tr([{"do": "gradient", "colors": ["red", "orange", "yellow"]}], "fais moi un dégradé de couleur rouge")[0][
+        "colors"] == ["magenta", "red", "orange"]
+    a = tr([{"do": "light", "who": "all", "colors": ["red", "blue"]}], "je voudrais un dégradé jusqu'au bout")[0]
+    assert a["do"] == "gradient" and a["colors"] == ["red", "blue"], a
+    assert tr([{"do": "gobo", "gobo": "next"}], "pourquoi ma lyre n'envoie pas de gobo ?") == [{"do": "diagnose"}]
+    assert tr([{"do": "question", "topic": "other"}], "je peux connecter une manette de playstation ?")[-1] ==         {"do": "open", "window": "gamepad"}
 
 
 def test_mouvements_themes_patch_rec():

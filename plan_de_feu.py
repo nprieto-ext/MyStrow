@@ -34,6 +34,8 @@ from PySide6.QtGui import (
 
 
 import math as _math_eff
+import pixel_map as _pixel_map
+import pixel_map_panel as _pixel_map_panel
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Motifs de gobo de la tache au sol
@@ -4822,6 +4824,29 @@ class PlanDeFeu(QFrame):
             self.btn_target.setStyleSheet(_TARGET_SS)
             self.btn_target.toggled.connect(self._on_target_toggled)
             toolbar.addWidget(self.btn_target)
+            toolbar.addSpacing(2)
+
+            # Pixel map : dégradé spatial sur la sélection. Comme 🎯, il
+            # n'apparaît que lorsqu'il a de quoi agir (≥ 2 projecteurs couleur
+            # sélectionnés) — cf. `refresh_pixmap_btn`.
+            _PXM_SS = (
+                "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #3a3a3a;"
+                " border-radius:4px; font-size:13px; }"
+                "QPushButton:hover { background:#2a2a2a; color:#fff; border-color:#00d4ff; }"
+                "QPushButton:checked { background:#002a3a; color:#00d4ff;"
+                " border:1px solid #00d4ff; }"
+            )
+            self.btn_pixmap = QPushButton("🎨")
+            self.btn_pixmap.setCheckable(True)
+            self.btn_pixmap.setFixedSize(26, 26)
+            self.btn_pixmap.setToolTip(tr("pxm_menu_tip"))
+            self.btn_pixmap.setStyleSheet(_PXM_SS)
+            self.btn_pixmap.setVisible(False)
+            # Checkable pour l'allumer quand un dégradé tourne sur la
+            # sélection, mais un clic ne fait qu'OUVRIR le panneau : l'état
+            # affiché est recalculé à chaque tick.
+            self.btn_pixmap.clicked.connect(lambda _=False: self.open_pixel_map())
+            toolbar.addWidget(self.btn_pixmap)
             toolbar.addSpacing(4)
 
             toolbar.addStretch()
@@ -4911,7 +4936,8 @@ class PlanDeFeu(QFrame):
             # posait un rectangle gris nu de 100x30 dans le coin du plan.
             # Les cacher ne suffit donc pas — il faut qu'ils ne puissent rien
             # dessiner même affichés.
-            for _nom in ("dmx_toggle_btn", "btn_3d", "btn_target", "btn_sym"):
+            for _nom in ("dmx_toggle_btn", "btn_3d", "btn_target", "btn_sym",
+                         "btn_pixmap"):
                 _b = QPushButton(self)
                 _b.setFixedSize(0, 0)
                 _b.setVisible(False)
@@ -5028,16 +5054,122 @@ class PlanDeFeu(QFrame):
         self.canvas.update()
         return True
 
-    def refresh_target_btn(self):
-        """Affiche/cache le bouton 🎯 selon la présence de Moving Heads/Lyres dans le patch."""
-        has_mh = any(getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')
-                     for p in self.projectors)
-        self.btn_target.setVisible(has_mh)
-        if not has_mh and self.btn_target.isChecked():
-            self.btn_target.blockSignals(True)
-            self.btn_target.setChecked(False)
-            self.btn_target.blockSignals(False)
-            self.canvas.set_target_mode(False)
+    _AIM_TYPES = ('Moving Head', 'Lyre', 'Laser')
+
+    def selected_projectors(self):
+        """Projecteurs sélectionnés, dans l'ordre du plan (un seul passage)."""
+        g_cnt, out = {}, []
+        sel = self.selected_lamps
+        for p in self.projectors:
+            g = p.group
+            li = g_cnt.get(g, 0)
+            g_cnt[g] = li + 1
+            if (g, li) in sel:
+                out.append(p)
+        return out
+
+    def refresh_target_btn(self, selected=None):
+        """🎯 n'apparaît que si la sélection contient au moins une lyre.
+
+        Il reste affiché tant que le ciblage est armé : c'est lui qui permet
+        de le désarmer, même si la sélection a bougé entre-temps.
+        """
+        if selected is None:
+            selected = self.selected_projectors()
+        has_mh = any(getattr(p, 'fixture_type', '') in self._AIM_TYPES
+                     for p in selected)
+        show = has_mh or self.btn_target.isChecked()
+        # isHidden() et pas isVisible() : ce dernier est faux dès qu'un parent
+        # est masqué, on réafficherait le bouton en boucle.
+        if self.btn_target.isHidden() == show:
+            self.btn_target.setVisible(show)
+
+    def _pixel_map_selection(self, selected=None):
+        """Sélection étendue pour un dégradé : une barre/matrice touchée compte
+        pour TOUS ses pixels (un dégradé sur un pixel n'a pas de sens)."""
+        if selected is None:
+            selected = self.selected_projectors()
+        out, seen = [], set()
+        for p in selected:
+            grp = [p]
+            mid = getattr(p, 'matrix_id', None)
+            if mid is not None:
+                grp = [q for q in self.projectors
+                       if getattr(q, 'matrix_id', None) == mid]
+            for q in grp:
+                if id(q) not in seen:
+                    seen.add(id(q))
+                    out.append(q)
+        return out
+
+    def refresh_pixmap_btn(self, selected=None):
+        """🎨 visible dès 2 projecteurs couleur sélectionnés ; allumé si un
+        dégradé tourne sur la sélection."""
+        projs = self.gradient_targets(self._pixel_map_selection(selected))
+        show = len(projs) >= 2
+        if self.btn_pixmap.isHidden() == show:
+            self.btn_pixmap.setVisible(show)
+        on = show and any((self._led_effects.get(id(p)) or {}).get("type") == "gradient"
+                          for p in projs)
+        if self.btn_pixmap.isChecked() != on:
+            self.btn_pixmap.blockSignals(True)
+            self.btn_pixmap.setChecked(on)
+            self.btn_pixmap.blockSignals(False)
+
+    def open_pixel_map(self, projectors=None):
+        """Ouvre le panneau Pixel map sur la sélection (ou sur `projectors`)."""
+        projs = self._pixel_map_selection(projectors)
+        if len(self.gradient_targets(projs)) < 2:
+            self.refresh_pixmap_btn()
+            return None
+        old = getattr(self, '_pixel_map_dlg', None)
+        if old is not None:
+            try:
+                old.close()
+            except RuntimeError:
+                pass
+        dlg = _pixel_map_panel.PixelMapDialog(self, projs, parent=self.window())
+        self._pixel_map_dlg = dlg
+        dlg.show()
+        dlg.adjustSize()
+        self._place_pixel_map(dlg)
+        self.refresh_pixmap_btn()
+        return dlg
+
+    def _place_pixel_map(self, dlg):
+        """Ouvre le panneau AU-DESSUS du séquenceur : le plan 2D reste visible
+        à côté, c'est lui qui montre le rendu en direct. Sans séquenceur
+        affiché, sous le bouton 🎨. Toujours ramené dans l'écran."""
+        seq = getattr(self.main_window, 'seq', None) if self.main_window else None
+        geo = None
+        try:
+            if seq is not None and seq.isVisible() and seq.width() > 50:
+                tl = seq.mapToGlobal(QPoint(0, 0))
+                geo = QRect(tl, seq.size())
+        except RuntimeError:
+            geo = None
+        if geo is not None:
+            x = geo.center().x() - dlg.width() // 2
+            y = geo.top() + max(0, (geo.height() - dlg.height()) // 2)
+        elif not self.btn_pixmap.isHidden() and self.btn_pixmap.width() > 0:
+            p = self.btn_pixmap.mapToGlobal(
+                self.btn_pixmap.rect().bottomLeft() + QPoint(-4, 4))
+            x, y = p.x(), p.y()
+        else:
+            return
+        scr = QApplication.screenAt(QPoint(x + dlg.width() // 2, y + 20))             if 'QApplication' in globals() else None
+        if scr is None:
+            from PySide6.QtGui import QGuiApplication
+            scr = QGuiApplication.screenAt(QPoint(x, y)) or QGuiApplication.primaryScreen()
+        if scr is not None:
+            a = scr.availableGeometry()
+            if hasattr(dlg, 'fit_height'):
+                dlg.fit_height(a.height())
+                if geo is not None:
+                    y = geo.top() + max(0, (geo.height() - dlg.height()) // 2)
+            x = max(a.left(), min(x, a.right() - dlg.width()))
+            y = max(a.top(), min(y, a.bottom() - dlg.height()))
+        dlg.move(x, y)
 
     _GROUP_LETTERS = {
         "face":     "A",
@@ -5058,6 +5190,14 @@ class PlanDeFeu(QFrame):
         if not active:
             self.canvas.set_target_mode(False)
             self._log("Ciblage désactivé", "info")
+            return
+
+        # Le bouton n'apparaît qu'avec une lyre sélectionnée : on vise donc
+        # CES lyres-là, sans repasser par le choix des groupes.
+        _sel_mh = [p for p in self.selected_projectors()
+                   if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')]
+        if _sel_mh:
+            self._activate_target_for_projectors(_sel_mh)
             return
 
         mh_groups = {}
@@ -5136,6 +5276,21 @@ class PlanDeFeu(QFrame):
         self._activate_target_for_groups(mh_groups, mh_groups)
         dlg.show()
 
+    def _activate_target_for_projectors(self, projs):
+        """Ciblage limité à ces lyres : la sélection ne garde qu'elles."""
+        ids = {id(p) for p in projs}
+        self.selected_lamps.clear()
+        g_cnt = {}
+        for proj in self.projectors:
+            li = g_cnt.get(proj.group, 0)
+            g_cnt[proj.group] = li + 1
+            if id(proj) in ids:
+                self.selected_lamps.add((proj.group, li))
+        n = len(projs)
+        self._log(f"Ciblage activé — {n} lyre{'s' if n > 1 else ''}", "info")
+        self.canvas.set_target_mode(True)
+        self.canvas.update()
+
     def _activate_target_for_groups(self, mh_groups, selected_groups):
         self.selected_lamps.clear()
         g_cnt = {}
@@ -5163,6 +5318,9 @@ class PlanDeFeu(QFrame):
         self.refresh()
         self._tick_effects()
         self._refresh_sym_btn()
+        _sel = self.selected_projectors()
+        self.refresh_target_btn(_sel)
+        self.refresh_pixmap_btn(_sel)
 
     def _refresh_sym_btn(self):
         """Affiche/cache btn_sym selon le nombre de lyres sélectionnées."""
@@ -5289,6 +5447,14 @@ class PlanDeFeu(QFrame):
                 factor = (_math_eff.sin(_ph) + 1) / 2
                 gb = int(factor * 255)
                 bc = QColor(255, gb, gb)
+                lvl = eff["saved_level"]
+                proj.base_color = bc
+            elif eff["type"] == "gradient":
+                # Pixel map : couleur lue sur le dégradé à la POSITION de la
+                # fixture sur le plan, décalée du défilement (en tours).
+                bc = QColor(*_pixel_map.output_for(
+                    eff["grad_spec"], eff.get("grad_s", 0.0),
+                    eff["phase"] / (2 * _math_eff.pi)))
                 lvl = eff["saved_level"]
                 proj.base_color = bc
             else:  # "flash"
@@ -5524,6 +5690,86 @@ class PlanDeFeu(QFrame):
                     rows, cols, direction)
             # Négatif : le motif progresse dans le sens de la direction
             led["phase_offset"] = -scalar * 2 * _math_eff.pi * cycles
+
+    # ── Pixel map (dégradé spatial) ─────────────────────────────────────────
+    @staticmethod
+    def gradient_targets(projectors):
+        """Fixtures pilotables par un dégradé : les pixels plutôt que les
+        masters de barre/matrice, sans machines à fumée."""
+        out = []
+        for p in projectors:
+            if getattr(p, 'matrix_role', None) == 'master':
+                continue
+            if fixture_is_fx_machine(p):
+                continue
+            out.append(p)
+        return out
+
+    def _gradient_scalars(self, projectors, spec):
+        return _pixel_map.spatial_positions(
+            [(getattr(p, 'canvas_x', None), getattr(p, 'canvas_y', None))
+             for p in projectors], spec.shape, spec.angle)
+
+    def start_gradient_effect(self, projectors, spec):
+        """Lance un dégradé sur ces fixtures. Chacune lit sa couleur à sa
+        position sur le plan : c'est le « pixel map »."""
+        projs = self.gradient_targets(projectors)
+        if not projs:
+            return []
+        snap = self.snapshot_led_state(projs)
+        # Une fixture déjà sous effet garde son VRAI état d'origine : relancer
+        # le dégradé ne doit pas mémoriser les couleurs du dégradé comme état
+        # de retour, sinon « Arrêter » les laisserait figées.
+        for p in projs:
+            old = self._led_effects.get(id(p))
+            if old:
+                snap[id(p)] = (old.get("restore_level", p.level),
+                               QColor(old.get("restore_color") or old["saved_color"]))
+        for p in projs:
+            # Prise en main de la couleur : sans ce drapeau une mémoire levée
+            # réimposerait sa couleur en HTP à chaque image.
+            p._manual_color = True
+            if hasattr(p, 'release_color_overrides'):
+                p.release_color_overrides()
+            if p.level < 5:
+                p.level = 100
+        self.start_led_effect(projs, "gradient", float(spec.speed))
+        self.set_restore_state(projs, snap)
+        for p, s in zip(projs, self._gradient_scalars(projs, spec)):
+            eff = self._led_effects.get(id(p))
+            if eff:
+                eff["grad_spec"] = spec
+                eff["grad_s"] = s
+                eff["effect_key"] = "pixel_map"
+        self._tick_effects()
+        return projs
+
+    def update_gradient_effect(self, projectors, spec):
+        """Applique de nouveaux réglages SANS remettre la phase à zéro : le
+        dégradé ne saute pas pendant qu'on tourne un curseur."""
+        projs = [p for p in self.gradient_targets(projectors)
+                 if (self._led_effects.get(id(p)) or {}).get("type") == "gradient"]
+        if not projs:
+            return self.start_gradient_effect(projectors, spec)
+        # Phase commune : celle de la première fixture, recopiée partout pour
+        # rester synchrones même si certaines ont été relancées entre-temps.
+        ph = self._led_effects[id(projs[0])]["phase"]
+        for p, s in zip(projs, self._gradient_scalars(projs, spec)):
+            eff = self._led_effects[id(p)]
+            eff["grad_spec"] = spec
+            eff["grad_s"] = s
+            eff["speed"] = eff["base_speed"] = float(spec.speed)
+            eff["phase"] = ph
+        self._tick_effects()
+        return projs
+
+    def stop_gradient_effect(self, projectors):
+        projs = [p for p in self.gradient_targets(projectors)
+                 if (self._led_effects.get(id(p)) or {}).get("type") == "gradient"]
+        self.stop_led_effect(projs)
+        if self.main_window and getattr(self.main_window, 'dmx', None):
+            self.main_window.dmx.update_from_projectors(self.projectors)
+        self.canvas.update()
 
     def set_htp_overrides(self, overrides):
         if overrides != self._htp_overrides:

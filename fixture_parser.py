@@ -104,6 +104,32 @@ _QLC_GROUP_MAP = {
     "Prism": "Prism", "Beam": "Zoom", "Iris": "Iris", "Focus": "Focus",
     "Effect": "Mode", "Maintenance": "Reset", "Nothing": "Mode",
 }
+# QLC+ ≥ 4.12 : l'éditeur écrit souvent <Channel Preset="IntensityRed"/> SANS
+# <Group> ni <Colour>. Sans cette table, tous ces canaux tombaient en « Mode ».
+# Canaux *Fine hors Pan/Tilt → « Mode » : MyStrow n'a pas de type fin pour eux,
+# et les traiter comme le canal principal enverrait la valeur deux fois.
+_QLC_PRESET_MAP = {
+    "IntensityMasterDimmer": "Dim", "IntensityDimmer": "Dim",
+    "IntensityRed": "R", "IntensityGreen": "G", "IntensityBlue": "B",
+    "IntensityWhite": "W", "IntensityAmber": "Ambre", "IntensityUV": "UV",
+    "IntensityIndigo": "UV", "IntensityLime": "Lime",
+    "IntensityCyan": "C", "IntensityMagenta": "M", "IntensityYellow": "Y",
+    "PositionPan": "Pan", "PositionPanFine": "PanFine",
+    "PositionTilt": "Tilt", "PositionTiltFine": "TiltFine",
+    "PositionXAxis": "Pan", "PositionYAxis": "Tilt",
+    "SpeedPanSlowFast": "Speed", "SpeedPanFastSlow": "Speed",
+    "SpeedTiltSlowFast": "Speed", "SpeedTiltFastSlow": "Speed",
+    "SpeedPanTiltSlowFast": "Speed", "SpeedPanTiltFastSlow": "Speed",
+    "ColorWheel": "ColorWheel", "ColorMacro": "ColorWheel",
+    "ColorCTOMixer": "CTO", "ColorCTBMixer": "CTB", "ColorCTCMixer": "CTB",
+    "GoboWheel": "Gobo1", "GoboIndex": "Gobo1Rot",
+    "ShutterStrobeSlowFast": "Strobe", "ShutterStrobeFastSlow": "Strobe",
+    "ShutterIrisMinToMax": "Iris", "ShutterIrisMaxToMin": "Iris",
+    "BeamFocusNearFar": "Focus", "BeamFocusFarNear": "Focus",
+    "BeamZoomSmallBig": "Zoom", "BeamZoomBigSmall": "Zoom",
+    "PrismRotationSlowFast": "PrismRot", "PrismRotationFastSlow": "PrismRot",
+    "NoFunction": "Mode",
+}
 
 # ---------------------------------------------------------------------------
 # Mapping GrandMA3 ChannelType/@attribute -> type de canal MyStrow (MA3)
@@ -1292,7 +1318,10 @@ def parse_qlcplus_xml(data: bytes) -> dict:
         group  = (group_el.text.strip()  if group_el  is not None and group_el.text  else "")
         colour = (colour_el.text.strip() if colour_el is not None and colour_el.text else "")
 
-        if group == "Intensity":
+        preset = ch_el.get("Preset") or ""
+        if preset and not group:
+            ch_type = _QLC_PRESET_MAP.get(preset) or "Mode"
+        elif group == "Intensity":
             # <Colour> absent sur les définitions anciennes/faites main : sans
             # repli sur le nom, un canal « White » devenait un second Dimmer.
             ch_type = (_QLC_COLOUR_MAP.get(colour)
@@ -1560,7 +1589,7 @@ def _remonter_labels(fx: dict) -> dict:
 def parse_file(path: str) -> dict:
     """
     Parse automatiquement un fichier fixture selon son extension.
-    Supporte : .xml, .mystrow
+    Supporte : .xml, .xmlp, .qxf (QLC+), .mystrow
     Retourne le dict fixture standardise.
     """
     return _remonter_labels(_parse_file_brut(path))
@@ -1573,7 +1602,7 @@ def _parse_file_brut(path: str) -> dict:
 
     if ext == ".mystrow":
         return parse_mystrow(data)
-    elif ext in (".xml", ".xmlp"):
+    elif ext in (".xml", ".xmlp", ".qxf"):
         if ext == ".xmlp":
             decompressed = _decompress_xmlp(data)
             if decompressed is data:

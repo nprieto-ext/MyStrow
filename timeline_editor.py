@@ -1116,6 +1116,73 @@ class LightTimelineEditor(QDialog):
         new_track.update()
         return new_track
 
+    def _ensure_group_track_named(self, name):
+        """Recrée la piste de GROUPE `name` qu'un bloc sauvegardé vise mais que
+        le patch actuel ne génère plus.
+
+        Cas réel : les groupes ne contenant QUE des machines à effet (fumée,
+        brouillard…) n'ont plus de piste depuis 3.1.92, alors que des shows
+        programmés avant y ont posé leurs blocs. La restitution, elle, les
+        rejoue toujours (`get_track_to_indices` connaît le groupe) : le client
+        voyait la fumée partir sur le plan 2D/3D sans AUCUN bloc à l'écran — et
+        la moindre retouche réécrivait la séquence sans eux, les détruisant.
+
+        La piste est insérée juste AVANT les pistes projecteur de ce groupe
+        (« @Fumee1 »…), sinon en fin : un groupe doit passer avant ses projos,
+        c'est la règle de priorité (cf. `_create_tracks_from_fixtures`).
+        """
+        if not name or name in self.track_map:
+            return self.track_map.get(name)
+        connus = {}
+        try:
+            connus = self.main_window.get_track_to_indices() or {}
+        except Exception:
+            pass
+        color = (_TRACK_COLORS.get(name, "#88aaaa") if name in connus
+                 else "#7a7a7a")
+        track = LightTrack(name, self.media_duration, self, color)
+        track.set_base_height(60)
+        track.apply_height_scale(getattr(self, '_view_row_scale', 0.75))
+        if name not in connus:
+            track.setToolTip(tr("tle_proj_track_orphan"))
+
+        prefixe = f"@{name}"
+        avant = next((t for t in self.tracks
+                      if getattr(t, 'is_projector_track', False)
+                      and t.name.startswith(prefixe)
+                      and t.name[len(prefixe):].isdigit()), None)
+        if avant is not None:
+            self.tracks.insert(self.tracks.index(avant), track)
+            self._tracks_layout.insertWidget(
+                self._tracks_layout.indexOf(avant), track)
+        else:
+            self.tracks.append(track)
+            self._layout_append_track(track)
+        self.track_map[name] = track
+
+        if self.track_waveform.waveform_data:
+            track.waveform_data = self.track_waveform.waveform_data
+        track.update_zoom(0.05 * getattr(self, 'current_zoom', 1.0))
+        self._sync_track_visibility(track)
+        if getattr(self, '_rows_menu', None) is not None:
+            self._rebuild_rows_menu()
+        track.update()
+        return track
+
+    def _ensure_track_for_saved_clip(self, tname):
+        """Garantit qu'un bloc relu (ouverture, import .lrec) a une piste où
+        atterrir — jamais de bloc jeté en silence."""
+        if not tname or tname in self.track_map:
+            return
+        if tname.startswith('Effet'):
+            self._add_effect_track_named(tname)
+        elif tname.startswith('Séquence'):
+            self._add_sequence_track_named(tname)
+        elif is_projector_track(tname):
+            self._add_projector_track_named(tname)
+        elif tname not in ('Position', 'Gobo', 'Audio'):
+            self._ensure_group_track_named(tname)
+
     def _remove_projector_track(self, track):
         """Retire une piste projecteur ORPHELINE (fixture absente du patch)."""
         if track not in self._projector_tracks:
@@ -2986,17 +3053,12 @@ class LightTimelineEditor(QDialog):
                 self.total_time_str = f"{dur_s // 60}:{dur_s % 60:02d}"
 
             # Créer les pistes Effet supplémentaires présentes dans la sauvegarde
+            # (pistes Effet/Séquence en plus, pistes projecteur — même quand la
+            # fixture a disparu du patch —, et pistes de groupe que le patch ne
+            # génère plus, ex. groupe ne contenant que des machines à fumée :
+            # sans ça leurs blocs seraient jetés en silence.)
             for clip_data in clips_data:
-                tname = clip_data.get('track', '')
-                if tname.startswith('Effet') and tname != 'Effet' and tname not in self.track_map:
-                    self._add_effect_track_named(tname)
-                elif tname.startswith('Séquence') and tname != 'Séquence' and tname not in self.track_map:
-                    self._add_sequence_track_named(tname)
-                elif is_projector_track(tname) and tname not in self.track_map:
-                    # Pistes « un projecteur seul » : recréées à l'identique
-                    # depuis la sauvegarde, y compris quand la fixture a disparu
-                    # du patch — sinon ses blocs seraient jetés en silence.
-                    self._add_projector_track_named(tname)
+                self._ensure_track_for_saved_clip(clip_data.get('track', ''))
 
             for clip_data in clips_data:
                 track_name = clip_data.get('track')
@@ -3270,8 +3332,7 @@ class LightTimelineEditor(QDialog):
             track_name = clip_data.get('track')
             # Un .lrec venu d'un autre show peut porter des pistes projecteur
             # absentes ici : on les recrée, comme à l'ouverture d'un REC.
-            if is_projector_track(track_name) and track_name not in self.track_map:
-                self._add_projector_track_named(track_name)
+            self._ensure_track_for_saved_clip(track_name)
             track = self.track_map.get(track_name)
             if not track:
                 continue

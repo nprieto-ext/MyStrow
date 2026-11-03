@@ -669,6 +669,10 @@ class EffectLayer:
         # l'éditeur (relu → réécrit), sinon relancer l'outil la multiplierait
         # une seconde fois.
         self.amp_x4 = False
+        # Couche « Dégradé » (pixel map du plan 2D) : réglages complets du
+        # motif (couleurs, sens, motif, noir, vitesse). Doit survivre à
+        # l'éditeur, sinon ré-enregistrer l'effet le ramènerait à 2 couleurs.
+        self.grad = None
 
     def to_dict(self):
         d = {
@@ -702,6 +706,8 @@ class EffectLayer:
         }
         if self.amp_x4:
             d["amp_x4"] = True
+        if self.grad:
+            d["grad"] = dict(self.grad)
         return d
 
     @classmethod
@@ -742,6 +748,7 @@ class EffectLayer:
         layer.channel_sig   = d.get("channel_sig", "") or ""
         layer.channel_label = d.get("channel_label", "") or ""
         layer.amp_x4 = bool(d.get("amp_x4", False))
+        layer.grad = dict(d["grad"]) if isinstance(d.get("grad"), dict) else None
         return layer
 
     @classmethod
@@ -1001,7 +1008,7 @@ class WaveformCanvas(QWidget):
     _ATTR_COLORS = {
         "Dimmer": "#00d4ff", "Strobe": "#cccccc",
         "R": "#ff4444",      "V": "#44dd44",    "B": "#4488ff",
-        "RGB": "#ffaa44",    "Permut": "#ff44ff",
+        "RGB": "#ffaa44",    "Permut": "#ff44ff",   "Dégradé": "#ff6688",
         "Pan": "#ffaa00",    "Tilt": "#ff8800",  "Gobo": "#aa44ff",
         "Pan/Tilt": "#ff9900",
         "Canal": "#ffd166",
@@ -1941,6 +1948,7 @@ class LayerRow(QFrame):
     cell_changed     = Signal(object, str)
 
     _ATTRS  = ["Dimmer", "R", "V", "B", "W", "Ambre", "UV", "RGB", "Permut",
+               "Dégradé",
                "Pan", "Tilt", "Pan/Tilt", "Zoom", "Gobo", "Strobe"]
     _FORMES = list(FORMES)
 
@@ -2836,8 +2844,8 @@ class LayerRow(QFrame):
 
     def _refresh_color_btns(self):
         attr = self.layer.attribute
-        has1 = attr in ("RGB", "Permut")
-        has2 = attr == "Permut"
+        has1 = attr in ("RGB", "Permut", "Dégradé")
+        has2 = attr in ("Permut", "Dégradé")
         self._col1_btn.setVisible(has1)
         self._col2_btn.setVisible(has2)
         for btn, flag, key, default in (
@@ -4823,6 +4831,13 @@ class EffectEditorDialog(QDialog):
                 if getattr(_l, 'sym_pan', False) or getattr(_l, 'sym_tilt', False):
                     _sym_ids[id(_l)] = _mir
 
+        # Couches « Dégradé » : couleur selon la POSITION sur le plan 2D.
+        # Même fonction que le moteur du show (core.gradient_layer_outputs).
+        _grad_out = {}
+        if any(getattr(_l, 'attribute', '') == "Dégradé" for _l in self._layers):
+            from core import gradient_layer_outputs
+            _grad_out = gradient_layer_outputs(self._layers, projectors, _all_proj, t)
+
         for i, proj in enumerate(projectors):
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0
             has_dim = False
@@ -4853,6 +4868,13 @@ class EffectEditorDialog(QDialog):
                 elif preset == "Impair" and i % 2 != 1: continue
                 elif preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
                 if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
+
+                if layer.attribute == "Dégradé":
+                    _gc = _grad_out.get(id(layer), {}).get(id(proj))
+                    if _gc is not None:
+                        has_rgb_layer = True
+                        r += _gc[0]; g += _gc[1]; b += _gc[2]
+                    continue
 
                 # GROUPER : replier l'index sur des paquets. Les fixtures d'un
                 # même paquet partagent la phase, donc partent ensemble.

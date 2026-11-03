@@ -1127,6 +1127,7 @@ class AssistantPanel(QWidget):
     def _send(self):
         text = self._input.text()
         self._input.clear()
+        self._show_status("")           # efface « Vérifie le texte… » après une dictée
         self.submit(text)
 
     def eventFilter(self, obj, ev):
@@ -1213,7 +1214,11 @@ class AssistantPanel(QWidget):
     def _on_transcribed(self, text, _lang):
         self._show_status("")
         if text.strip():
-            self.submit(text.strip())
+            # Dans le champ, pas envoyé : on relit, on corrige si Whisper s'est trompé, Entrée envoie.
+            self._input.setText(text.strip())
+            self._input.setFocus()
+            self._input.end(False)
+            self._show_status(tr("asst_voice_review"))
         else:                                   # avant : rien ne se passait, sans un mot
             self._say_assistant(tr("asst_heard_nothing"))
 
@@ -1338,12 +1343,16 @@ class AssistantDock(QWidget):
                            "font-size:8px; font-weight:bold; padding:0 3px;")
         bar.addWidget(beta)
         bar.addStretch()
-        self._btn_expand = QPushButton("⤢")
-        self._btn_expand.setFixedSize(20, 16)
-        self._btn_expand.setToolTip(tr("asst_expand_tip"))
+        # Flèche ▲ / ▼ bordée (l'ancien « ⤢ » gris passait inaperçu) ; le texte est dans l'infobulle.
+        self._btn_expand = QPushButton()
+        self._btn_expand.setCursor(Qt.PointingHandCursor)
+        self._btn_expand.setFixedSize(22, 18)
         self._btn_expand.setStyleSheet(
-            "QPushButton { background:transparent; color:#666; border:none; font-size:12px; } "
-            "QPushButton:hover { color:#00d4ff; }")
+            "QPushButton { background:#1a1a1a; color:#bbbbbb; border:1px solid #3a3a3a; border-radius:3px; "
+            "font-size:10px; padding:0; } "
+            "QPushButton:hover { color:#00d4ff; border-color:#00d4ff; background:#0d2a33; } "
+            "QPushButton:pressed { background:#00d4ff; color:#000; }")
+        self._set_expand_label(False)
         self._btn_expand.clicked.connect(lambda: self.set_expanded(not self._expanded))
         bar.addWidget(self._btn_expand)
         lay.addWidget(self._bar)
@@ -1428,6 +1437,10 @@ class AssistantDock(QWidget):
             elif sub is not None:
                 self._hide_siblings(sub)
 
+    def _set_expand_label(self, on: bool):
+        self._btn_expand.setText("▼" if on else "▲")
+        self._btn_expand.setToolTip(tr("asst_shrink") if on else tr("asst_expand"))
+
     def set_expanded(self, on: bool):
         if self._root_layout is None or on == self._expanded:
             return
@@ -1444,5 +1457,5 @@ class AssistantDock(QWidget):
             self._hidden = []
             self._root_layout.setAlignment(self._zone, Qt.AlignHCenter)
             self._fill_height()
-        self._btn_expand.setText("⤡" if on else "⤢")
+        self._set_expand_label(on)
         self.expanded_changed.emit(on)

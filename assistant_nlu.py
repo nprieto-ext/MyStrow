@@ -528,7 +528,8 @@ WINDOWS = {
                   "es": ["atajos"], "de": ["tastenkurzel", "kurzbefehle"], "pt": ["atalhos"], "ja": ["ショートカット"]},
     "obs":       {"fr": ["obs"], "en": ["obs"], "es": ["obs"], "de": ["obs"], "pt": ["obs"], "ja": ["obs"]},
     "vmix":      {"fr": ["vmix"], "en": ["vmix"], "es": ["vmix"], "de": ["vmix"], "pt": ["vmix"], "ja": ["vmix"]},
-    "gamepad":   {"fr": ["manette"], "en": ["gamepad", "controller"], "es": ["mando"], "de": ["gamepad", "controller"],
+    "gamepad":   {"fr": ["manette", "manette de playstation", "manette ps4", "manette ps5", "manette xbox"],
+                  "en": ["gamepad", "controller"], "es": ["mando"], "de": ["gamepad", "controller"],
                   "pt": ["comando", "manete"], "ja": ["コントローラー", "ゲームパッド"]},
     "news":      {"fr": ["nouveautes"], "en": ["what s new", "whats new", "news"], "es": ["novedades"],
                   "de": ["neuigkeiten"], "pt": ["novidades"], "ja": ["新機能"]},
@@ -944,6 +945,8 @@ def _parse_clause(raw: str, t: str, effects, votes, question=False) -> list:
                 cols.append(key)
         if _RAINBOW_RE.search(t) or len(cols) < 2 and re.search(r"toutes les couleurs|all colou?rs|todos los colores", t):
             cols = cols[:1] + [c for c in RAINBOW_COLORS if c not in cols[:1]] if len(cols) == 1 else RAINBOW_COLORS
+        elif len(cols) == 1:
+            cols = SHADES.get(cols[0], cols)
         if len(cols) >= 2:
             return [{"do": "gradient", "colors": cols, "target": _target(t, votes) or {"all": True},
                      "level": _level(t, votes)}]
@@ -1270,6 +1273,12 @@ _CHAT_RE = re.compile(r"^(?:(?:" + "|".join(sorted(set(_CHAT_WORDS), key=len, re
 _STATE_RE = re.compile(r"(?<![a-z])(?:ils|elles|il|elle|ca|c|ce|tout|they|it|its|it s|ellos|sie|es|eles)\s+"
                        r"(?:sont|est|restent|reste|etaient|etait|are|is|were|was|estan|esta|sind|ist|sao|estao)(?![a-z])")
 RAINBOW_COLORS = ["red", "orange", "yellow", "green", "cyan", "blue", "purple"]
+# « dégradé de rouge » (une seule couleur) : les teintes voisines, pas l'arc-en-ciel.
+SHADES = {"red": ["magenta", "red", "orange"], "orange": ["red", "orange", "amber"], "amber": ["orange", "amber", "yellow"],
+          "yellow": ["amber", "yellow", "warm"], "green": ["cyan", "green", "yellow"], "cyan": ["green", "cyan", "blue"],
+          "blue": ["cyan", "blue", "purple"], "purple": ["blue", "purple", "magenta"], "magenta": ["purple", "magenta", "pink"],
+          "pink": ["magenta", "pink", "red"], "white": ["warm", "white", "cold"], "warm": ["amber", "warm", "white"],
+          "cold": ["white", "cold", "cyan"]}
 
 # Ambiance tamisée / feutrée / cosy : lumière basse, blanc chaud sauf couleur dite.
 _DIM_RE = re.compile(r"(?<![a-z])(?:tamise|tamisee|tamisees|tamises|feutre|feutree|cosy|cozy|cocooning|intime|"

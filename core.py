@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.11"
+VERSION = "3.2.12"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -1099,6 +1099,91 @@ def channel_layer_outputs(layers, projectors, t, allowed_groups=None):
             for k in idx:
                 if val > d.get(k + 1, -1):
                     d[k + 1] = val
+    return out
+
+
+GRADIENT_ATTR = "Dégradé"
+
+
+def gradient_layer_spec(layer):
+    """Réglages du dégradé d'une couche « Dégradé ».
+
+    Une couche créée par le panneau Pixel map du plan 2D porte un dict `grad`
+    complet (plusieurs couleurs, forme, angle, vitesse en tours/s). Une couche
+    ajoutée à la main dans l'éditeur d'effets n'a que ses colonnes : on prend
+    alors COULEUR 1 → COULEUR 2, de gauche à droite, à la VITESSE de la couche.
+    """
+    from pixel_map import GradientSpec
+    g = _layer_get(layer, 'grad', None)
+    if isinstance(g, dict) and g:
+        return GradientSpec.from_dict(g)
+    return GradientSpec(
+        stops=[_layer_get(layer, 'color1', '#ff0000') or '#ff0000',
+               _layer_get(layer, 'color2', '#0000ff') or '#0000ff'],
+        shape="linear", angle=0.0,
+        speed=layer_frequency(_layer_get(layer, 'speed', 50)))
+
+
+def gradient_layer_outputs(layers, projectors, all_projectors, t):
+    """Couleurs des couches « Dégradé » (pixel map) à l'instant de phase `t`.
+
+    Retourne {id(couche): {id(proj): (r, g, b) en 0-1}}.
+
+    Chaque fixture prend la couleur du dégradé à SA POSITION sur le plan 2D
+    (`canvas_x`/`canvas_y`), ramenée à l'étendue des fixtures visées par la
+    couche — pas à son rang dans le patch. C'est ce qui en fait un « LED
+    mapper » et pas un chenillard.
+
+    ⚠️ Point UNIQUE : le moteur du show (`MainWindow._update_effect_from_layers`)
+    et l'aperçu de l'éditeur appellent tous deux cette fonction — parité
+    aperçu/show garantie, comme `channel_layer_outputs`.
+
+    `projectors`     = fixtures candidates (déjà filtrées par le moteur : sans
+                       machines, groupes du clip) — leur ORDRE sert à Pair/Impair.
+    `all_projectors` = le patch complet, pour les clés de la cible « Sélection ».
+    """
+    from pixel_map import spatial_positions, output_for
+    out = {}
+    layers = [l for l in (layers or []) if _layer_get(l, 'attribute') == GRADIENT_ATTR]
+    if not layers or not projectors:
+        return out
+    key_by_id = {id(p): k for p, k in
+                 zip(all_projectors, projector_selection_keys(all_projectors))}
+    for layer in layers:
+        preset = _layer_get(layer, 'target_preset', 'Tous') or 'Tous'
+        groups = [_CHANNEL_TARGET_GROUPS.get(g, g)
+                  for g in (_layer_get(layer, 'target_groups', []) or [])]
+        ranks = layer_selection_ranks(layer) if preset == "Selection" else None
+        cibles = []
+        for i, p in enumerate(projectors):
+            if getattr(p, 'matrix_role', None) == 'master':
+                continue
+            grp = getattr(p, 'group', '')
+            if ranks is not None:
+                if key_by_id.get(id(p)) not in ranks:
+                    continue
+            elif preset == "Pair" and i % 2 != 0:
+                continue
+            elif preset == "Impair" and i % 2 != 1:
+                continue
+            elif preset in _CHANNEL_TARGET_GROUPS and grp != _CHANNEL_TARGET_GROUPS[preset]:
+                continue
+            if groups and grp not in groups:
+                continue
+            cibles.append(p)
+        if not cibles:
+            continue
+        spec = gradient_layer_spec(layer)
+        pos = spatial_positions(
+            [(getattr(p, 'canvas_x', None), getattr(p, 'canvas_y', None)) for p in cibles],
+            spec.shape, spec.angle)
+        amp = max(0.0, float(_layer_get(layer, 'size', 100) or 0)) / 100.0
+        turns = float(spec.speed or 0.0) * float(t)
+        d = out.setdefault(id(layer), {})
+        for p, s in zip(cibles, pos):
+            val = output_for(spec, s, turns)
+            d[id(p)] = (val[0] / 255.0 * amp, val[1] / 255.0 * amp,
+                        val[2] / 255.0 * amp)
     return out
 
 

@@ -219,8 +219,14 @@ def to_nlu(actions: list, text: str, effects) -> list:
             act = {"do": "chat"}
         elif do == "gradient":
             colors = [c for c in a.get("colors") or [] if c in nlu.COLOR_HEX]
-            if len(colors) < 2 or nlu._RAINBOW_RE.search(t):
+            said_cols = list(dict.fromkeys(k for k, _ in nlu._V["color"].find_all(t)))
+            if nlu._RAINBOW_RE.search(t) or not colors:
                 colors = colors[:1] + [c for c in nlu.RAINBOW_COLORS if c not in colors[:1]]
+            elif len(said_cols) == 1 and said_cols[0] in nlu.SHADES:
+                # « dégradé de couleur rouge » : le modèle sortait l'arc-en-ciel → teintes de rouge.
+                colors = nlu.SHADES[said_cols[0]]
+            elif len(colors) < 2:
+                colors = nlu.SHADES.get(colors[0], colors[:1] + [c for c in nlu.RAINBOW_COLORS if c != colors[0]])
             act = {"do": "gradient", "colors": colors, "target": _target(a), "level": a.get("level")}
         elif do == "gobo":
             act = {"do": "gobo", "open": a.get("gobo") == "open", "target": _target(a)}
@@ -252,6 +258,7 @@ def to_nlu(actions: list, text: str, effects) -> list:
         if fade and act["do"] in ("color", "level", "level_rel", "pattern", "fader"):
             act["fade"] = float(fade)
         out.append(act)
+    out = _grounded(out, t)
     if _dim_mood(t) or nlu.warm_mood(t):
         # « ambiance tamisée » : le modèle sortait un magenta à 60 % → la règle dédiée l'emporte.
         return nlu.parse(text, effects).actions
@@ -265,6 +272,76 @@ def to_nlu(actions: list, text: str, effects) -> list:
         if act.get("do") == "color" and act.get("color") == "blue" and "cold" in said and "blue" not in said:
             act.update(color="cold", hex=nlu.COLOR_HEX["cold"])
     return out or [{"do": "unknown", "text": text}]
+
+
+# Le modèle invente des actions quand la phrase bavarde (« commence à le fondateur… » → tout à 100 %).
+# Chaque action doit retrouver dans la phrase un mot qui la demande, sinon elle tombe.
+_LIGHT_CHANGING = {"color", "level", "level_rel", "pattern", "gradient", "gobo", "effect", "fader", "fader_rel",
+                   "stop_effects", "blackout", "speed", "speed_rel", "memory", "playback", "fixture", "patch_add",
+                   "rec_generate", "live"}
+_WHY_RE = re.compile(r"^(?:pourquoi|why|por que|porque|warum)(?![a-z])")
+_GAMEPAD_RE = re.compile(r"(?<![a-z])(?:manettes?|gamepads?|playstation|ps[345]|xbox|dualshock|dualsense|joystick|"
+                         r"mando|manete)(?![a-z])")
+
+
+_ALL_WORDS_RE = re.compile(r"(?<![a-z])(?:everything|partout|alles|tudo|tous les projecteurs|toutes les lumieres)(?![a-z])|全部")
+_ONLY_RE = re.compile(r"(?<![a-z])(?:sauf|excepte|hormis|juste|seulement|uniquement|garde que|que la|que les|only|just|"
+                      r"except|out|off|solo|excepto|nur|ausser|apenas|exceto)(?![a-z])")
+
+
+def _names_lights(t):
+    """La phrase parle de projecteurs (« la face », « les lyres », « la lumière ») ; « tout » seul
+    ne compte pas (« tout ce que tu sais faire »)."""
+    return bool(any(k != "all" for k, _ in nlu._V["target"].find_all(t)) or nlu._W["lights"].find(t)
+                or _ALL_WORDS_RE.search(t))
+
+
+def _says_level(t, off=False):
+    if re.search(r"\d", t) or nlu._W["blackout"].find(t) or nlu._W["dimmer"].find(t) or nlu._W["fade"].find(t):
+        return True
+    if off:      # éteindre : un mot qui le dit, ou « tout sauf / garde que la face »
+        return any(k == "off" for k, _ in nlu._V["verb"].find_all(t)) or bool(_ONLY_RE.search(t))
+    return bool(nlu._W["full"].find(t) or nlu._W["half"].find(t) or nlu._W["brighter"].find(t)
+                or nlu._V["verb"].find(t) or nlu._ON_STRICT_RE.search(t) or _names_lights(t))
+
+
+def _grounded(out, t):
+    keep = []
+    for act in out:
+        do = act.get("do")
+        if do == "level" and not _says_level(t, off=act.get("level") == 0):
+            continue
+        if do == "level_rel" and not (nlu._W["brighter"].find(t) or nlu._W["dimmer"].find(t) or _names_lights(t)):
+            continue
+        if do == "fixture" and not (nlu._W["fixture"].find(t) or nlu._W["create"].find(t)
+                                    or re.search(r"(?<![a-z])(?:fiches?|bibliotheque|library)(?![a-z])", t)):
+            continue
+        if do == "playback" and act.get("what") in ("next", "prev") and not (
+                nlu._V["playback"].find(t) or nlu._MUSIC_RE.search(t)):
+            continue                     # « en rouge et au rang (orange) » lu comme « suivant »
+        if do == "gobo" and not nlu._GOBO_RE.search(t):
+            continue
+        if act in keep:                  # « ouvre le patch » deux fois
+            continue
+        keep.append(act)
+    # « fais un dégradé » : le modèle répondait parfois une alternance (un rouge, un bleu).
+    if nlu._GRADIENT_RE.search(t) and not any(a["do"] == "gradient" for a in keep):
+        keep = [{"do": "gradient", "colors": [s["color"] for s in a["slots"] if s], "target": a["target"],
+                 "level": a.get("level")} if a["do"] == "pattern" and sum(1 for s in a["slots"] if s) >= 2 else a
+                for a in keep]
+    # « pourquoi ma lyre ne s'allume pas ? » : on explique et on regarde l'état, sans rien changer.
+    if nlu._HOW_RE.match(t):
+        # (ce qui demande Oui / Non avant d'agir reste : live, patch, fixture, REC)
+        keep = [a for a in keep if a["do"] not in _LIGHT_CHANGING - {"live", "patch_add", "fixture", "rec_generate"}]
+        if _WHY_RE.match(t) and not any(a["do"] in ("diagnose", "answer") and a.get("topic") != "generic" for a in keep):
+            keep = [a for a in keep if a["do"] != "answer"] + [{"do": "diagnose"}]
+    # « connecter une manette de PlayStation ? » : la fenêtre Manette (avec confirmation).
+    if _GAMEPAD_RE.search(t) and not any(a["do"] == "open" for a in keep):
+        keep = [a for a in keep if not (a["do"] == "answer" and a.get("topic") in ("generic", "controller"))
+                and a["do"] != "fixture"] + [{"do": "open", "window": "gamepad"}]
+    if not keep and out and all(a["do"] in _LIGHT_CHANGING for a in out):
+        keep = [{"do": "chat"}]          # tout est tombé : on ne fait rien plutôt que n'importe quoi
+    return keep
 
 
 def _dim_mood(t):

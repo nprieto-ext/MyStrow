@@ -13444,6 +13444,12 @@ class MainWindow(QMainWindow):
             tr = self._pan_tilt_transitions[id(proj)]
             cur_pan  = getattr(proj, 'pan',  tr['p1'])
             cur_tilt = getattr(proj, 'tilt', tr['t1'])
+        # Effet en cours sur cette lyre : la transition déplace le CENTRE autour
+        # duquel l'effet tourne, et part donc de ce centre — pas de la valeur
+        # instantanée, qui porte l'écart du mouvement (cf. _tick_pan_tilt_anim).
+        saved = self._effect_capture_for_pantilt(proj)
+        if saved is not None:
+            cur_pan, cur_tilt = saved[3], saved[4]
         if cur_pan == new_pan and cur_tilt == new_tilt:
             self._pan_tilt_transitions.pop(id(proj), None)
             return
@@ -13451,11 +13457,30 @@ class MainWindow(QMainWindow):
             'proj':     proj,
             'p0':       cur_pan,  't0': cur_tilt,
             'p1':       new_pan,  't1': new_tilt,
+            # Dernière valeur interpolée : sert au déplacement par écart
+            # quand un effet tient la lyre.
+            'lp':       cur_pan,  'lt': cur_tilt,
             'start':    _t.monotonic(),
             'duration': duration_ms / 1000.0,
         }
         if not self._pan_tilt_anim_timer.isActive():
             self._pan_tilt_anim_timer.start()
+
+    def _effect_capture_for_pantilt(self, proj):
+        """Capture d'avant-effet de `proj` si un effet live la tient, sinon None.
+
+        Hors restitution (timeline / aperçu REC) seulement : là les clips
+        réécrivent tout à chaque frame, comme dans `_sync_effect_baseline`.
+        """
+        saved = (getattr(self, 'effect_saved_colors', None) or {}).get(id(proj))
+        if not saved or len(saved) < 5:
+            return None
+        _seq = getattr(self, 'seq', None)
+        if _seq is not None and hasattr(_seq, 'timeline_playback_row'):
+            return None
+        if getattr(self, '_rec_preview_active', False):
+            return None
+        return saved
 
     def _tick_pan_tilt_anim(self):
         """Avance toutes les animations pan/tilt actives (~40 fps)."""
@@ -13467,8 +13492,29 @@ class MainWindow(QMainWindow):
             # smoothstep : décélération naturelle comme une vraie lyre
             a = alpha * alpha * (3.0 - 2.0 * alpha)
             proj = tr['proj']
-            proj.pan  = int(tr['p0'] + (tr['p1'] - tr['p0']) * a)
-            proj.tilt = int(tr['t0'] + (tr['t1'] - tr['t0']) * a)
+            new_p = int(tr['p0'] + (tr['p1'] - tr['p0']) * a)
+            new_t = int(tr['t0'] + (tr['t1'] - tr['t0']) * a)
+            saved = self._effect_capture_for_pantilt(proj)
+            if saved is None:
+                proj.pan, proj.tilt = new_p, new_t
+            else:
+                # Un effet tient cette lyre (timer 40 ms, nous 25 ms). Écrire la
+                # position absolue faisait se battre deux écrivains : la lyre
+                # sautait à chaque frame entre la transition (sans le mouvement)
+                # et l'effet (centre + mouvement), et le centre de l'effet
+                # suivait ces valeurs bâtardes. On DÉCALE donc d'un même écart
+                # la sortie ET le centre de l'effet, et on déclare cette écriture
+                # au témoin du moteur pour qu'elle ne passe pas pour étrangère.
+                dp, dt = new_p - tr['lp'], new_t - tr['lt']
+                proj.pan  = max(0, min(65535, getattr(proj, 'pan',  32768) + dp))
+                proj.tilt = max(0, min(65535, getattr(proj, 'tilt', 32768) + dt))
+                self.effect_saved_colors[id(proj)] = (
+                    saved[:3] + (new_p, new_t) + tuple(saved[5:]))
+                frame = getattr(self, '_effect_engine_frame', None)
+                if frame and id(proj) in frame:
+                    k = frame[id(proj)]
+                    frame[id(proj)] = k[:3] + (proj.pan, proj.tilt) + k[5:]
+            tr['lp'], tr['lt'] = new_p, new_t
             if alpha >= 1.0:
                 done.append(pid)
         for pid in done:
@@ -14351,6 +14397,14 @@ class MainWindow(QMainWindow):
         # non l'ordre du patch — c'est ce qui permet de diriger un chenillard.
         _layer_sel = {id(ld): layer_selection_ranks(ld) for ld in layers_dicts}
 
+        # Couches « Dégradé » (pixel map du plan 2D) : couleur selon la POSITION
+        # de chaque fixture sur le plan. Même fonction que l'aperçu de l'éditeur.
+        _grad_out = {}
+        if any(ld.get("attribute") == "Dégradé" for ld in layers_dicts):
+            from core import gradient_layer_outputs
+            _grad_out = gradient_layer_outputs(layers_dicts, projectors,
+                                               self.projectors, t)
+
         _mh_projs = [p for p in projectors if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         _mh_idx   = {id(p): j for j, p in enumerate(_mh_projs)}
         _mh_n     = max(len(_mh_projs), 1)
@@ -14484,6 +14538,13 @@ class MainWindow(QMainWindow):
                 # Ciblage explicite → l'effet peut allumer ce projo même s'il est éteint
                 if preset != "Tous" or groups:
                     _explicitly_targeted = True
+
+                if ld.get("attribute") == "Dégradé":
+                    _gc = _grad_out.get(id(ld), {}).get(id(proj))
+                    if _gc is not None:
+                        has_rgb_layer = True
+                        r += _gc[0]; g += _gc[1]; b += _gc[2]
+                    continue
 
                 speed     = ld.get("speed", 50)
                 size      = ld.get("size", 100)
@@ -28491,7 +28552,7 @@ class MainWindow(QMainWindow):
                 ext = Path(path).suffix.lower()
                 try:
                     raw = Path(path).read_bytes()
-                    if ext == ".xml":
+                    if ext in (".xml", ".qxf"):
                         ofl_fx = _parse_file(path)
                         modes = [m for m in (ofl_fx.get("modes") or [])
                                  if isinstance(m, dict) and m.get("profile")]

@@ -30,4 +30,5 @@ pygame
 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 --only-binary llama-cpp-python
 llama-cpp-python==0.3.36; sys_platform == "win32"
-# faster-whisper>=1.2.1  # dictée vocale de l'assistant : hors installeur pour l'instant (+80 Mo), cf. MyStrow.spec
+# Dictée vocale de l'assistant : Windows seulement (Mac non vérifié), cf. MyStrow.spec
+faster-whisper>=1.2.1; sys_platform == "win32"

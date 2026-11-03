@@ -61,8 +61,8 @@ def _get_model(name: str):
 
 # Vocabulaire du métier soufflé à Whisper : il écrit « MyStrow », « lyres »… au lieu
 # de « mistro », « lire ».
-_PROMPT = ("Ok MyStrow, allume les lyres, la face, le contre, les douches, strobe, faders, patch DMX, "
-           "REC Lumière, s'il te plaît.")
+_PROMPT = ("Ok MyStrow, mets-moi tout en violet, allume les lyres, la face, le contre, les douches, strobe, "
+           "faders, patch DMX, REC Lumière, s'il te plaît.")
 # « stp » / « s'te plaît » en fin de phrase, que Whisper entend « je te paie ».
 _PLEASE_RE = re.compile(r"[,\s]*\b(?:je te (?:paie|paye|pay|pais|plais)|ce te plait|ste plait|s te pl[eé])\s*([.!?]*)\s*$",
                         re.IGNORECASE)
@@ -81,13 +81,17 @@ def transcribe(audio, lang_hint: str, model_name: str = DEFAULT_MODEL) -> tuple:
     model = _get_model(model_name)
 
     def run(language):
-        segs, info = model.transcribe(audio, language=language, beam_size=1, initial_prompt=_PROMPT,
+        # Le vocabulaire soufflé est en français : seulement pour le français (ailleurs juste le nom).
+        prompt = _PROMPT if language in (None, "fr") else "MyStrow, DMX."
+        segs, info = model.transcribe(audio, language=language, beam_size=5, initial_prompt=prompt,
                                       condition_on_previous_text=False, vad_filter=False)
         return " ".join(s.text.strip() for s in segs).strip(), info
 
-    text, info = run(None)
-    if info.language not in _KNOWN or info.language_probability < 0.5:
-        text, info = run(lang_hint if lang_hint in _KNOWN else None)
+    # Langue de l'appli imposée : la détection automatique du modèle « base » prenait
+    # les phrases courtes pour de l'anglais (« mets-moi tout en violet » → « Where,
+    # Lumière 2, all jewelry » ; « stop » → anglais à 65 %). Forcée, c'est aussi plus
+    # rapide (pas de passe de détection). beam 5 : « violée » → « violet », même durée.
+    text, info = run(lang_hint if lang_hint in _KNOWN else None)
     return fix_name(text), info.language
 
 

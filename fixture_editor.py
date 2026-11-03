@@ -1912,7 +1912,7 @@ class FixtureEditorDialog(QDialog):
         for path in paths:
             ext = Path(path).suffix.lower()
             try:
-                if ext == ".xml":
+                if ext in (".xml", ".qxf"):
                     ofl_fx = _parse_file(path)
                     modes = [m for m in (ofl_fx.get("modes") or []) if m.get("profile")]
                     if not modes:

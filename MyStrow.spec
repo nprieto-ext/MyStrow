@@ -89,11 +89,20 @@ for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'zerocon
         datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
     except Exception:
         pass
-# Dictée vocale de l'assistant (assistant_voice.py) : PAS embarquée pour
-# l'instant (faster-whisper + ctranslate2 ≈ +80 Mo). Exclue explicitement : sinon
-# PyInstaller suit l'import de assistant_voice et en embarque une partie, et le
-# micro s'afficherait sans pouvoir marcher. Sans elle, le bouton micro est masqué.
-_VOICE_EXCLUDES = ['faster_whisper', 'ctranslate2', 'av', 'tokenizers']
+# Dictée vocale de l'assistant (assistant_voice.py) : embarquée sur WINDOWS depuis
+# le 03/11/2026 (faster-whisper + ctranslate2 + av + tokenizers). onnxruntime (48 Mo)
+# ne sert qu'au filtre VAD, désactivé (vad_filter=False) et importé à la demande :
+# exclu. Sur Mac : pas vérifiée (roues natives), exclue comme avant → micro masqué.
+if sys.platform == 'win32':
+    _VOICE_EXCLUDES = ['onnxruntime']
+    for _pkg in ('faster_whisper', 'ctranslate2', 'av', 'tokenizers'):
+        try:
+            _r = collect_all(_pkg)
+            datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
+        except Exception:
+            pass
+else:
+    _VOICE_EXCLUDES = ['faster_whisper', 'ctranslate2', 'av', 'tokenizers']
 # pygame : utilisé UNIQUEMENT comme pilote de manette (gamepad_client.py), pour
 # le pan/tilt des lyres au stick. collect_all est nécessaire pour embarquer les
 # binaires SDL2, sans lesquels l'import de pygame._sdl2.controller échoue dans
