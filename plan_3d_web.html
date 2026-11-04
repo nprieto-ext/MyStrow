@@ -231,6 +231,15 @@ window.setRoomAmbience = function (x) {
 // public. Le plancher doit contenir la grille, jamais l'inverse.
 const FLOOR_X0 = -11.0, FLOOR_X1 = 11.0;
 const FLOOR_Z0 =  -9.0, FLOOR_Z1 = 13.0;
+// Plateau surélevé du décor courant ({x, z, y} : demi-largeurs et hauteur du
+// DESSUS), posé par `setScenePreset` (clé `deck`). Sans lui, toutes les
+// taches au sol étaient dessinées à 2 cm… sous les 12 cm du plateau du
+// festival : invisibles. Les PAR s'en sortaient grâce à leur PointLight, les
+// barres n'éclairaient rien du tout.
+let _deck = null;
+function floorYAt(x, z) {
+  return (_deck && Math.abs(x) <= _deck.x && Math.abs(z) <= _deck.z) ? _deck.y : 0;
+}
 const FLOOR_W  = FLOOR_X1 - FLOOR_X0, FLOOR_D  = FLOOR_Z1 - FLOOR_Z0;
 const FLOOR_CX = (FLOOR_X0 + FLOOR_X1) / 2, FLOOR_CZ = (FLOOR_Z0 + FLOOR_Z1) / 2;
 
@@ -2490,9 +2499,175 @@ function _tickPanTilt(dt) {
 // `_anim` : passe d'animation déclenchée par la boucle de rendu. Elle rejoue la
 // DERNIÈRE trame pour les seuls appareils encore en mouvement — les autres ne
 // coûtent rien, et la scène n'est pas reconstruite 60 fois par seconde.
+// Orientation d'une barre LED, sur TROIS axes comme un vrai appareil :
+//   RY (lacet)        tourne la barre dans le plan horizontal ;
+//   RZ (roulis)       lève une extrémité — 90° = barre DEBOUT, le long d'une
+//                     tour de truss (demande de Nico, 04/11/26) ;
+//   RX (inclinaison)  bascule la face LED autour de l'axe de la barre.
+// Euler 'YZX' = Ry·Rz·Rx : on incline la face, on redresse, puis on oriente.
+// L'axe X LOCAL est toujours l'axe de la barre, −Y la direction d'éclairage.
+const _bq = new THREE.Quaternion();
+const _be = new THREE.Euler(0, 0, 0, 'YZX');
+const _bv = new THREE.Vector3();
+function _barQuat(th, p) {
+  _be.set((p.rot3d_x ?? 0) * Math.PI / 180, th,
+          (p.rot3d_z ?? 0) * Math.PI / 180, 'YZX');
+  return _bq.setFromEuler(_be);
+}
+// Vecteur local (x, y, z) → monde, avec la dernière orientation calculée.
+function _barVec(x, y, z) {
+  _bv.set(x, y, z).applyQuaternion(_bq);
+  return [_bv.x, _bv.y, _bv.z];
+}
+
+// Faisceaux d'une barre LED dans la fumée. Une barre est une SOURCE LINÉAIRE :
+// un seul cône partant de son milieu la faisait éclairer « depuis un point »
+// (remontée de Nico, 04/11/26 — barres debout sur une tour). Le shader ne sait
+// tracer qu'un cône à apex ponctuel ; on en répartit donc jusqu'à
+// BAR_BEAMS le long de la barre, un par tronçon, chacun de la couleur de ses
+// pixels — un chenillard se voit courir dans la fumée. Chaque cône est une
+// nappe elliptique (étirée dans l'axe de la barre) qui recouvre ses voisins.
+// Le premier est le `cVol` du slot ; les suivants sont créés à la demande.
+const BAR_BEAMS = 4;
+// Barre à pixels : UNE sortie par pixel (remontée de Nico, 04/11/26 — « une
+// sortie lumineuse par pixel »), plafonnée selon la qualité : chaque cône est
+// un raymarching. Au-delà du plafond, les pixels voisins sont regroupés.
+const BAR_PX_BEAMS = [6, 12, 25, 40];
+function _barPxCap() {
+  return BAR_PX_BEAMS[Math.max(0, Math.min(BAR_PX_BEAMS.length - 1,
+                                            window.qualityLevel | 0))];
+}
+function _barBeamMesh(obj, k) {
+  if (k === 0) return obj.cVol;
+  if (!obj._bb) obj._bb = [];
+  while (obj._bb.length < k) {
+    const m = makeVolBeam(GEO_VOL_CONE, 1.0);
+    m.renderOrder = 2; m.visible = false;
+    _beamGrp.add(m);
+    obj._bb.push(m);
+  }
+  return obj._bb[k - 1];
+}
+function _hideBarBeams(obj, from) {
+  if (from <= 0) obj.cVol.visible = false;
+  if (obj._bb) for (let k = Math.max(0, from - 1); k < obj._bb.length; k++)
+    obj._bb[k].visible = false;
+}
+
+// segs = [{ s, lvl, r, g, b }] : abscisse du tronçon le long de la barre (m,
+// depuis le centre), niveau 0..1 et couleur.
+function _barBeam(obj, p, cx, cz, hy, len, th, segs) {
+  obj._selA = undefined;
+  _barQuat(th, p);
+  const dn = _barVec(0, -1, 0);                  // direction d'éclairage
+  const segLen = len / Math.max(1, segs.length);
+  // Un cône par pixel (ou presque) : faisceaux ÉTROITS et ronds, qu'on
+  // distingue un à un dans la fumée — comme une vraie barre à pixels.
+  // Sinon (barre simple, qualité basse) : nappes larges qui se recouvrent.
+  const perPx = segs.length >= 6;
+  // Densité répartie : la barre entière éclaire à peu près comme 1,5 tronçon
+  // isolé (nappes qui se recouvrent). Faisceaux fins : ils se recouvrent
+  // AUSSI dès 1-2 m — en 1/sqrt(n), 4 barres de 25 px saturaient l'image
+  // en blanc ; en 1/n la barre entière vaut ~2,5 faisceaux.
+  const kA = perPx ? Math.min(1, 2.5 / segs.length)
+                   : Math.min(1, 1.5 / segs.length);
+  let used = 0;
+  for (let k = 0; k < segs.length; k++) {
+    const sg = segs[k];
+    if (!(sg.lvl > 0.03)) continue;
+    const off = _barVec(sg.s, -0.06, 0);         // face LED du tronçon
+    const tx0 = cx + off[0], ty0 = hy + 0.02 + off[1], tz0 = cz + off[2];
+    // Jusqu'au plancher si la barre éclaire vers le bas ; sinon une portée
+    // fixe qui s'éteint en douceur (uEndFade), comme un PAR tourné vers le ciel.
+    let L = 8.0, fade = 1.0;
+    if (dn[1] < -0.17) {
+      const t0 = (ty0 - floorYAt(tx0, tz0)) / -dn[1];
+      const fy = floorYAt(tx0 + dn[0] * t0, tz0 + dn[2] * t0);
+      L = (ty0 - fy) / -dn[1];
+      fade = 0.0;
+    }
+    if (L < 0.3) continue;
+    const m = _barBeamMesh(obj, used++);
+    // Même ouverture qu'un PAR wash (cf. base_r du rendu PAR)
+    const base_r = (0.22 + 2.0 * sg.lvl) * window.beamScale * 1.9
+                 * Math.max(0.1, p.beam_angle ?? 1.0) * (perPx ? 0.2 : 1.0);
+    m.position.set(tx0 + dn[0] * L / 2, ty0 + dn[1] * L / 2, tz0 + dn[2] * L / 2);
+    m.quaternion.copy(_bq);                      // pointe (+Y local) vers la barre
+    if (perPx) m.scale.set(base_r * 1.2, L, base_r * 1.2);
+    else       m.scale.set(base_r * 2.0 + segLen * 0.5, L, base_r * 1.2);
+    m.visible = true;
+    const u = m.material.uniforms;
+    u.uColor.value.setRGB(sg.r / 255, sg.g / 255, sg.b / 255);
+    u.uSharp.value = 1.35;
+    u.uCore.value  = 0.35;
+    u.uEndFade.value = fade;
+    u.uGoboBlend.value = 0.0;
+    u.uGoboRot.value = 0.0;
+    // Un peu moins dense qu'un PAR : la lumière d'une barre est étalée
+    u.uAlpha.value = 1.25 * sg.lvl * kA * window.beamGain * (p.beam_gain ?? 1.0);
+  }
+  _hideBarBeams(obj, used);
+}
+
 window.updateScene = function(projectors, _anim) {
   const bs = window.beamScale;
   if (!_anim) _lastScene = projectors;
+  // Nombre de pixels par barre/matrice : leurs nappes au sol se recouvrent
+  // presque toutes, les additionner telles quelles faisait d'une barre de
+  // 8 pixels une tache blanche aveuglante qui écrasait toute la scène.
+  // On en tire aussi le PAS entre pixels et l'axe de la barre : des cubes de
+  // 16 cm sur un pas de 15 cm se chevauchaient en un seul bloc blanc où plus
+  // aucune couleur ne se lisait, boîtier englouti.
+  const _pxCount = {}, _pxBox = {};
+  for (let i = 0; i < projectors.length; i++) {
+    const q = projectors[i];
+    if (!q.is_pixel || q.matrix_id == null) continue;
+    const m = q.matrix_id;
+    _pxCount[m] = (_pxCount[m] || 0) + 1;
+    const b = _pxBox[m] || (_pxBox[m] = { x0: q.x, x1: q.x, z0: q.z, z1: q.z,
+                                          sr: 0, sg: 0, sb: 0, sw: 0,
+                                          sx: 0, sz: 0, fx: q.x, fz: q.z });
+    b.sx += q.x; b.sz += q.z;
+    // 1er / dernier pixel du CÂBLAGE (pixel_index), pas de l'ordre d'arrivée
+    const qi = q.pixel_index ?? _pxCount[m] - 1;
+    if (b.i0 === undefined || qi < b.i0) { b.i0 = qi; b.fx = q.x; b.fz = q.z; }
+    if (b.i1 === undefined || qi > b.i1) { b.i1 = qi; b.lx = q.x; b.lz = q.z; }
+    // Couleur moyenne pondérée par le niveau : c'est elle que porte le
+    // faisceau unique de la barre dans la fumée.
+    const w = Math.max(0, Math.min(1, (q.level || 0) / 100));
+    b.sr += q.r * w; b.sg += q.g * w; b.sb += q.b * w; b.sw += w;
+    (b.px || (b.px = [])).push({ i: q.pixel_index ?? b.px?.length ?? 0,
+                                 r: q.r, g: q.g, b: q.b, w });
+    b.x0 = Math.min(b.x0, q.x); b.x1 = Math.max(b.x1, q.x);
+    b.z0 = Math.min(b.z0, q.z); b.z1 = Math.max(b.z1, q.z);
+  }
+  for (const m in _pxBox) {
+    const b = _pxBox[m], n = _pxCount[m];
+    const dx = b.x1 - b.x0, dz = b.z1 - b.z0;
+    const lo = Math.min(dx, dz), hi = Math.max(dx, dz);
+    // Barre = une seule rangée (bloc très allongé) ; sinon matrice, posée
+    // dans les axes par `pixel_fixture.layout_pixels` (quarts de tour).
+    const isBar = n > 1 && lo <= hi * 0.25;
+    b.isBar = isBar;
+    // Axe ORIENTÉ, du 1er au dernier pixel. Calculé sur l'encombrement
+    // (dx, dz ≥ 0), il perdait le sens de la diagonale : une barre tournée
+    // de −45° s'affichait à +45°.
+    b.angle = isBar ? Math.atan2(b.lz - b.fz, b.lx - b.fx) : 0;
+    b.cx = b.sx / n; b.cz = b.sz / n;
+    // Barre : centre = milieu des deux extrémités, et pas régulier entre
+    // elles (cf. `_s` plus bas — positions stockées arrondies à ≈ 3 cm).
+    if (isBar) {
+      b.cx = (b.fx + b.lx) / 2; b.cz = (b.fz + b.lz) / 2;
+      b.span = Math.hypot(b.lx - b.fx, b.lz - b.fz);
+    }
+    let pitch = 0.16;
+    if (isBar) pitch = Math.hypot(dx, dz) / (n - 1);
+    else if (n > 1) pitch = hi / Math.max(1, Math.round(Math.sqrt(n)) - 1);
+    // Barre : segments jointifs (ruban continu, comme une vraie barre LED) ;
+    // matrice : cellules séparées par un léger jour.
+    b.cell = isBar ? Math.max(0.012, Math.min(0.16, pitch * 0.94))
+                   : Math.max(0.03, Math.min(0.16, pitch * 0.82));
+  }
 
   for (let i = 0; i < projectors.length; i++) {
     const p   = projectors[i];
@@ -2501,66 +2676,177 @@ window.updateScene = function(projectors, _anim) {
     if (_anim && !obj._ptMoving) continue;
 
     // ── Barre/matrice : rendu per-pixel (cellule légère, pas de corps/faisceau) ──
-    if (p.is_pixel || p.is_master) {
+    // Barre LED SIMPLE (une seule couleur, pas de pixels) : c'est une
+    // réglette, pas un PAR. Elle passait par le rendu PAR — corps rond et
+    // faisceau serré de spot (le cône large était réservé à « PAR LED »).
+    // Elle prend désormais le rendu des barres : boîtier allongé, bande
+    // lumineuse sur toute la longueur, nappe au sol étirée dans son axe.
+    const _bar1 = p.fixture_type === 'Barre LED' && p.matrix_id == null
+                  && !p.is_pixel && !p.is_master;
+    if (p.is_pixel || p.is_master || _bar1) {
       // Masquer les formes « fixture classique » de ce slot
       obj.parGrp.visible = obj.mhGrp.visible = false;
       _hideLaser(obj);
       obj.cVol.visible = obj.lensGlow.visible = false;
+      _hideBarBeams(obj, 0);
       obj.pool.visible  = obj.halo.visible  = false;
       obj.ptLight.visible = false;
       obj._fx = null;
       if (obj._mach) _machStop(obj);
 
-      if (p.is_master) {                 // canaux globaux : aucune forme
-        obj.pxCell.visible = false;
-        obj.pxGlow.visible = false; obj.pxHalo.visible = false;
-        obj.pxHousing.visible = false;
-        continue;
-      }
       const plvl = Math.max(0, Math.min(1, p.level / 100.0));
       const hy   = p.fixture_height ?? 7.0;
 
-      // Boîtier de la barre (seul le représentant porte `housing`)
-      if (p.housing) {
-        const h = p.housing;
+      // Barre simple : pas de patch de pixels pour en déduire la longueur →
+      // 1 m (format courant), ajusté par la colonne « Taille ».
+      const _ry = (p.rot3d_y ?? 0) * Math.PI / 180;
+      const _len1 = 1.0 * (p.fixture_scale ?? 1.0);
+      const bx = p.matrix_id != null ? _pxBox[p.matrix_id] : null;
+      // Lacet de la barre : RY pour une barre simple ; pour une barre à
+      // pixels, l'axe de ses pixels (RY les a déjà fait pivoter côté Python).
+      const _th = _bar1 ? _ry : (bx ? -bx.angle : 0);
+      // Centre de la barre = pivot du roulis RZ et de l'inclinaison RX
+      const _cx = _bar1 ? p.x : (bx ? bx.cx : p.x);
+      const _cz = _bar1 ? p.z : (bx ? bx.cz : p.z);
+      const _hy = hy + 0.02;
+      _barQuat(_th, p);
+
+      // Boîtier (seul le représentant porte `housing`)
+      const _hLen = _bar1 ? _len1 : (p.housing ? p.housing.len : 0);
+      if (_bar1 || p.housing) {
         obj.pxHousing.visible = _flags.fixtures;
-        obj.pxHousing.position.set(h.cx, hy + 0.02, h.cz);
-        obj.pxHousing.rotation.y = -h.angle;      // aligne l'axe X sur la barre
+        obj.pxHousing.position.set(_cx, _hy, _cz);
+        obj.pxHousing.quaternion.copy(_bq);
         // Seule la SECTION du boîtier suit la taille : sa longueur est celle
-        // de la barre réelle, déduite du patch. La rétrécir mentirait sur
-        // l'encombrement de l'appareil au lieu de l'ajuster.
+        // de la barre réelle, déduite du patch.
         const _hs = 0.11 * (p.fixture_scale ?? 1.0);
-        obj.pxHousing.scale.set(Math.max(0.2, h.len), _hs, _hs);
+        obj.pxHousing.scale.set(Math.max(0.2, _hLen), _hs, _hs);
       } else {
         obj.pxHousing.visible = false;
       }
 
+      // Faisceaux dans la fumée, portés par le slot qui porte le boîtier.
+      // Barre à pixels : un par pixel (plafond selon la qualité).
+      if (_bar1) {
+        // Barre simple : 3 tronçons de même couleur
+        const segs = [];
+        for (let k = 0; k < 3; k++)
+          segs.push({ s: ((k + 0.5) / 3 - 0.5) * _len1, lvl: plvl,
+                      r: p.r, g: p.g, b: p.b });
+        _barBeam(obj, p, _cx, _cz, hy, _len1, _th, segs);
+      } else if (p.housing && bx && bx.px) {
+        // Barre à pixels : un faisceau par pixel, ou par groupe de pixels
+        // voisins au-delà du plafond (couleur moyenne pondérée par le
+        // niveau). Matrice : un seul.
+        const px = bx.px.slice().sort((a, c) => a.i - c.i);
+        const K  = bx.isBar ? Math.min(_barPxCap(), px.length) : 1;
+        const _den = (bx.i1 - bx.i0) || 1;
+        const span = bx.isBar ? (bx.span || _hLen) : 0;
+        const segs = [];
+        for (let k = 0; k < K; k++) {
+          const a = Math.floor(k * px.length / K), e = Math.floor((k + 1) * px.length / K);
+          let sr = 0, sgc = 0, sb = 0, sw = 0, ss = 0;
+          for (let q = a; q < e; q++) {
+            sr += px[q].r * px[q].w; sgc += px[q].g * px[q].w;
+            sb += px[q].b * px[q].w; sw += px[q].w;
+            // Même abscisse que la LED dessinée (cf. `_s` plus bas)
+            ss += ((px[q].i - bx.i0) / _den - 0.5) * span;
+          }
+          const kk = sw > 1e-6 ? 1 / sw : 0;
+          segs.push({ s: K > 1 ? ss / Math.max(1, e - a) : 0,
+                      lvl: sw / Math.max(1, e - a),
+                      r: sr * kk, g: sgc * kk, b: sb * kk });
+        }
+        _barBeam(obj, p, _cx, _cz, hy, _hLen, _th, segs);
+      }
+      _barQuat(_th, p);    // _barBeam a pu recalculer l'orientation
+
+      // Master (canaux globaux) : le boîtier et le faisceau, pas de cellule.
+      // Il sortait AVANT le boîtier — or c'est lui le représentant dès que la
+      // barre a des canaux globaux : ces barres-là n'avaient jamais de boîtier.
+      if (p.is_master) {
+        obj.pxCell.visible = false;
+        obj.pxGlow.visible = false; obj.pxHalo.visible = false;
+        continue;
+      }
+
+      // Position de la LED : abscisse le long de la barre (0 pour une barre
+      // simple), puis orientation complète autour du centre. C'est ce qui
+      // met les pixels l'un au-dessus de l'autre quand la barre est debout.
+      // Barre à pixels : abscisse tirée du RANG du pixel, régulière — les
+      // positions stockées tremblent de ±3 cm (arrondi du plan 2D), ce qui
+      // faisait des LED en zigzag. Matrice : position réelle.
+      // `_t` : écart en travers, nul pour une barre, réel pour une matrice
+      // (sinon sa grille s'aplatissait en une seule ligne).
+      let _s = 0, _t = 0;
+      if (!_bar1 && bx) {
+        const ca = Math.cos(bx.angle), sa = Math.sin(bx.angle);
+        const dx = p.x - _cx, dz = p.z - _cz;
+        if (bx.isBar && bx.span > 0 && p.pixel_index != null && bx.i1 > bx.i0) {
+          _s = ((p.pixel_index - bx.i0) / (bx.i1 - bx.i0) - 0.5) * bx.span;
+        } else {
+          _s = dx * ca + dz * sa;
+          if (!bx.isBar) _t = -dx * sa + dz * ca;
+        }
+      }
+      const _lp = _barVec(_s, _bar1 ? -0.08 : -0.07, _t);
+      const lx = _cx + _lp[0], ly = _hy + _lp[1], lz = _cz + _lp[2];
       obj.pxCell.visible = true;
-      obj.pxCell.position.set(p.x, hy, p.z);
+      obj.pxCell.position.set(lx, ly, lz);
+      obj.pxCell.quaternion.copy(_bq);
+      if (_bar1) {
+        obj.pxCell.scale.set(Math.max(0.2, _len1 - 0.06) / 0.16, 0.25, 0.55);
+      } else {
+        // Segment à la taille du pas entre pixels. Barre : épaisseur FIXE en
+        // travers (≈ largeur de la face LED) ; liée au pas, une barre de 32
+        // pixels n'avait que des points de 4 cm.
+        const c = bx ? bx.cell / 0.16 : 1;
+        obj.pxCell.scale.set(c, 0.25, bx && bx.isBar ? 0.6 : c);
+      }
       _colBuf.setRGB(p.r/255, p.g/255, p.b/255);
       obj.pxCell.material.color.copy(_colBuf).multiplyScalar(0.25);
       obj.pxCell.material.emissive.copy(_colBuf);
-      // Émissif un peu plus fort : le bloom de la scène crée le glow diffus
-      obj.pxCell.material.emissiveIntensity = plvl > 0 ? (0.5 + plvl * 3.6) : 0;
-      // Nappe wash au sol : couche proche + halo large et très doux
-      if (plvl > 0.02) {
+      // Pas d'aura autour des barres (réalisme, 04/11/26) : à 4,1 le bloom
+      // saturait tout en blanc, une barre rouge/verte se lisait blanche.
+      obj.pxCell.material.emissiveIntensity = plvl > 0 ? (0.25 + plvl * 0.95) : 0;
+
+      // Tache au sol dans la direction d'éclairage ; barre qui éclaire à
+      // l'horizontale ou vers le haut (debout sur une tour) : rien au sol.
+      const _dn = _barVec(0, -1, 0);
+      let gx = lx, gz = lz, _hit = false;
+      if (_dn[1] < -0.17) {
+        const t = (ly - floorYAt(lx, lz)) / -_dn[1];
+        gx = lx + _dn[0] * t; gz = lz + _dn[2] * t; _hit = true;
+      }
+      if (plvl > 0.02 && _hit) {
+        // Part de chaque pixel : la barre entière éclaire le sol à peu près
+        // comme 1,6 pixel isolé, quel que soit son nombre de pixels.
+        const _n  = p.is_pixel ? (_pxCount[p.matrix_id] || 1) : 1;
+        const _ka = Math.min(1, 1.6 / _n);
+        const _r  = (0.45 + 1.1 * plvl) * bs;
+        // Barre simple : nappe étirée dans l'axe de la barre
+        const _ex = _bar1 ? _len1 * 0.6 : 0;
         obj.pxGlow.visible = true;
-        obj.pxGlow.position.set(p.x, 0.02, p.z);
-        obj.pxGlow.scale.setScalar((0.45 + 1.1 * plvl) * bs);   // plus large
+        obj.pxGlow.position.set(gx, floorYAt(gx, gz) + 0.02, gz);
+        obj.pxGlow.rotation.set(-Math.PI/2, 0, _bar1 ? _th : 0);
+        obj.pxGlow.scale.set(_r + _ex, _r, 1);
         obj.pxGlow.material.uniforms.uColor.value.copy(_colBuf);
-        obj.pxGlow.material.uniforms.uAlpha.value = 0.42 * plvl * window.glowGain;
+        obj.pxGlow.material.uniforms.uAlpha.value = 0.42 * plvl * _ka * window.glowGain;
         obj.pxHalo.visible = true;
-        obj.pxHalo.position.set(p.x, 0.012, p.z);
-        obj.pxHalo.scale.setScalar((0.45 + 1.1 * plvl) * bs * 2.6);
+        obj.pxHalo.position.set(gx, floorYAt(gx, gz) + 0.012, gz);
+        obj.pxHalo.rotation.set(-Math.PI/2, 0, _bar1 ? _th : 0);
+        obj.pxHalo.scale.set(_r * 2.6 + _ex, _r * 2.6, 1);
         obj.pxHalo.material.uniforms.uColor.value.copy(_colBuf);
-        obj.pxHalo.material.uniforms.uAlpha.value = 0.13 * plvl * window.glowGain;
+        obj.pxHalo.material.uniforms.uAlpha.value = 0.13 * plvl * _ka * window.glowGain;
       } else {
         obj.pxGlow.visible = false;
         obj.pxHalo.visible = false;
       }
       continue;
     }
-    // Slot redevenu une fixture classique : cacher les cellules pixel
+    // Slot redevenu une fixture classique : cacher les cellules pixel (et
+    // les faisceaux supplémentaires d'une barre)
+    if (obj._bb) _hideBarBeams(obj, 1);
     obj.pxCell.visible = false;
     obj.pxGlow.visible = false;
     obj.pxHalo.visible = false;
@@ -2797,13 +3083,22 @@ window.updateScene = function(projectors, _anim) {
       // s'éteindrait en quelques dixièmes de seconde.
       if (_isSel) obj._selA = _bu.uAlpha.value;
 
-      // Halo de lentille : grossit et s'intensifie avec le niveau
+      // Halo de lentille : grossit et s'intensifie avec le niveau.
+      // PAR LED : AUCUN halo (choix de Nico, 04/11/26 — « coller à la
+      // réalité »). Un PAR à LED montre sa face allumée et la lumière qu'il
+      // projette ; la sphère colorée de ~2 m qui l'entourait n'existe pas en
+      // vrai. La face, elle, reste lumineuse (lentille émissive du corps).
+      if (isWash) {
+        obj.lensGlow.visible = false;
+        obj._selG = undefined;
+      } else {
       obj.lensGlow.visible = true;
       obj.lensGlow.position.set(lensX, lensY, lensZ);
       obj.lensGlow.scale.setScalar((0.30 + 0.85 * lvl) * (isWash ? 1.25 : 1.0) * bs);
       obj.lensGlow.material.color.copy(_colBuf);
       obj.lensGlow.material.opacity = Math.min(1.0, (0.35 + 0.65 * lvl) * lvl * window.glowGain);
       if (_isSel) obj._selG = obj.lensGlow.material.opacity;
+      }
 
       // Gobo : calculé ici et non dans le bloc « tache au sol », car il
       // découpe AUSSI le faisceau — y compris quand la lyre pointe vers le
@@ -2878,7 +3173,7 @@ window.updateScene = function(projectors, _anim) {
         // divisé par `_zoomF` (cf. plus haut), si bien que la largeur VISIBLE
         // du faisceau varie en _zoomF^1,5. La tache doit suivre la même loi.
         // (poolR : calculé plus haut, partagé avec l'échelle du gobo)
-        obj.pool.position.set(fx2, 0.02, fz2);
+        obj.pool.position.set(fx2, floorYAt(fx2, fz2) + 0.02, fz2);
         poseFloorPool(obj.pool, _gThrow, cosI, poolR);
         obj.pool.material.uniforms.uColor.value.copy(_colBuf);
         obj.pool.material.uniforms.uAlpha.value = (isWash ? 0.52 : 0.70) * lvl;
@@ -2897,7 +3192,7 @@ window.updateScene = function(projectors, _anim) {
         // tache principale, qui faisait « la tache est plus large que le
         // faisceau » (capture `depasse.png`). À 1.7 il redevient ce qu'il doit
         // être : la pénombre juste autour de la tache.
-        obj.halo.position.set(fx2, 0.015, fz2);
+        obj.halo.position.set(fx2, floorYAt(fx2, fz2) + 0.015, fz2);
         poseFloorPool(obj.halo, _gThrow, cosI, poolR * 1.7);
         obj.halo.material.uniforms.uColor.value.copy(_colBuf);
         obj.halo.material.uniforms.uAlpha.value = 0.15 * lvl * window.glowGain;
@@ -3201,7 +3496,7 @@ function _orientPrism(obj, t) {
 
     if (s.hitsFloor) {
       const _ppu = pp0[k].material.uniforms;
-      pp0[k].position.set(bx, 0.02, bz);
+      pp0[k].position.set(bx, floorYAt(bx, bz) + 0.02, bz);
       poseFloorPool(pp0[k], _gThrow, s.cosI, s.poolR);   // une copie a la taille de l'original
       _ppu.uColor.value.copy(_fxColBuf);
       _ppu.uAlpha.value = _centerPoolA * 0.62;
@@ -4567,6 +4862,8 @@ const SCENE_PRESETS = {
       { x: 10.7, y:1.9, z:-3.95, w:3.3, h:5.8, fit:'cover' },
     ],
     trusses: [],
+    // Plateau de `_makeFestivalStage` : (2·RX + 0,8) × (2·RZ + 0,8), DY = 0,12
+    deck: { x: 6.4, z: 4.4, y: 0.12 },
     buildProps() { _propsGrp.add(_makeFestivalStage()); }
   },
   discotheque: {
@@ -4730,6 +5027,7 @@ window.setScenePreset = function(name) {
                  + `scène nue. À déclarer si ce décor doit dessiner des trusses.`);
   }
   _propsGrp.clear();
+  _deck = preset.deck || null;
   buildTrusses(preset.trusses);
   preset.buildProps();
   // L'écran suit le décor : chaque scène sait où le sien tombe (fond de scène

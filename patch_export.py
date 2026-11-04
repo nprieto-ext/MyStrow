@@ -122,12 +122,20 @@ def build_patch_rows(projectors, profile_of):
             # matrice à canaux de tête (Dim/Strobe globaux) commence AVANT son
             # premier pixel. Partir du pixel 1 imprimerait une adresse de départ
             # fausse — celle qu'on va justement composer sur l'appareil.
-            master_profile = []
+            # Canaux globaux de tête (avant le 1er pixel) et de fin (après le
+            # dernier, ex. 16 × W d'une barre 32 px RGB) : deux masters.
+            master_profile, tail_profile = [], []
+            _px0 = min(p.start_address for _j, p in pixels)
             for j, p in members:
                 if getattr(p, 'matrix_role', None) == 'master':
-                    master_profile = profile_of(j, p)
+                    if p.start_address < _px0:
+                        master_profile = profile_of(j, p)
+                    else:
+                        tail_profile = profile_of(j, p)
             profile = (list(master_profile) + ["⟨px⟩"] + list(px_profile)
                        if master_profile else list(px_profile))
+            if tail_profile:
+                profile += ["⟨/px⟩"] + list(tail_profile)
             addr = min(p.start_address for _j, p in members)
             end = max(p.start_address + max(len(profile_of(j, p)), 1) - 1
                       for j, p in members)

@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QColor
 
-from pixel_map import GradientSpec, spatial_positions, sample_gradient, color_for
+from pixel_map import PRESETS, GradientSpec, spatial_positions, sample_gradient, color_for
 from plan_de_feu import PlanDeFeu
 from projector import Projector
 
@@ -351,6 +351,95 @@ def test_vignettes_accelerent_sans_sauter():
     assert saut < 0.1, saut
     dlg._stop()
 
+def test_lyre_a_roue_prend_la_couleur_du_degrade_et_la_rend_a_l_arret():
+    """Lyre sans RVB : la teinte vient de la ROUE. Le dégradé doit la faire
+    tourner (sinon lyre blanche en 3D et en vrai) puis la rendre à l'arrêt."""
+    from main_window import MainWindow
+
+    class _MW:
+        _GENERIC_WHEEL_SLOTS = MainWindow._GENERIC_WHEEL_SLOTS
+        _update_color_wheel = MainWindow._update_color_wheel
+        dmx = None
+
+    lyres = [Projector("contre", f"Lyre {i+1}", "Moving Head") for i in range(2)]
+    for i, p in enumerate(lyres):
+        p.canvas_x, p.canvas_y = 0.2 + i * 0.6, 0.5
+        p.dmx_profile = ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1"]
+        p.color_wheel_slots = []
+        p.color_wheel = 0          # slot blanc
+    pdf = PlanDeFeu(lyres)
+    pdf.main_window = _MW()
+    spec = GradientSpec(stops=["#ff0000", "#0000ff"], speed=0)
+    pdf.start_gradient_effect(lyres, spec)
+    assert lyres[0].color_wheel == 20     # rouge
+    assert lyres[1].color_wheel == 128    # bleu
+    pdf.stop_gradient_effect(lyres)
+    assert all(p.color_wheel == 0 for p in lyres)
+
+
+def test_lyre_a_roue_noir_du_degrade_passe_par_le_dim():
+    """Rouge → Noir : la lyre au noir doit s'éteindre au DIM, la roue
+    gardant sa dernière teinte (pas de rotation pour faire un noir)."""
+    from main_window import MainWindow
+
+    class _MW:
+        _GENERIC_WHEEL_SLOTS = MainWindow._GENERIC_WHEEL_SLOTS
+        _update_color_wheel = MainWindow._update_color_wheel
+        dmx = None
+
+    lyres = [Projector("contre", f"Lyre {i+1}", "Moving Head") for i in range(2)]
+    for i, p in enumerate(lyres):
+        p.canvas_x, p.canvas_y = 0.2 + i * 0.6, 0.5
+        p.dmx_profile = ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1"]
+        p.color_wheel_slots = []
+        p.color_wheel = 20         # déjà sur le rouge
+        p.level = 100
+    pdf = PlanDeFeu(lyres)
+    pdf.main_window = _MW()
+    pdf.start_gradient_effect(lyres, GradientSpec(stops=["#ff0000", "#000000"], speed=0))
+    assert lyres[0].level > 90 and lyres[0].color_wheel == 20
+    assert lyres[1].level == 0 and lyres[1].color_wheel == 20
+
+
+
+def test_roue_sans_teinte_intermediaire():
+    """Lyre à roue : rouge → bleu bascule franc (pas de violet) ; rouge →
+    noir garde le rouge et baisse la luminosité."""
+    spec = GradientSpec(stops=["#ff0000", "#0000ff"], motif="degrade", speed=0)
+    for s in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0):
+        c = color_for(spec, s, 0.0, wheel=True)
+        assert c in ((255, 0, 0), (0, 0, 255)), c
+    spec = GradientSpec(stops=["#ff0000", "#000000"], motif="degrade", speed=0)
+    c = color_for(spec, 0.5, 0.0, wheel=True)
+    assert c[1] == 0 and c[2] == 0 and 0 < c[0] < 255
+
+
+def test_panneau_lyres_a_roue_ne_propose_que_la_roue():
+    """Sélection 100 % lyres à roue : palettes = couleurs de la roue (+ noir) ;
+    une sélection mixte garde la palette complète."""
+    import pixel_map_panel as pmp
+    from main_window import MainWindow
+    wheel = {QColor(sl["color"]).name() for sl in MainWindow._GENERIC_WHEEL_SLOTS}
+    wheel.add("#000000")
+    lyres = [Projector("contre", f"Lyre {i+1}", "Moving Head") for i in range(2)]
+    for i, p in enumerate(lyres):
+        p.canvas_x, p.canvas_y = 0.2 + i * 0.6, 0.5
+        p.dmx_profile = ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1"]
+        p.color_wheel_slots = []
+    pdf = PlanDeFeu(lyres)
+    dlg = pmp.PixelMapDialog(pdf, lyres)
+    assert dlg.wheel
+    assert all(c.lower() in wheel for st in dlg._presets.values() for c in st)
+    assert all(c.lower() in wheel for c in dlg.spec.stops)
+    dlg._stop()
+
+    par = Projector("face", "PAR", "PAR LED")
+    par.canvas_x, par.canvas_y = 0.5, 0.2
+    pdf2 = PlanDeFeu(lyres + [par])
+    dlg2 = pmp.PixelMapDialog(pdf2, lyres + [par])
+    assert dlg2.wheel is None and dlg2._presets is PRESETS
+    dlg2._stop()
+
 
 if __name__ == "__main__":
     import sys
@@ -362,3 +451,4 @@ if __name__ == "__main__":
             except Exception as e:
                 fails += 1; print("FAIL", name, repr(e))
     sys.exit(1 if fails else 0)
+

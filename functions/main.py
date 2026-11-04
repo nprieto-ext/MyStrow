@@ -999,8 +999,10 @@ def _axonaut_create_invoice(
     tax_rate_stripe: float | None = None,
     stripe_tax: bool = False,
     quantity: int = 1,
-) -> None:
+) -> str | None:
     """Crée une facture dans Axonaut et stocke le lien dans Firestore.
+
+    Renvoie le lien PDF public de la facture (None si elle n'est pas créée).
 
     `amount_ttc` est le montant réellement encaissé par Stripe, donc du TTC :
     c'est le prix affiché au client (23,99 €). Axonaut, lui, attend un prix
@@ -1071,10 +1073,7 @@ def _axonaut_create_invoice(
 
     invoice_id = result.get("id")
     _axonaut_check_lines(invoice_id, lines)
-    invoice_url = (result.get("pdf_url")
-                   or result.get("public_link")
-                   or result.get("link")
-                   or f"https://axonaut.com/invoice/{invoice_id}")
+    invoice_url = _axonaut_public_pdf_url(invoice_id, result)
     print(f"[Axonaut] Facture creee : id={invoice_id}")
 
     # Encaisse la facture avec le montant RÉELLEMENT prélevé par Stripe.
@@ -1103,6 +1102,21 @@ def _axonaut_create_invoice(
             print(f"[Firebase] Facture stockée pour uid={uid}")
         except Exception as e:
             print(f"[Firebase] Erreur stockage facture : {e}")
+    return invoice_url
+
+
+def _axonaut_public_pdf_url(invoice_id: int, result: dict | None = None) -> str:
+    """Lien PDF de la facture ouvrable par le CLIENT, sans compte Axonaut.
+
+    `https://axonaut.com/invoice/{id}` (l'ancien repli, stocké pour toutes les
+    factures jusqu'au 04/11/2026) mène à l'interface Axonaut : le client tombe
+    sur une page de connexion. Seul `public_path` est public.
+    """
+    url = (result or {}).get("public_path") or ""
+    if not url and invoice_id:
+        url = ((_axonaut("GET", f"/invoices/{invoice_id}") or {})
+               .get("public_path") or "")
+    return url or (f"https://axonaut.com/invoice/{invoice_id}" if invoice_id else "")
 
 
 def _axonaut_invoice_number(invoice_id: int) -> str:
@@ -1924,11 +1938,8 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
     else:
         _expedition_mcf(order_ref, order_id, ref_client, email, address, pack)
 
-    # 2. Confirmation client, même si l'expédition doit être reprise à la
-    #    main : son paiement est bien reçu.
-    _email_pack_confirmation(email, pack["plan"], ref_client, lang)
-
-    # 2 bis. Pack à vie : licence posée maintenant, sur l'adresse du paiement.
+    # 2. Pack à vie : licence posée maintenant, sur l'adresse du paiement.
+    uid = ""
     if pack["plan"] == "pack_vie":
         try:
             uid = _pack_lifetime(email, lang)
@@ -1939,17 +1950,31 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
                          f"<p>{email} — {order_id}<br>Erreur : {str(e)[:400]}</p>"
                          "<p>Poser la licence lifetime à la main (admin_panel).</p>")
 
+    # 3. Facture Axonaut, AVANT la confirmation : son lien PDF y figure (les
+    #    acheteurs de packs ne recevaient jamais leur facture). Pack à vie : le
+    #    compte existe déjà (2), la facture va aussi dans son espace client.
+    #    Autres packs : pas encore de compte (il naît à l'activation du code de
+    #    la boîte), donc pas d'uid — le lien reste dans boitier_commandes.
+    invoice_url = ""
     if not pack["plan"]:
         print("[Pack] Pack inconnu : facture Axonaut à émettre à la main")
-        return
+    else:
+        try:
+            company_id = _axonaut_get_or_create_company(
+                email, address.get("name", ""), address=address, vat_number=vat_number)
+            invoice_url = _axonaut_create_invoice(
+                company_id, pack["plan"], amount_ttc, stripe_ref=stripe_ref, uid=uid,
+                tax_rate_stripe=tax_rate, stripe_tax=stripe_tax,
+                quantity=pack.get("quantity") or 1) or ""
+            if invoice_url:
+                order_ref.update({"invoice_url": invoice_url})
+        except Exception as e:
+            print(f"[Pack] Facture Axonaut KO {email} : {e}")
 
-    # 3. Facture Axonaut. Pas d'uid : l'acheteur d'un pack n'a pas encore de
-    #    compte (il le crée en activant le code de la boîte).
-    company_id = _axonaut_get_or_create_company(email, address.get("name", ""),
-                                                address=address, vat_number=vat_number)
-    _axonaut_create_invoice(company_id, pack["plan"], amount_ttc, stripe_ref=stripe_ref,
-                            tax_rate_stripe=tax_rate, stripe_tax=stripe_tax,
-                            quantity=pack.get("quantity") or 1)
+    # 4. Confirmation client — toujours envoyée, même si l'expédition ou la
+    #    facture doivent être reprises à la main : son paiement est bien reçu.
+    _email_pack_confirmation(email, pack["plan"], ref_client, lang,
+                             invoice_url=invoice_url)
 
 
 def _pack_lifetime(email: str, lang: str) -> str:
@@ -2002,8 +2027,15 @@ sur votre compte : connectez-vous simplement à MyStrow avec vos identifiants ha
     _send_email(email, subject, content, lang=lang)
 
 
-def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") -> None:
+def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr",
+                             invoice_url: str = "") -> None:
     label = _plan_label(plan, lang) if plan else ("MyStrow Pack" if lang == "en" else "Pack MyStrow")
+    facture = ""
+    if invoice_url:
+        lien = html_escape(invoice_url)
+        facture = (f'<p>🧾 &nbsp;Your invoice: <a href="{lien}">download the PDF</a>.</p>'
+                   if lang == "en" else
+                   f'<p>🧾 &nbsp;Votre facture : <a href="{lien}">télécharger le PDF</a>.</p>')
     if plan == "boitier":
         licence = ("<p>To use it with MyStrow, start with the free trial, then pick a license on "
                    "<a href=\"https://mystrow.fr/shop#formules\">mystrow.fr/shop</a>. It also works with any "
@@ -2030,6 +2062,7 @@ def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr") 
 <p>Your {objet} is being prepared. You will receive a second email with the
 tracking number as soon as it ships (usually within 1 to 2 business days).</p>
 {licence}
+{facture}
 """
     else:
         subject = f"MyStrow — Commande confirmée ({ref})"
@@ -2039,6 +2072,7 @@ tracking number as soon as it ships (usually within 1 to 2 business days).</p>
 <p>Votre {objet} est en préparation. Vous recevrez un second email avec le numéro
 de suivi dès son expédition (en général sous 1 à 2 jours ouvrés).</p>
 {licence}
+{facture}
 """
     # Trustpilot en copie cachée (« Quick set-up ») : Trustpilot invite le client
     # à laisser un avis 7 jours après l'achat. Vide = pas d'invitation.

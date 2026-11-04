@@ -684,7 +684,7 @@ def _apply_scene3d_meta(proj, src):
         proj._pos3d_src = src['_pos3d_src']
 
 
-def _infer_pixel_matrix(profile):
+def _infer_pixel_matrix(profile, fixture_type=None):
     """Déduit la géométrie d'une barre/matrice depuis un profil DMX brut.
 
     Beaucoup de fixtures n'apportent aucune géométrie : la bibliothèque QLC+
@@ -724,6 +724,43 @@ def _infer_pixel_matrix(profile):
                 "pixel_channels": list(cell),
                 "head": [], "tail": [], "offset": 0, "order": "perPixel",
             }
+
+    # Motif encadré de canaux globaux. Exemple réel, Acme Pixel Line IP M10 :
+    # 117 canaux = [Dim, Speed, Strobe, Strobe, Mode] + 32 × [R,G,B] + 16 × W.
+    # Sans ce cas, la barre était patchée comme UN projecteur de 117 canaux
+    # (vignette minuscule en 2D, réglette unicolore en 3D).
+    # Garde-fous plus stricts que ci-dessus, puisque tout le profil ne se
+    # répète pas : au moins 4 pixels, et le motif couvre au moins 60 % des
+    # canaux. Tête limitée à 16 canaux globaux. Réservé aux barres et
+    # matrices : une lyre-barre (pan/tilt) ou un PAR à zones reste un appareil.
+    if fixture_type not in ("Barre LED", "Matrice LED"):
+        return None
+    best = None   # (couverture, -start, -cell_len, start, cell_len, reps)
+    for start in range(0, min(16, n - 8) + 1):
+        for cell_len in range(2, 9):
+            cell = profile[start:start + cell_len]
+            if len(cell) < cell_len or not any(c in _COLORS for c in cell):
+                continue
+            reps = 1
+            while profile[start + reps * cell_len:start + (reps + 1) * cell_len] == cell:
+                reps += 1
+            cover = reps * cell_len
+            if reps < 4 or cover < 0.6 * n:
+                continue
+            # À couverture égale : la tête la plus courte, puis la plus
+            # petite cellule (période fondamentale).
+            cand = (cover, -start, -cell_len, start, cell_len, reps)
+            if best is None or cand > best:
+                best = cand
+    if best is not None:
+        *_k, start, cell_len, reps = best
+        end = start + reps * cell_len
+        return {
+            "rows": 1, "cols": reps, "pixel_count": reps,
+            "pixel_channels": list(profile[start:start + cell_len]),
+            "head": list(profile[:start]), "tail": list(profile[end:]),
+            "offset": start, "order": "perPixel",
+        }
     return None
 
 
@@ -754,7 +791,8 @@ def _preset_pixel_spec(preset):
         # Aucune géométrie fournie : la déduire du profil. C'est le cas de
         # toutes les fixtures issues de la bibliothèque QLC+, et de celles
         # saisies à la main dans l'éditeur.
-        mx = _infer_pixel_matrix(preset.get("profile"))
+        mx = _infer_pixel_matrix(preset.get("profile"),
+                                 preset.get("fixture_type"))
     if not isinstance(mx, dict):
         return None
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 import time as _time
 
-from PySide6.QtCore import Qt, QRectF, Signal, QPoint, QTimer
+from PySide6.QtCore import Qt, QRectF, Signal, QPoint, QPointF, QTimer
 from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPen, QBrush, QFont
 from PySide6.QtWidgets import (
     QDialog, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QWidget,
@@ -34,7 +34,67 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import tr, TRANSLATIONS
-from pixel_map import GradientSpec, PRESETS, output_for, spatial_positions
+from pixel_map import (GradientSpec, PRESETS, output_for, spatial_positions, spec_positions,
+                       is_wheel_fixture)
+
+
+# ── Lyres à roue de couleurs ────────────────────────────────────────────────
+def _hue_name(hx):
+    c = QColor(hx)
+    if c.saturation() < 40:
+        return tr("pxm_c_white")
+    h = c.hue()
+    for lim, key in ((15, "red"), (45, "orange"), (70, "yellow"), (160, "green"),
+                     (200, "cyan"), (255, "blue"), (290, "violet"), (340, "pink")):
+        if h < lim:
+            return tr("pxm_c_" + key)
+    return tr("pxm_c_red")
+
+
+def wheel_colors(plan, targets):
+    """Couleurs de la roue si la sélection n'est QUE des lyres à roue (sinon
+    None : un PAR RVB garde la palette complète, chaque lyre prenant alors le
+    slot le plus proche). Roue non calibrée → table générique de l'app."""
+    if not targets or not all(is_wheel_fixture(p) for p in targets):
+        return None
+    slots = next((getattr(p, 'color_wheel_slots', None) for p in targets
+                  if getattr(p, 'color_wheel_slots', None)), None)
+    if not slots:
+        mw = getattr(plan, 'main_window', None)
+        slots = getattr(mw, '_GENERIC_WHEEL_SLOTS', None)
+        if not slots:
+            from main_window import MainWindow
+            slots = MainWindow._GENERIC_WHEEL_SLOTS
+    out = []
+    for sl in slots:
+        hx = QColor(sl.get('color', '#ffffff')).name()
+        if hx not in out and hx != "#000000":
+            out.append(hx)
+    return out or None
+
+
+def wheel_presets(colors):
+    """Palettes faites des SEULES couleurs de la roue : chaque couleur sur
+    noir (le noir se fait au dim), puis toute la roue."""
+    pres = {}
+    for hx in colors:
+        pres[f"{_hue_name(hx)}/{tr('pxm_c_black')}"] = [hx, "#000000"]
+    if len(colors) >= 3:
+        pres[tr("pxm_whole_wheel")] = [c for c in colors
+                                       if QColor(c).saturation() >= 40] or list(colors)
+    return pres
+
+
+def snap_to_wheel(stops, colors):
+    """Ramène chaque couleur sur la couleur de roue la plus proche (le noir
+    reste noir)."""
+    from core import cw_slot_for_color
+    slots = [{"color": c} for c in colors]
+    out = []
+    for hx in stops:
+        best = cw_slot_for_color(slots, QColor(hx))
+        out.append("#000000" if best is None else best["color"])
+    return out
 
 
 # Clés propres au panneau, ajoutées au dictionnaire global sans écraser
@@ -57,14 +117,21 @@ _T = {
     "pxm_t_rampe":   {"fr": "Rampes", "en": "Ramps"},
     "pxm_rep_1":     {"fr": "1 passage", "en": "1 pass"},
     "pxm_rep_n":     {"fr": "{n} à la fois", "en": "{n} at once"},
-    "pxm_d_out":     {"fr": "Du centre vers les bords", "en": "From the centre outwards"},
-    "pxm_d_in":      {"fr": "⊚  Bords → centre", "en": "⊚  Edges → centre"},
+    "pxm_d_out":     {"fr": "S'ouvre depuis le centre : le motif part du milieu et s'étale vers les bords",
+                      "en": "Opens from the centre: the pattern starts in the middle and spreads outwards"},
+    "pxm_d_in":      {"fr": "⊚  Vers le centre", "en": "⊚  To the centre"},
+    "pxm_d_in_tip":  {"fr": "L'inverse du ◎ : le motif part des bords et se referme au milieu",
+                      "en": "The reverse of ◎: the pattern starts at the edges and closes in the middle"},
     "pxm_d_rnd":     {"fr": "🎲  Aléatoire", "en": "🎲  Random"},
     "pxm_d_arrow":   {"fr": "Vers {dir}", "en": "Towards {dir}"},
     "pxm_colors":    {"fr": "COULEURS", "en": "COLOURS"},
     "pxm_dim":       {"fr": "DIM", "en": "DIM"},
     "pxm_dim_tip":   {"fr": "Intensité générale de l'effet", "en": "Overall intensity of the effect"},
     "pxm_color_tip": {"fr": "Couleur allumée", "en": "Lit colour"},
+    "pxm_color_n":   {"fr": "Couleur {n}", "en": "Colour {n}"},
+    "pxm_reset":     {"fr": "↺  Réinitialiser", "en": "↺  Reset"},
+    "pxm_reset_tip": {"fr": "Réinitialiser : reprendre les couleurs d'origine de la palette « {name} »",
+                      "en": "Reset: back to the original colours of the “{name}” palette"},
     "pxm_back_tip":  {"fr": "Fond (noir = éteint)", "en": "Background (black = off)"},
     "pxm_black":     {"fr": "NOIR", "en": "BLACK"},
     "pxm_back":      {"fr": "FOND", "en": "BACKGROUND"},
@@ -91,6 +158,19 @@ _T = {
     "pxm_ok_tip":    {"fr": "L'effet continue de tourner", "en": "The effect keeps running"},
     "pxm_pick":      {"fr": "Choisir la couleur", "en": "Pick the colour"},
     "pxm_other":     {"fr": "Autre…", "en": "Other…"},
+    "pxm_wheel_note": {"fr": "Lyres à roue : seulement les couleurs de leur roue, le noir passe par le dim",
+                       "en": "Colour-wheel heads: only their wheel colours, black goes through the dimmer"},
+    "pxm_whole_wheel": {"fr": "Toute la roue", "en": "Whole wheel"},
+    "pxm_c_white":   {"fr": "Blanc", "en": "White"},
+    "pxm_c_black":   {"fr": "Noir", "en": "Black"},
+    "pxm_c_red":     {"fr": "Rouge", "en": "Red"},
+    "pxm_c_orange":  {"fr": "Orange", "en": "Orange"},
+    "pxm_c_yellow":  {"fr": "Jaune", "en": "Yellow"},
+    "pxm_c_green":   {"fr": "Vert", "en": "Green"},
+    "pxm_c_cyan":    {"fr": "Cyan", "en": "Cyan"},
+    "pxm_c_blue":    {"fr": "Bleu", "en": "Blue"},
+    "pxm_c_violet":  {"fr": "Violet", "en": "Purple"},
+    "pxm_c_pink":    {"fr": "Rose", "en": "Pink"},
     "pxm_menu_tip":  {"fr": "Effets pixel : dégradés, vagues, chenillards… selon la "
                             "position des projecteurs sur le plan.",
                       "en": "Pixel effects: gradients, waves, chases… following the "
@@ -251,7 +331,7 @@ class _MotifTile(QAbstractButton):
         spec = self._spec()
         n = self.CELLS
         pts = [(i / (n - 1), 0.5) for i in range(n)]
-        pos = spatial_positions(pts, spec.shape, spec.angle)
+        pos = spec_positions(pts, spec)
         # Phase commune à toutes les vignettes, accumulée (cf. preview_phase)
         turns = self.dlg.preview_phase()
         top = r.top() + 29
@@ -332,6 +412,11 @@ class _Swatch(QAbstractButton):
     def set_color(self, hx):
         self.hx = hx; self.update()
 
+    def set_small(self, small):
+        s = 32 if small else 44
+        if self.width() != s:
+            self.setFixedSize(s, s)
+
     def enterEvent(self, ev):
         self.update(); super().enterEvent(ev)
 
@@ -348,19 +433,43 @@ class _Swatch(QAbstractButton):
         p.end()
 
 
+class _ArrowSep(QWidget):
+    """Flèche fine entre deux pastilles (le « ▶ » texte s'affichait en
+    pavé selon la police)."""
+
+    def __init__(self, small=False, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(14 if small else 26, 32 if small else 44)
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        y = h / 2.0
+        pen = QPen(QColor("#7a7a7a"), 1.6)
+        pen.setCapStyle(Qt.RoundCap); pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        x0, x1 = 2.0, w - 2.0
+        p.drawLine(QPointF(x0, y), QPointF(x1, y))
+        a = 4.0
+        p.drawLine(QPointF(x1 - a, y - a), QPointF(x1, y))
+        p.drawLine(QPointF(x1 - a, y + a), QPointF(x1, y))
+        p.end()
+
+
 class _ColorPopup(QFrame):
     """Palette rapide sous une pastille : 10 couleurs + « Autre… »."""
 
     picked = Signal(str)
 
-    def __init__(self, current, parent=None):
+    def __init__(self, current, parent=None, colors=None, allow_other=True):
         super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
         self.setStyleSheet("QFrame{background:#161616;border:1px solid #333;"
                            "border-radius:8px;}")
         self._current = current
         lay = QVBoxLayout(self); lay.setContentsMargins(8, 8, 8, 8); lay.setSpacing(6)
         grid = QGridLayout(); grid.setSpacing(5)
-        for i, hx in enumerate(QUICK_COLORS):
+        for i, hx in enumerate(colors or QUICK_COLORS):
             b = QPushButton(); b.setFixedSize(30, 30)
             b.setCursor(Qt.PointingHandCursor)
             sel = hx.lower() == (current or "").lower()
@@ -371,6 +480,8 @@ class _ColorPopup(QFrame):
             b.clicked.connect(lambda _=False, c=hx: self._choose(c))
             grid.addWidget(b, i // 5, i % 5)
         lay.addLayout(grid)
+        if not allow_other:
+            return
         other = QPushButton(tr("pxm_other"))
         other.setStyleSheet("QPushButton{background:#1c1c1c;color:#aaa;border:1px solid #333;"
                             "border-radius:6px;padding:4px;font-size:11px;}"
@@ -411,7 +522,18 @@ class PixelMapDialog(QDialog):
                          speed=0.4, gap=0.3)
         if self.spec.repeat not in REPEATS:
             self.spec.repeat = 1.0
+        # Sélection 100 % lyres à roue : on ne propose QUE leurs couleurs.
+        self.wheel = wheel_colors(plan, self.targets)
+        if self.wheel:
+            self._presets = wheel_presets(self.wheel)
+            self.spec.stops = snap_to_wheel(self.spec.stops, self.wheel)
+        else:
+            self._presets = PRESETS
         self.spec.reverse = False
+        # Palette d'origine (pour ↺) : celle dont on part, si elle en est une
+        self._palette_ref = next(
+            (nm for nm, st in self._presets.items()
+             if [x.lower() for x in st] == [x.lower() for x in self.spec.stops]), None)
         self._t0 = _time.monotonic()
         self._last_tick = self._t0
         self._phase = 0.0
@@ -494,6 +616,7 @@ class PixelMapDialog(QDialog):
         sense.addLayout(pad)
         sense.addSpacing(4)
         self._in_btn = QPushButton(tr("pxm_d_in")); self._in_btn.setCheckable(True)
+        self._in_btn.setToolTip(tr("pxm_d_in_tip"))
         self._in_btn.setStyleSheet(_SS_SENSE)
         self._in_btn.clicked.connect(lambda: self._set_sense(("in",)))
         self._rnd_btn = QPushButton(tr("pxm_d_rnd")); self._rnd_btn.setCheckable(True)
@@ -542,19 +665,36 @@ class PixelMapDialog(QDialog):
         lbl = QLabel(tr("pxm_colors")); lbl.setStyleSheet(_SS_SEC)
         cbox.addWidget(lbl)
         crow = QHBoxLayout(); crow.setSpacing(10)
-        self.sw1 = _Swatch(self.spec.stops[0], tr("pxm_color_tip"))
-        self.sw2 = _Swatch(self.spec.stops[-1], tr("pxm_back_tip"))
-        self.sw1.clicked.connect(lambda: self._pick_color(0))
-        self.sw2.clicked.connect(lambda: self._pick_color(1))
-        arrow = QLabel("──▶"); arrow.setStyleSheet("color:#666;font-size:13px;")
-        sw = QHBoxLayout(); sw.setSpacing(6)
-        sw.addWidget(self.sw1); sw.addWidget(arrow); sw.addWidget(self.sw2)
-        swv = QVBoxLayout(); swv.addLayout(sw); swv.addStretch()
+        # UNE pastille par couleur de la palette (avant : la 1re et la
+        # dernière seulement — « Police » s'affichait rouge → noir, son bleu
+        # était invisible et inéditable ; remontée de Nico, 04/11/26). Chaque
+        # pastille ne change QUE sa couleur ; ↺ rend celles de la palette.
+        self._sw_lay = QHBoxLayout(); self._sw_lay.setSpacing(4)
+        self._sws = []
+        self._rebuild_swatches()
+        # Juste SOUS les pastilles, aligné à gauche (demande de Nico)
+        self._reset_btn = QPushButton(tr("pxm_reset"))
+        self._reset_btn.setCursor(Qt.PointingHandCursor)
+        self._reset_btn.setStyleSheet(
+            "QPushButton{background:#1c1c1c;color:#ccc;border:1px solid #3a3a3a;"
+            "border-radius:6px;padding:3px 10px;font-size:11px;}"
+            "QPushButton:hover{color:#fff;border-color:#00d4ff;}"
+            "QPushButton:disabled{color:#555;border-color:#2a2a2a;}")
+        self._reset_btn.clicked.connect(self._reset_colors)
+        swv = QVBoxLayout(); swv.setSpacing(6)
+        swv.addLayout(self._sw_lay)
+        swv.addWidget(self._reset_btn, 0, Qt.AlignLeft)
+        swv.addStretch()
         crow.addLayout(swv)
         crow.addSpacing(12)
         pal = QGridLayout(); pal.setHorizontalSpacing(6); pal.setVerticalSpacing(6)
         self._chips = {}
-        for i, (name, stops) in enumerate(PRESETS.items()):
+        if self.wheel:
+            note = QLabel(tr("pxm_wheel_note"))
+            note.setStyleSheet("color:#c9a227;font-size:10px;")
+            note.setWordWrap(True)
+            cbox.addWidget(note)
+        for i, (name, stops) in enumerate(self._presets.items()):
             c = _PaletteChip(name, stops)
             c.clicked.connect(lambda _=False, nm=name: self._set_palette(nm))
             self._chips[name] = c
@@ -608,7 +748,9 @@ class PixelMapDialog(QDialog):
         stop.clicked.connect(self._stop)
         save = QPushButton(tr("pxm_save")); save.setStyleSheet(_SS_SAVE)
         save.setToolTip(tr("pxm_save_tip"))
-        save.clicked.connect(self._save)
+        # lambda : `clicked` envoie un booléen (False) qui arrivait dans
+        # `name` → pas de demande de nom puis `False.strip()` → plantage muet.
+        save.clicked.connect(lambda _=False: self._save())
         ok = QPushButton(tr("pxm_ok")); ok.setStyleSheet(_SS_OK)
         ok.setToolTip(tr("pxm_ok_tip"))
         ok.clicked.connect(self.close)
@@ -659,10 +801,18 @@ class PixelMapDialog(QDialog):
         for t in self._tiles:
             t.setChecked(t.motif == s.motif and t.repeat == s.repeat)
         for name, c in self._chips.items():
-            c.setChecked([x.lower() for x in PRESETS[name]] ==
+            c.setChecked([x.lower() for x in self._presets[name]] ==
                          [x.lower() for x in s.stops])
-        self.sw1.set_color(s.stops[0])
-        self.sw2.set_color(self.background_color())
+        if len(self._sws) != len(s.stops):
+            self._rebuild_swatches()
+        for w, hx in zip(self._sws, s.stops):
+            w.set_color(hx)
+        ref = self._presets.get(self._palette_ref) if self._palette_ref else None
+        self._reset_btn.setVisible(ref is not None)
+        if ref is not None:
+            self._reset_btn.setEnabled([x.lower() for x in ref] !=
+                                       [x.lower() for x in s.stops])
+            self._reset_btn.setToolTip(tr("pxm_reset_tip", name=self._palette_ref))
         fond = self.background_color()
         is_black = QColor(fond).lightness() < 10
         self.gap_title.setText(tr("pxm_black") if is_black else tr("pxm_back"))
@@ -706,22 +856,67 @@ class PixelMapDialog(QDialog):
         self._changed()
 
     def _set_palette(self, name):
-        self.spec.stops = list(PRESETS[name]); self._changed()
+        self._palette_ref = name
+        self.spec.stops = list(self._presets[name]); self._changed()
+
+    def _reset_colors(self):
+        if self._palette_ref in self._presets:
+            self._set_palette(self._palette_ref)
+
+    # Compat : 1re et dernière pastille
+    @property
+    def sw1(self):
+        return self._sws[0]
+
+    @property
+    def sw2(self):
+        return self._sws[-1]
+
+    def _rebuild_swatches(self):
+        while self._sw_lay.count():
+            it = self._sw_lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()           # deleteLater est différé : sinon l'ancienne
+                w.deleteLater()    # pastille reste peinte sous la nouvelle
+        self._sws = []
+        stops = self.spec.stops or ["#ffffff"]
+        n = len(stops)
+        for k, hx in enumerate(stops):
+            if k:
+                self._sw_lay.addWidget(_ArrowSep(small=n > 2))
+            tip = (tr("pxm_color_tip") if k == 0 else
+                   tr("pxm_back_tip") if k == n - 1 else tr("pxm_color_n", n=k + 1))
+            w = _Swatch(hx, tip)
+            w.set_small(n > 2)
+            w.clicked.connect(lambda _=False, i=k: self._pick_color(i))
+            self._sw_lay.addWidget(w)
+            self._sws.append(w)
 
     def _pick_color(self, which):
-        cur = self.sw1.hx if which == 0 else self.sw2.hx
-        pop = _ColorPopup(cur, self)
+        which = max(0, min(len(self._sws) - 1, which))
+        cur = self._sws[which].hx
+        if self.wheel:
+            pop = _ColorPopup(cur, self, colors=self.wheel + ["#000000"],
+                              allow_other=False)
+        else:
+            pop = _ColorPopup(cur, self)
         pop.picked.connect(lambda hx, w=which: self._set_custom(w, hx))
-        sw = self.sw1 if which == 0 else self.sw2
+        sw = self._sws[which]
         pop.adjustSize()
         pop.move(sw.mapToGlobal(QPoint(0, sw.height() + 4)))
         pop.show()
 
     def _set_custom(self, which, hx):
-        # Perso = exactement deux couleurs, celles des pastilles
-        c1 = hx if which == 0 else self.sw1.hx
-        c2 = hx if which == 1 else self.sw2.hx
-        self.spec.stops = [c1, c2]; self._changed()
+        # Ne change QUE la couleur de cette pastille : les autres couleurs de
+        # la palette (le bleu et les noirs de « Police ») restent en place.
+        # Avant, toute retouche ramenait l'effet à 2 couleurs. ↺ = d'origine.
+        stops = list(self.spec.stops)
+        if which < 0:                 # compat : -1 = la dernière (le fond)
+            which = len(stops) - 1
+        which = max(0, min(len(stops) - 1, which))
+        stops[which] = hx
+        self.spec.stops = stops; self._changed()
 
     def _on_gap(self, v):
         self.spec.gap = v / 100.0; self._changed()
@@ -758,7 +953,7 @@ class PixelMapDialog(QDialog):
         self.close()
 
     def default_name(self):
-        pal = next((n for n, st in PRESETS.items()
+        pal = next((n for n, st in self._presets.items()
                     if [x.lower() for x in st] == [x.lower() for x in self.spec.stops]),
                    None)
         rep = "" if self.spec.repeat == 1 else f"×{int(self.spec.repeat)}"
@@ -767,7 +962,7 @@ class PixelMapDialog(QDialog):
 
     def _save(self, name=None):
         """Range l'effet dans la bibliothèque d'effets perso."""
-        if name is None:
+        if not isinstance(name, str):
             from effect_editor import _ask_name
             name, ok = _ask_name(self, tr("pxm_save_title"), tr("pxm_save_label"),
                                  self.default_name())

@@ -151,6 +151,25 @@ def _mix(a, b, f):
             int(round(a[2] + (b[2] - a[2]) * f)))
 
 
+def _mix_wheel(a, b, f):
+    """Mélange pour une lyre à ROUE : pas de teinte intermédiaire (la roue
+    irait chercher le violet entre rouge et bleu). Couleur ↔ noir = même
+    teinte, luminosité au prorata (le dim fera le reste) ; deux couleurs =
+    bascule franche à mi-chemin."""
+    ma, mb = max(a), max(b)
+    if mb == 0:
+        return _mix(a, (0, 0, 0), f)
+    if ma == 0:
+        return _mix((0, 0, 0), b, f)
+    return a if f < 0.5 else b
+
+
+def is_wheel_fixture(proj):
+    """Fixture dont la teinte vient d'une roue (pas de R/G/B)."""
+    prof = getattr(proj, 'dmx_profile', None) or []
+    return 'ColorWheel' in prof and not ('R' in prof and 'G' in prof and 'B' in prof)
+
+
 def sample_gradient(stops, t):
     """Couleur (r, g, b) du dégradé BOUCLÉ à la position t (tout réel).
 
@@ -168,7 +187,7 @@ def sample_gradient(stops, t):
     return _mix(cols[i], cols[(i + 1) % n], f)
 
 
-def sample_linear(stops, t):
+def sample_linear(stops, t, mix=_mix):
     """Couleur du dégradé NON bouclé : t=0 → première, t=1 → dernière."""
     cols = _cols(stops)
     n = len(cols)
@@ -177,7 +196,7 @@ def sample_linear(stops, t):
     t = max(0.0, min(1.0, t))
     x = t * (n - 1)
     i = min(n - 2, int(x))
-    return _mix(cols[i], cols[i + 1], x - i)
+    return mix(cols[i], cols[i + 1], x - i)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -189,6 +208,35 @@ def _hash01(x, y):
     « aléatoire » ne doit pas changer d'une image à l'autre."""
     v = math.sin(x * 12.9898 + y * 78.233) * 43758.5453
     return v - math.floor(v)
+
+
+def periodic_positions(pos):
+    """Scalaires d'un MOTIF (chenillard, vague, bloc, rampe) : ramenés à [0, 1[.
+
+    Le motif boucle tous les 1.0 : avec s de 0 à 1, le premier et le dernier
+    appareil tombaient au même point du cycle et s'allumaient ENSEMBLE — le
+    chenillard « sautait » la fin (remontée de Nico, 04/11/26 : barres aux deux
+    bouts du plan). On réserve un pas pour le retour : N positions distinctes
+    → s × (N-1)/N, le dernier allumé juste avant que le premier reparte.
+    Le dégradé n'est PAS concerné (il doit finir sur sa dernière couleur).
+    """
+    vals = sorted(v for v in pos if v is not None)
+    if len(vals) < 2:
+        return list(pos)
+    n = 1 + sum(1 for a, b in zip(vals, vals[1:]) if b - a > 0.02)
+    if n < 2:
+        return list(pos)
+    k = (n - 1) / n
+    return [v * k for v in pos]
+
+
+def spec_positions(points, spec):
+    """Scalaires des fixtures pour ce dégradé/motif (point unique pour le
+    moteur, le plan 2D et les vignettes)."""
+    pos = spatial_positions(points, spec.shape, spec.angle)
+    if spec.motif != "degrade" and spec.shape != "random":
+        pos = periodic_positions(pos)
+    return pos
 
 
 def spatial_positions(points, shape="linear", angle=0.0):
@@ -260,7 +308,7 @@ def motif_value(motif, u, gap=0.0):
     return 1.0                         # bloc, chenillard
 
 
-def _degrade_color(stops, x, gap):
+def _degrade_color(stops, x, gap, mix=_mix):
     """Dégradé bouclé, avec un temps d'arrêt sur la DERNIÈRE couleur.
 
     Sans gap : c0 → … → c_last → retour à c0, chaque étape 1/n du cycle.
@@ -279,11 +327,11 @@ def _degrade_color(stops, x, gap):
     if t < fwd:
         y = t / step
         i = int(y)
-        return _mix(cols[i], cols[i + 1], y - i)
+        return mix(cols[i], cols[i + 1], y - i)
     if t < fwd + (1.0 - L):
         return cols[-1]
     f = (t - fwd - (1.0 - L)) / step
-    return _mix(cols[-1], cols[0], min(1.0, f))
+    return mix(cols[-1], cols[0], min(1.0, f))
 
 
 def selection_span(spec: GradientSpec):
@@ -302,29 +350,30 @@ def selection_span(spec: GradientSpec):
     return L * (n - 1) / n + (1.0 - L)
 
 
-def color_for(spec: GradientSpec, s: float, phase: float):
+def color_for(spec: GradientSpec, s: float, phase: float, wheel=False):
     """Couleur d'une fixture de scalaire `s` à la phase de défilement `phase`
     (en tours : 1.0 = le motif a défilé d'une longueur complète)."""
     rep = max(0.05, float(spec.repeat or 1.0))
     sign = 1.0 if spec.reverse else -1.0
     x = s * rep * selection_span(spec) + sign * phase
     if spec.motif == "degrade":
-        return _degrade_color(spec.stops, x, spec.gap or 0.0)
+        return _degrade_color(spec.stops, x, spec.gap or 0.0,
+                              _mix_wheel if wheel else _mix)
     # Le motif avance vers les s croissants : u = s - phase. La couleur va
     # de la première (allumée) à la dernière (fond) selon l'intensité.
     f = motif_value(spec.motif, x, spec.gap or 0.0)
     # Le motif parcourt TOUTE la palette : intensité pleine = première
     # couleur, repos = dernière (le fond). Feu, Coucher… gardent donc leurs
     # couleurs ; le noir n'apparaît que si la palette en contient.
-    return sample_linear(spec.stops, 1.0 - f)
+    return sample_linear(spec.stops, 1.0 - f, _mix_wheel if wheel else _mix)
 
 
 
-def output_for(spec: GradientSpec, s: float, phase: float):
+def output_for(spec: GradientSpec, s: float, phase: float, wheel=False):
     """Couleur (r, g, b) 0-255 d'une fixture, DIM général appliqué.
 
     Point UNIQUE pour le plan 2D, le moteur du show et les vignettes.
     """
     k = max(0.0, min(1.0, spec.dim))
-    r, g, b = color_for(spec, s, phase)
+    r, g, b = color_for(spec, s, phase, wheel)
     return (int(round(r * k)), int(round(g * k)), int(round(b * k)))

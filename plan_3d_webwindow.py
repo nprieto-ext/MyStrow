@@ -2209,7 +2209,9 @@ class Plan3DWebWindow(QMainWindow):
         du patch : c'est le seul qui soit prévisible et que l'utilisateur voit.
         """
         projs = self._last_projectors
-        rows  = sorted(r for r in self._selected_rows if 0 <= r < len(projs))
+        # Une barre compte pour UN appareil : sa ligne représentante.
+        rows  = sorted({self._row_rep(r) for r in self._selected_rows
+                        if 0 <= r < len(projs)})
         if len(rows) < 2:
             return
         attr = self._REP_ATTR[self._rep_axe.currentIndex()]
@@ -2224,7 +2226,7 @@ class Plan3DWebWindow(QMainWindow):
             {'idx': r, 'attrs': {attr: float(getattr(projs[r], attr, None)
                                              if getattr(projs[r], attr, None) is not None
                                              else _def)}}
-            for r in rows])
+            for r in sorted(self._expand_rows(rows))])
 
         n = len(rows)
         for k, r in enumerate(rows):
@@ -2232,9 +2234,9 @@ class Plan3DWebWindow(QMainWindow):
             p = projs[r]
             if attr == 'fixture_height':
                 v = max(0.0, min(15.0, v))
-            setattr(p, attr, round(v, 3))
-            if attr in ('pos_3d_x', 'pos_3d_z'):
-                self._sync_canvas_pos(p)
+            for m in self._set_attr_group(r, attr, round(v, 3)):
+                if attr in ('pos_3d_x', 'pos_3d_z'):
+                    self._sync_canvas_pos(projs[m])
             self._tbl_sync(r, attr, v)
 
         self._update_jog_pad_from_primary()
@@ -2249,7 +2251,7 @@ class Plan3DWebWindow(QMainWindow):
 
     def _mini_reset(self):
         projs = self._last_projectors
-        rows  = list(self._selected_rows) or list(range(len(projs)))
+        rows  = sorted(self._expand_rows(self._selected_rows)) or list(range(len(projs)))
         for r in rows:
             if r < len(projs):
                 p = projs[r]
@@ -2282,6 +2284,7 @@ class Plan3DWebWindow(QMainWindow):
         if attr is None:
             return
         rows = list(self._selected_rows) if row in self._selected_rows else [row]
+        rows = sorted(self._expand_rows(rows))
 
         # Ctrl+Z : on empile l'état AVANT modification. Un geste de glissement
         # émet des dizaines de valeurs ; on ne garde que la première, sinon la
@@ -2293,22 +2296,26 @@ class Plan3DWebWindow(QMainWindow):
                 7.0 if attr == 'fixture_height' else 0.0)
             # Défaut explicite : l'attribut peut ne pas exister encore sur le
             # projecteur, et restaurer None le casserait au lieu de l'annuler.
-            self._push_undo([
+            self._push_undo(self._undo_with_positions([
                 {'idx': r, 'attrs': {attr: (getattr(projs[r], attr, None)
                                             if getattr(projs[r], attr, None) is not None
                                             else _def)}}
-                for r in rows if r < len(projs)])
+                for r in rows if r < len(projs)], attr))
 
         # Les cellules de position parlent en centimètres, les projecteurs en mètres.
         if attr in ('pos_3d_x', 'pos_3d_z', 'fixture_height'):
             value = float(value) / 100.0
+        # Une barre = sa ligne représentante : la valeur est posée UNE fois par
+        # barre (`_set_attr_group` décale ses pixels), jamais pixel par pixel
+        # — sinon un X identique pour tous écrasait la barre en un point.
+        _done = set()
+        for r in rows:
+            rr = self._row_rep(r)
+            if rr < len(projs) and rr not in _done:
+                _done.add(rr)
+                self._set_attr_group(rr, attr, value)
         for r in rows:
             if r < len(projs):
-                p = projs[r]
-                if attr in ('pos_3d_x', 'pos_3d_z') and getattr(p, 'pos_3d_x', None) is None:
-                    cx, cy = self._norm_pos(projs, r)
-                    p.pos_3d_x, p.pos_3d_z = _pos3d_from_canvas(cx, cy)
-                setattr(p, attr, value)
                 if r != row:
                     sp = self._mini_tbl.cellWidget(r, col)
                     if sp:
@@ -2328,7 +2335,114 @@ class Plan3DWebWindow(QMainWindow):
         self.refresh(projs)
         self._save_patch()
 
+    # ── Barres / matrices : UNE ligne par appareil ──────────────────────────
+    # Une barre à pixels est patchée en N projecteurs (master + pixels). Le
+    # tableau en affichait N lignes identiques — « Pixel Line I » ×9 —, chacune
+    # réglant un seul pixel. Les lignes des autres membres sont désormais
+    # MASQUÉES (la correspondance ligne ↔ index de projecteur, dont dépendent
+    # sélection, repérage 3D et Ctrl+Z, reste intacte) et la ligne visible
+    # pilote toute la barre : X/Z/H la DÉCALENT d'un bloc (l'espacement des
+    # pixels est conservé), les autres colonnes s'appliquent à chacun.
+    def _compute_matrix_rows(self, projectors):
+        self._mx_rep = {}        # ligne → ligne représentante
+        self._mx_members = {}    # ligne représentante → toutes ses lignes
+        first = {}
+        for r, p in enumerate(projectors):
+            mid = getattr(p, 'matrix_id', None)
+            if mid is None:
+                continue
+            rr = first.setdefault(mid, r)
+            self._mx_rep[r] = rr
+            self._mx_members.setdefault(rr, []).append(r)
+
+    def _row_rep(self, r):
+        return getattr(self, '_mx_rep', {}).get(r, r)
+
+    def _expand_rows(self, rows):
+        """Lignes → lignes représentantes + tous les membres de leur barre."""
+        out = set()
+        mem = getattr(self, '_mx_members', {})
+        for r in rows:
+            rr = self._row_rep(r)
+            out.update(mem.get(rr, [rr]))
+        return out
+
+    _GROUP_DELTA_ATTRS = ('pos_3d_x', 'pos_3d_z', 'fixture_height')
+
+    def _set_attr_group(self, row, attr, value):
+        """Pose `attr = value` sur la ligne `row` ; si c'est une barre, sur
+        toute la barre — par DÉCALAGE pour les positions, sinon à l'identique.
+        Rend les lignes touchées."""
+        projs = self._last_projectors
+        rr = self._row_rep(row)
+        members = getattr(self, '_mx_members', {}).get(rr, [row])
+        ref = projs[rr]
+        if attr in ('pos_3d_x', 'pos_3d_z', 'body_rotation'):
+            for r in members:
+                q = projs[r]
+                if getattr(q, 'pos_3d_x', None) is None:
+                    cx, cy = self._norm_pos(projs, r)
+                    q.pos_3d_x, q.pos_3d_z = _pos3d_from_canvas(cx, cy)
+        if attr == 'body_rotation' and len(members) > 1:
+            # RY d'une barre à pixels : la 3D lit son orientation dans la
+            # POSITION de ses pixels (pas dans RY) — changer RY seul ne
+            # faisait donc rien. On fait pivoter les pixels autour du centre
+            # de la barre, du même angle et dans le même sens que le RY d'un
+            # PAR (rotation.y de Three.js : x' = x·cos + z·sin).
+            import math as _m
+            old = float(getattr(ref, 'body_rotation', 0.0) or 0.0)
+            a = _m.radians(float(value) - old)
+            ca, sa = _m.cos(a), _m.sin(a)
+            xs = [float(projs[r].pos_3d_x or 0.0) for r in members]
+            zs = [float(projs[r].pos_3d_z or 0.0) for r in members]
+            # Pivot = centre des PIXELS : le master n'a pas de place physique
+            # propre et peut traîner ailleurs sur le plan.
+            _px = [i for i, r in enumerate(members)
+                   if getattr(projs[r], 'matrix_role', None) == 'pixel'] or \
+                  list(range(len(members)))
+            cx = sum(xs[i] for i in _px) / len(_px)
+            cz = sum(zs[i] for i in _px) / len(_px)
+            for r, x, z in zip(members, xs, zs):
+                q = projs[r]
+                dx, dz = x - cx, z - cz
+                q.pos_3d_x = round(cx + dx * ca + dz * sa, 4)
+                q.pos_3d_z = round(cz - dx * sa + dz * ca, 4)
+                q.body_rotation = value
+                self._sync_canvas_pos(q)
+        elif attr in self._GROUP_DELTA_ATTRS and len(members) > 1:
+            old = (_fixture_h(ref) if attr == 'fixture_height'
+                   else float(getattr(ref, attr, 0.0) or 0.0))
+            d = float(value) - old
+            for r in members:
+                q = projs[r]
+                cur = (_fixture_h(q) if attr == 'fixture_height'
+                       else float(getattr(q, attr, 0.0) or 0.0))
+                setattr(q, attr, round(cur + d, 4))
+        else:
+            for r in members:
+                setattr(projs[r], attr, value)
+        return members
+
+    def _undo_with_positions(self, steps, attr):
+        """Faire tourner une barre DÉPLACE ses pixels : sans leurs positions
+        dans la pile, Ctrl+Z remettait l'angle mais laissait la barre pivotée."""
+        if attr != 'body_rotation':
+            return steps
+        projs = self._last_projectors
+        for st in steps:
+            r = st.get('idx')
+            if r in getattr(self, '_mx_rep', {}) and r < len(projs):
+                q = projs[r]
+                st['attrs'].update({
+                    'pos_3d_x': getattr(q, 'pos_3d_x', None),
+                    'pos_3d_z': getattr(q, 'pos_3d_z', None),
+                    'canvas_x': getattr(q, 'canvas_x', None),
+                    'canvas_y': getattr(q, 'canvas_y', None),
+                })
+        return steps
+
     def _populate_mini(self, projectors):
+        self._compute_matrix_rows(projectors)
         self._mini_tbl.setRowCount(len(projectors))
         for row, p in enumerate(projectors):
             if getattr(p, 'pos_3d_x', None) is None:
@@ -2353,11 +2467,21 @@ class Plan3DWebWindow(QMainWindow):
                 nm = QTableWidgetItem()
                 nm.setFlags(Qt.ItemIsEnabled)
                 self._mini_tbl.setItem(row, 0, nm)
+            _mem = self._mx_members.get(row)
+            self._mini_tbl.setRowHidden(row, row in self._mx_rep and _mem is None)
+            if _mem:
+                # « Pixel Line IP · Master » → « Pixel Line IP »
+                name = name.split(' · ')[0]
+                _npx = sum(1 for r in _mem
+                           if getattr(projectors[r], 'matrix_role', None) == 'pixel')
+                _tip = f"{name} — {_npx} px"
+            else:
+                _tip = name
             nm.setText(name[:12])
             # Le nom est tronqué à 12 caractères par la largeur de la colonne :
             # quatre « PROJECTEUR SIMPLE n » s'affichent tous « PROJECTEUR S »
             # et deviennent indiscernables. L'infobulle donne le nom entier.
-            nm.setToolTip(name)
+            nm.setToolTip(_tip)
             # Une ligne surlignée porte la couleur du repérage, posée par
             # `_mini_tbl_set_highlight` : la repeindre ici l'effacerait.
             if row != self._highlighted_row and row not in self._selected_rows:
@@ -2631,13 +2755,16 @@ class Plan3DWebWindow(QMainWindow):
         if not rows or not projs:
             return
         step = max(1.0, self._jog_step * 10)
+        rows = self._expand_rows(rows)
         undo_steps = [{'idx': r, 'attrs': {attr: float(getattr(projs[r], attr, 0.0) or 0.0)}}
                       for r in rows]
-        self._push_undo(undo_steps)
-        for r in rows:
-            p = projs[r]
-            cur = float(getattr(p, attr, 0.0) or 0.0)
-            setattr(p, attr, round(max(-180.0, min(180.0, cur + direction * step)), 1))
+        self._push_undo(self._undo_with_positions(undo_steps, attr))
+        # Une barre tourne d'un bloc autour de son centre (`_set_attr_group`),
+        # pas pixel par pixel sur place.
+        for rr in sorted({self._row_rep(r) for r in rows}):
+            cur = float(getattr(projs[rr], attr, 0.0) or 0.0)
+            self._set_attr_group(rr, attr,
+                                 round(max(-180.0, min(180.0, cur + direction * step)), 1))
         sp = self._jog_spins.get(attr)
         primary = self._highlighted_row
         if sp and 0 <= primary < len(projs):
@@ -2678,15 +2805,12 @@ class Plan3DWebWindow(QMainWindow):
         projs = self._last_projectors
         if idx < 0 or not projs or idx >= len(projs):
             return
-        p = projs[idx]
-        if attr in ('pos_3d_x', 'pos_3d_z') and getattr(p, 'pos_3d_x', None) is None:
-            cx, cy = self._norm_pos(projs, idx)
-            p.pos_3d_x, p.pos_3d_z = _pos3d_from_canvas(cx, cy)
-        setattr(p, attr, value)
+        members = self._set_attr_group(idx, attr, value)
         # Sync mini-table spinbox
         self._tbl_sync(idx, attr, value)
         if attr in ('pos_3d_x', 'pos_3d_z'):
-            self._sync_canvas_pos(p)
+            for m in members:
+                self._sync_canvas_pos(projs[m])
         self._sync_ry_state()
         self.refresh(projs)
         self._save_patch()
@@ -2934,7 +3058,7 @@ class Plan3DWebWindow(QMainWindow):
             for r in list(self._selected_rows):
                 self._mini_tbl_set_highlight(r, False)
             self._selected_rows.clear()
-        for r in range(min(ancre, jusqua), max(ancre, jusqua) + 1):
+        for r in self._expand_rows(range(min(ancre, jusqua), max(ancre, jusqua) + 1)):
             self._selected_rows.add(r)
             self._mini_tbl_set_highlight(r, True)
         self._highlighted_row = ancre
@@ -3016,15 +3140,17 @@ class Plan3DWebWindow(QMainWindow):
 
     def _toggle_select(self, index: int):
         """Ctrl+clic : ajoute ou retire un projecteur de la sélection multiple."""
+        index = self._row_rep(index)
         if index in self._selected_rows:
-            self._selected_rows.discard(index)
+            for r in self._expand_rows({index}):
+                self._selected_rows.discard(r)
             self._mini_tbl_set_highlight(index, False)
             if index == self._highlighted_row:
                 self._highlighted_row = max(self._selected_rows, default=-1)
                 if self._highlighted_row >= 0:
                     self._mini_tbl_set_highlight(self._highlighted_row, True)
         else:
-            self._selected_rows.add(index)
+            self._selected_rows |= self._expand_rows({index})
             self._highlighted_row = index
             self._mini_tbl_set_highlight(index, True)
             item = self._mini_tbl.item(index, 0)
@@ -3117,7 +3243,9 @@ class Plan3DWebWindow(QMainWindow):
         """Sélection simple (depuis la table ou depuis le clic 3D)."""
         for r in self._selected_rows:
             self._mini_tbl_set_highlight(r, False)
-        self._selected_rows = {index} if index >= 0 else set()
+        # Clic 3D sur un pixel : c'est la barre entière qui est retenue
+        index = self._row_rep(index) if index >= 0 else index
+        self._selected_rows = self._expand_rows({index}) if index >= 0 else set()
         self._highlighted_row = index
 
         self._push_selection_3d()
@@ -3845,6 +3973,10 @@ class Plan3DWebWindow(QMainWindow):
                 'prism_rotation': int(effect_channel_value(p, 'PrismRot', getattr(p, 'prism_rotation', 0)) or 0),
                 'matrix_id':      getattr(p, 'matrix_id', None),
                 'matrix_role':    getattr(p, 'matrix_role', None),
+                # Rang du pixel dans le câblage : la 3D espace les LED d'une
+                # barre régulièrement d'après lui, les positions stockées
+                # étant arrondies au pixel d'écran du plan 2D (≈ 3 cm).
+                'pixel_index':    getattr(p, 'pixel_index', None),
                 # Zoom : largeur de faisceau pilotée par DMX. `has_zoom` évite
                 # de rétrécir les projos SANS canal zoom (dont zoom=0 en
                 # permanence). Le zoom manuel passe par channel_extras['Zoom']

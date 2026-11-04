@@ -2652,8 +2652,14 @@ class FixtureCanvas(QWidget):
             blocks.setdefault(mid, []).append(i)
 
         best = None
-        for idxs in blocks.values():
-            pts = [self._get_canvas_pos(i) for i in idxs]
+        _shifts = getattr(self, '_matrix_draw_shift', {}) or {}
+        _hidden = getattr(self, '_matrix_hidden', set()) or set()
+        for mid, idxs in blocks.items():
+            if mid in _hidden:
+                continue
+            _dx, _dy = _shifts.get(mid, (0.0, 0.0))
+            pts = [(q[0] + _dx, q[1] + _dy) for q in
+                   (self._get_canvas_pos(i) for i in idxs)]
             xs = [q[0] for q in pts]
             ys = [q[1] for q in pts]
             pad = 10 if self.compact else 12
@@ -2680,7 +2686,8 @@ class FixtureCanvas(QWidget):
             cx, cy = self._get_canvas_pos(i)
             ftype = getattr(proj_i, 'fixture_type', 'PAR LED')
             if ftype == "Barre LED":
-                if abs(px - cx) <= 16 and abs(py - cy) <= 6:
+                _br = 9 if self.compact else 13
+                if abs(px - cx) <= int(_br * 2.4) and abs(py - cy) <= max(6, int(_br * 0.46)):
                     return i
             elif ftype in ("Machine a fumee", "Machine a brouillard"):
                 if abs(px - cx) <= 13 and abs(py - cy) <= 7:
@@ -2864,7 +2871,7 @@ class FixtureCanvas(QWidget):
         gc         = QColor(_GROUP_COLORS.get(proj.group, "#555555"))
 
         # Dimensions dérivées de r pour barre et fumee
-        barre_hw = int(r * 1.23); barre_hh = max(3, int(r * 0.38))
+        barre_hw = int(r * 2.4); barre_hh = max(4, int(r * 0.46))
         fumee_hw = int(r * 0.92); fumee_hh = max(3, int(r * 0.46))
 
         # ── Halo de lumiere (quand allumee) ─────────────────────
@@ -3457,6 +3464,10 @@ class FixtureCanvas(QWidget):
         return None
 
     def _show_stack_menu(self, global_pos, membres, edit=False):
+        if isinstance(membres, _MatrixPile):
+            self._build_matrix_stack_menu(
+                membres, edit_pos=global_pos if edit else None).exec(global_pos)
+            return
         self._build_stack_menu(membres, edit_pos=global_pos if edit else None).exec(global_pos)
 
     def _build_stack_menu(self, membres, edit_pos=None):
@@ -3571,7 +3582,78 @@ class FixtureCanvas(QWidget):
         QTimer.singleShot(
             0, lambda: self.pdf._show_fixture_context_menu(edit_pos, _idx))
 
-    def _draw_matrix_block(self, painter, indices, sel_rank=None):
+    def _matrix_stacks(self, members):
+        """[[matrix_id, …]] des barres/matrices SUPERPOSÉES sur le plan.
+
+        Deux barres accrochées l'une au-dessus de l'autre (même X/Z, hauteurs
+        différentes — le long d'une tour) tombent au même endroit en vue de
+        dessus : la seconde recouvrait la première, qu'on allumait sans la
+        voir (remontée de Nico, 04/11/26). Elles se traitent alors comme une
+        pile de PAR : un seul bloc dessiné, une pastille « N » qui ouvre la
+        liste. Ordre : la plus haute d'abord (ordre du totem).
+        """
+        boxes = []
+        for mid, idxs in members.items():
+            pts = [self._get_canvas_pos(i) for i in idxs
+                   if getattr(self.pdf.projectors[i], 'matrix_role', None) != 'master']
+            if not pts:
+                continue
+            xs = [q[0] for q in pts]
+            ys = [q[1] for q in pts]
+            h = max((float(getattr(self.pdf.projectors[i], 'fixture_height', None) or 0.0)
+                     for i in idxs), default=0.0)
+            boxes.append((mid, min(xs), min(ys), max(xs), max(ys), h))
+        out, used, pad = [], set(), 4
+        for a in range(len(boxes)):
+            if boxes[a][0] in used:
+                continue
+            grp = [boxes[a]]
+            for bc in boxes[a + 1:]:
+                if bc[0] in used:
+                    continue
+                if any(bc[1] - pad <= g[3] and g[1] - pad <= bc[3]
+                       and bc[2] - pad <= g[4] and g[2] - pad <= bc[4] for g in grp):
+                    grp.append(bc)
+            if len(grp) < 2:
+                continue
+            used.update(g[0] for g in grp)
+            grp.sort(key=lambda g: -g[5])
+            out.append([g[0] for g in grp])
+        return out
+
+    def _build_matrix_stack_menu(self, pile, edit_pos=None):
+        """Liste d'une pile de BARRES : comme celle des PAR, mais chaque entrée
+        sélectionne une barre entière."""
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        _titre = menu.addAction(tr("pdf_stack_title", n=len(pile)))
+        _titre.setEnabled(False)
+        menu.addSeparator()
+        members = {}
+        for i, p in enumerate(self.pdf.projectors):
+            mid = getattr(p, 'matrix_id', None)
+            if mid in pile:
+                members.setdefault(mid, []).append(i)
+        _all = [i for mid in pile for i in members.get(mid, [])]
+        menu.addAction(tr("pdf_stack_all_edit" if edit_pos is not None
+                          else "pdf_stack_all", n=len(pile))).triggered.connect(
+            lambda _=False: self._pick_stack(_all, edit_pos))
+        menu.addSeparator()
+        for mid in pile:
+            idxs = members.get(mid, [])
+            if not idxs:
+                continue
+            p0 = self.pdf.projectors[idxs[0]]
+            nom = (getattr(p0, 'name', '') or 'Barre').split(" · ")[0]
+            hs = [getattr(self.pdf.projectors[i], 'fixture_height', None) for i in idxs]
+            h = next((v for v in hs if v is not None), None)
+            det = f"{h:.2f} m" if h is not None else tr("pdf_stack_no_height")
+            addr = min(getattr(self.pdf.projectors[i], 'start_address', 1) for i in idxs)
+            menu.addAction(f"{nom}   ·   {det}   ·   CH {addr}").triggered.connect(
+                lambda _=False, k=list(idxs): self._pick_stack(k, edit_pos))
+        return menu
+
+    def _draw_matrix_block(self, painter, indices, sel_rank=None, offset=None):
         """Dessine une matrice/barre comme un bloc cohérent (cadre + nom + cellules)."""
         pixels = []   # (proj, px, py, key)
         master = None
@@ -3597,6 +3679,25 @@ class FixtureCanvas(QWidget):
         if not pixels:
             return
 
+        # Barre (une seule rangée) : LED RÉGULIÈREMENT espacées entre le 1er et
+        # le dernier pixel, dans l'ordre du câblage. Les positions stockées sont
+        # arrondies au pixel d'écran (≈ 3 cm) à chaque passage par le plan 2D :
+        # sur une barre de 25 pixels elles tremblaient de ±3 cm en travers et
+        # de 8 à 16 cm le long — la barre se dessinait en zigzag, en carrés
+        # décalés, au lieu d'un ruban droit (remontée de Nico, 04/11/26).
+        _rows = {getattr(pr, 'pixel_row', None) for pr, *_ in pixels}
+        _cols = {getattr(pr, 'pixel_col', None) for pr, *_ in pixels}
+        if len(pixels) > 2 and (len(_rows) == 1 or len(_cols) == 1) \
+                and None not in _rows and None not in _cols:
+            pixels.sort(key=lambda t: getattr(t[0], 'pixel_index', 0) or 0)
+            (_, ax, ay, _), (_, bx_, by_, _) = pixels[0], pixels[-1]
+            _n = len(pixels) - 1
+            pixels = [(pr, ax + (bx_ - ax) * k / _n, ay + (by_ - ay) * k / _n, key)
+                      for k, (pr, _x, _y, key) in enumerate(pixels)]
+
+        _ox, _oy = offset or (0.0, 0.0)
+        if _ox or _oy:
+            pixels = [(pr, x + _ox, y + _oy, key) for pr, x, y, key in pixels]
         xs = [p[1] for p in pixels]
         ys = [p[2] for p in pixels]
 
@@ -3615,9 +3716,54 @@ class FixtureCanvas(QWidget):
         # Un léger chevauchement est préférable — une vraie barre LED est un
         # ruban continu, pas des points espacés.
         hs = max(3, min(_hs_max, int(min(_gaps) / 2))) if _gaps else _hs_max
-        pad = hs + 4
-        x0, x1 = min(xs) - pad, max(xs) + pad
-        y0, y1 = min(ys) - pad, max(ys) + pad
+        hsx = hsy = hs
+        # Barre (une seule rangée) : ruban continu. Chaque cellule prend tout
+        # le pas le long de la barre, et une épaisseur FIXE en travers — avec
+        # des cellules carrées, une barre de 32 pixels faisait 6 px d'épaisseur.
+        # Tolérance de 3 px : les positions arrondies au pixel d'écran laissent
+        # une barre « droite » de travers d'un ou deux pixels.
+        _flat_y = len(pixels) > 1 and max(ys) - min(ys) < 3
+        _flat_x = len(pixels) > 1 and max(xs) - min(xs) < 3
+        if _flat_y or _flat_x:
+            _along = sorted(set(xs if _flat_y else ys))
+            _steps = [b - a for a, b in zip(_along, _along[1:]) if b - a > 0]
+            _half = max(1.0, min(_hs_max, min(_steps) / 2.0)) if _steps else _hs_max
+            _thick = 6 if self.compact else 9
+            hsx, hsy = (_half, _thick) if _flat_y else (_thick, _half)
+        pad = 4
+        x0, x1 = min(xs) - hsx - pad, max(xs) + hsx + pad
+        y0, y1 = min(ys) - hsy - pad, max(ys) + hsy + pad
+
+        # Garder le bloc DANS le cadre de scène. Le centre d'un pixel peut être
+        # posé jusqu'au bord du plan (0..1), donc hors du rectangle de scène
+        # qui a une marge : une barre au nez de scène dépassait du cadre
+        # (remontée de Nico, 04/11/26). On décale le DESSIN seulement, les
+        # positions stockées (et la 3D) ne bougent pas.
+        _sr = getattr(self, '_stage_rect', None)
+        if not hasattr(self, '_matrix_draw_shift'):
+            self._matrix_draw_shift = {}
+        self._matrix_draw_shift[getattr(pixels[0][0], 'matrix_id', None)] = (_ox, _oy)
+        if _sr is not None:
+            def _shift(lo, hi, a, b):
+                if hi - lo >= b - a:
+                    return (a + b) / 2.0 - (lo + hi) / 2.0
+                if lo < a:
+                    return a - lo
+                if hi > b:
+                    return b - hi
+                return 0.0
+            _dx = _shift(x0, x1, _sr.left() + 2, _sr.right() - 2)
+            _dy = _shift(y0, y1, _sr.top() + 2, _sr.bottom() - 2)
+            # Retenu pour le clic (_matrix_hit) : on attrape la barre là où
+            # elle est DESSINÉE.
+            if not hasattr(self, '_matrix_draw_shift'):
+                self._matrix_draw_shift = {}
+            self._matrix_draw_shift[getattr(pixels[0][0], 'matrix_id', None)] = (_dx + _ox, _dy + _oy)
+            if _dx or _dy:
+                pixels = [(pr, x + _dx, y + _dy, key) for pr, x, y, key in pixels]
+                xs = [x + _dx for x in xs]
+                ys = [y + _dy for y in ys]
+                x0, x1, y0, y1 = x0 + _dx, x1 + _dx, y0 + _dy, y1 + _dy
 
         any_sel = any(k in self.pdf.selected_lamps for *_, k in pixels)
         border = QColor("#00d4ff") if any_sel else QColor("#9b6bd6")
@@ -3664,11 +3810,14 @@ class FixtureCanvas(QWidget):
 
         # Cellules pixel
         for (proj, px, py, key), fill in zip(pixels, fills):
-            cell = QRectF(px - hs, py - hs, hs * 2, hs * 2)
+            cell = QRectF(px - hsx, py - hsy, hsx * 2, hsy * 2)
             painter.fillRect(cell, fill)
             sel = key in self.pdf.selected_lamps
+            # Cellules très fines (barre de 32 px) : liseré plus léger, sinon
+            # le contour mangeait la couleur.
+            _thin = min(hsx, hsy) < 2.5
             painter.setPen(QPen(QColor("#00d4ff") if sel else QColor("#3a3a4a"),
-                                1.4 if sel else 0.8))
+                                1.4 if sel else (0.4 if _thin else 0.8)))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(cell)
 
@@ -3700,6 +3849,7 @@ class FixtureCanvas(QWidget):
         # Le master (canaux globaux Dim/Strobe) n'est PAS dessiné : il fait
         # partie de l'appareil, que le bloc représente déjà. Le montrer en point
         # séparé donnait un repère orphelin à côté de la barre.
+        return (x0, y0, x1, y1)
 
     def paintEvent(self, event):
         """Garde-fou autour du dessin du plan.
@@ -3766,6 +3916,8 @@ class FixtureCanvas(QWidget):
             sw = int(sw * _z)
             sh = int(sh * _z)
 
+        # Mémorisé pour les barres/matrices, gardées DANS le cadre
+        self._stage_rect = QRectF(sx, sy, sw, sh)
         stage_path = QPainterPath()
         stage_path.addRoundedRect(QRectF(sx, sy, sw, sh), 14, 14)
         painter.fillPath(stage_path, QColor("#0d0d0d"))
@@ -3891,8 +4043,47 @@ class FixtureCanvas(QWidget):
                              f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
 
         # ── Matrices / barres à pixels (rendu en bloc) ───────────
+        # Piles de barres : un seul bloc dessiné — celui qui est SÉLECTIONNÉ,
+        # sinon celui qui est ALLUMÉ, sinon le plus haut. Avant, la barre du
+        # dessous restait cachée même allumée (on ne voyait que son halo).
+        _mx_shown = {}            # mid dessiné -> pile
+        self._matrix_hidden = set()
+        _sel = self.pdf.selected_lamps
+        _li = {}
+        _gc = {}
+        for _j, _p in enumerate(self.pdf.projectors):
+            _l = _gc.get(_p.group, 0)
+            _gc[_p.group] = _l + 1
+            _li[_j] = (_p.group, _l)
+
+        def _mx_score(m):
+            ix = _matrix_members[m]
+            if any(_li[i] in _sel for i in ix):
+                return 0
+            if any(getattr(self.pdf.projectors[i], 'level', 0) > 0
+                   and not getattr(self.pdf.projectors[i], 'muted', False)
+                   for i in ix):
+                return 1
+            return 2
+        self._matrix_pile_of = {}
+        for _pile in self._matrix_stacks(_matrix_members):
+            for _m in _pile:
+                self._matrix_pile_of[_m] = _pile
+            _shown = min(_pile, key=lambda m: (_mx_score(m), _pile.index(m)))
+            _mx_shown[_shown] = _pile
+            self._matrix_hidden.update(m for m in _pile if m != _shown)
         for _mid, _idxs in _matrix_members.items():
-            self._draw_matrix_block(painter, _idxs, _sel_rank)
+            if _mid in self._matrix_hidden:
+                continue
+            _bb = self._draw_matrix_block(painter, _idxs, _sel_rank)
+            if _bb and _mid in _mx_shown:
+                _x0, _y0, _x1, _y1 = _bb
+                _r = 9 if self.compact else 13
+                # La pastille se pose sur le coin haut-droit du cadre
+                self._stack_badges.append((
+                    self._draw_stack_badge(painter, int(_x1 - _r * 0.78),
+                                           int(_y0 + _r * 0.78), len(_mx_shown[_mid])),
+                    _MatrixPile(_mx_shown[_mid])))
 
         # ── Locate pulse (anneaux sonar) ─────────────────────────
         if self._locate_key:
@@ -4052,8 +4243,36 @@ class FixtureCanvas(QWidget):
                 group, local_idx = self._local_idx(idx)
                 key = (group, local_idx)
                 _mid = getattr(self.pdf.projectors[idx], 'matrix_id', None)
-                if event.modifiers() & Qt.ControlModifier:
-                    # Ctrl+clic : bascule un pixel unique (contrôle fin)
+                _mods = event.modifiers()
+                # Unité de sélection = ce que l'icône représente : la barre
+                # entière, et s'il y a une PILE (barres ou PAR superposés au
+                # même endroit) toute la pile. Avant, impossible de prendre ses
+                # 4 barres d'un coup : celles du dessous restaient hors de
+                # portée du clic (remontée de Nico, 04/11/26). Pour un seul
+                # élément d'une pile : la pastille ; un pixel seul : Ctrl+Maj.
+                if _mid is not None:
+                    _pile_m = (getattr(self, '_matrix_pile_of', {}) or {}).get(_mid, [_mid])
+                    _bars = [self._matrix_keys_for(m) for m in _pile_m]
+                    _unit = [k for ks in _bars for k in ks]
+                else:
+                    _bars = None
+                    _st = self._stack_members(idx)
+                    _unit = [self._local_idx(j) for j in _st] if _st else [key]
+                if (_mods & Qt.ControlModifier) and not (_mods & Qt.ShiftModifier):
+                    # Ctrl+clic : ajoute ou retire l'unité entière
+                    if all(k in self.pdf.selected_lamps for k in _unit):
+                        for k in _unit:
+                            self.pdf.selected_lamps.discard(k)
+                            try: self.pdf.selected_lamps_ordered.remove(k)
+                            except ValueError: pass
+                    else:
+                        for k in _unit:
+                            if k not in self.pdf.selected_lamps:
+                                self.pdf.selected_lamps.add(k)
+                                self.pdf.selected_lamps_ordered.append(k)
+                elif _mods & Qt.ControlModifier:
+                    # Ctrl+Maj+clic : bascule le seul élément cliqué (un pixel
+                    # d'une barre, l'appareil du dessus d'une pile)
                     if key in self.pdf.selected_lamps:
                         self.pdf.selected_lamps.discard(key)
                         try: self.pdf.selected_lamps_ordered.remove(key)
@@ -4061,22 +4280,23 @@ class FixtureCanvas(QWidget):
                     else:
                         self.pdf.selected_lamps.add(key)
                         self.pdf.selected_lamps_ordered.append(key)
-                elif _mid is not None:
-                    # Clic simple sur une matrice → sélectionner toute la dalle
-                    if key not in self.pdf.selected_lamps:
-                        _keys = self._matrix_keys_for(_mid)
-                        self.pdf.selected_lamps = set(_keys)
-                        self.pdf.selected_lamps_ordered = list(_keys)
-                elif self._stack_members(idx):
+                elif _bars is not None:
+                    # Clic simple sur une barre (ou une pile de barres) : toute
+                    # la pile. On garde la sélection si une barre de la pile y
+                    # est déjà ENTIÈRE — choisie par la pastille, ou lot qu'on
+                    # s'apprête à glisser. Un pixel seul ne compte pas.
+                    if not any(all(k in self.pdf.selected_lamps for k in ks) for ks in _bars):
+                        self.pdf.selected_lamps = set(_unit)
+                        self.pdf.selected_lamps_ordered = list(_unit)
+                elif len(_unit) > 1:
                     # Clic sur une pile → tout le totem, comme une matrice :
                     # l'icône représente l'ensemble, et déplacer le pied doit
                     # emmener ce qui est dessus. Pour n'en viser qu'un, on passe
                     # par la pastille — après quoi la sélection ne contient plus
                     # que lui et le glisser suivant l'extrait de la pile.
-                    _keys = [self._local_idx(j) for j in self._stack_members(idx)]
-                    if not any(k in self.pdf.selected_lamps for k in _keys):
-                        self.pdf.selected_lamps = set(_keys)
-                        self.pdf.selected_lamps_ordered = list(_keys)
+                    if not any(k in self.pdf.selected_lamps for k in _unit):
+                        self.pdf.selected_lamps = set(_unit)
+                        self.pdf.selected_lamps_ordered = list(_unit)
                 elif key not in self.pdf.selected_lamps:
                     self.pdf.selected_lamps = {key}
                     self.pdf.selected_lamps_ordered = [key]
@@ -4146,7 +4366,10 @@ class FixtureCanvas(QWidget):
                         self._show_stack_menu(event.globalPos(), _membres, edit=True)
                         return
                 if key not in self.pdf.selected_lamps:
-                    self.pdf.selected_lamps = {key}
+                    _mid = getattr(self.pdf.projectors[idx], 'matrix_id', None)
+                    _keys = self._matrix_keys_for(_mid) if _mid is not None else [key]
+                    self.pdf.selected_lamps = set(_keys)
+                    self.pdf.selected_lamps_ordered = list(_keys)
                     self.update()
                     self._notify_cpb()
                 self.pdf._show_fixture_context_menu(event.globalPos(), idx)
@@ -4243,8 +4466,10 @@ class FixtureCanvas(QWidget):
         r = 9 if self.compact else 13
         ftype = getattr(self.pdf.projectors[i], 'fixture_type', 'PAR LED')
         if ftype == "Barre LED":
-            hw = int(r * 1.23)
-            hh = max(3, int(r * 0.38))
+            # Même gabarit que le dessin (_draw_fixture) : une réglette ~1 m
+            # est bien plus longue qu'un PAR, l'ancienne vignette faisait 32 px.
+            hw = int(r * 2.4)
+            hh = max(4, int(r * 0.46))
         elif ftype in ("Machine a fumee", "Machine a brouillard"):
             hw = int(r * 0.92)
             hh = max(3, int(r * 0.46))
@@ -4666,11 +4891,27 @@ class FixtureCanvas(QWidget):
                 if self.pdf.main_window and hasattr(self.pdf.main_window, 'save_dmx_patch_config'):
                     self.pdf.main_window.save_dmx_patch_config()
             elif self._rubber_rect and self._rubber_origin is not None:
+                # Barre/matrice : un pixel touché par le rectangle prend la
+                # barre entière, à sa position DESSINÉE (cf. _matrix_draw_shift).
+                _shifts = getattr(self, '_matrix_draw_shift', {}) or {}
+                _mids = []
                 for i in range(len(self.pdf.projectors)):
                     cx, cy = self._get_canvas_pos(i)
+                    _mid = getattr(self.pdf.projectors[i], 'matrix_id', None)
+                    if _mid is not None:
+                        _dx, _dy = _shifts.get(_mid, (0.0, 0.0))
+                        if self._rubber_rect.contains(QPoint(int(cx + _dx), int(cy + _dy))) \
+                                and _mid not in _mids:
+                            _mids.append(_mid)
+                        continue
                     if self._rubber_rect.contains(QPoint(cx, cy)):
                         group, local_idx = self._local_idx(i)
                         key = (group, local_idx)
+                        self.pdf.selected_lamps.add(key)
+                        if key not in self.pdf.selected_lamps_ordered:
+                            self.pdf.selected_lamps_ordered.append(key)
+                for _mid in _mids:
+                    for key in self._matrix_keys_for(_mid):
                         self.pdf.selected_lamps.add(key)
                         if key not in self.pdf.selected_lamps_ordered:
                             self.pdf.selected_lamps_ordered.append(key)
@@ -4756,6 +4997,11 @@ class FixtureCanvas(QWidget):
 
 
 # ── PlanDeFeu ─────────────────────────────────────────────────────────────────
+
+class _MatrixPile(list):
+    """Pile de BARRES (liste de matrix_id) portée par une pastille : la
+    distingue d'une pile de fixtures (liste d'indices)."""
+
 
 class PlanDeFeu(QFrame):
     """Visualisation du plan de feu - canvas 2D libre"""
@@ -5454,9 +5700,37 @@ class PlanDeFeu(QFrame):
                 # fixture sur le plan, décalée du défilement (en tours).
                 bc = QColor(*_pixel_map.output_for(
                     eff["grad_spec"], eff.get("grad_s", 0.0),
-                    eff["phase"] / (2 * _math_eff.pi)))
+                    eff["phase"] / (2 * _math_eff.pi),
+                    _pixel_map.is_wheel_fixture(proj)))
                 lvl = eff["saved_level"]
+                _noir_roue = False
+                _prof = getattr(proj, 'dmx_profile', None) or []
+                if 'ColorWheel' in _prof and not ('R' in _prof and 'G' in _prof
+                                                  and 'B' in _prof):
+                    # Roue = TEINTE seulement ; la luminosité du dégradé (noir,
+                    # rouge sombre…) passe par le DIM. Sans ça une image noire
+                    # laissait la lyre allumée sur son dernier slot, dim à fond.
+                    _mx = max(bc.red(), bc.green(), bc.blue())
+                    lvl = int(round(eff["saved_level"] * _mx / 255.0))
+                    if _mx > 0:
+                        _k = 255.0 / _mx
+                        bc = QColor(min(255, int(bc.red() * _k)),
+                                    min(255, int(bc.green() * _k)),
+                                    min(255, int(bc.blue() * _k)))
+                    else:
+                        # Noir : la roue ne tourne pas, seul le dim ferme.
+                        _noir_roue = True
+                        bc = QColor(proj.base_color) if proj.base_color else bc
                 proj.base_color = bc
+                # Lyre à ROUE de couleurs : sa teinte vient de `color_wheel`,
+                # pas du RVB (qu'elle n'a pas). Sans ça la roue restait sur
+                # son slot d'avant — le blanc — et la lyre s'allumait BLANCHE
+                # en 3D comme en vrai. Même métrique que la couche « Dégradé »
+                # du moteur (`MainWindow._update_color_wheel`).
+                _mw = self.main_window
+                if (not _noir_roue and _mw is not None
+                        and hasattr(_mw, '_update_color_wheel')):
+                    _mw._update_color_wheel(proj, bc)
             else:  # "flash"
                 factor = max(0.0, _math_eff.sin(_ph))
                 lvl = int(eff["saved_level"] * factor)
@@ -5509,6 +5783,9 @@ class PlanDeFeu(QFrame):
                 "restore_level": proj.level,
                 "restore_color": QColor(base_col),
                 "pulse_color": QColor(color) if color is not None else QColor(base_col),
+                # Position de roue d'origine : le dégradé fait tourner la roue
+                # des lyres sans RVB, « Arrêter » doit la rendre.
+                "restore_wheel": int(getattr(proj, 'color_wheel', 0) or 0),
             }
 
     def snapshot_led_state(self, projectors):
@@ -5550,6 +5827,8 @@ class PlanDeFeu(QFrame):
             # strobe, pulse). Sans ça la fixture garde la couleur de l'effet et
             # le prochain changement de niveau repart d'une base fausse.
             proj.base_color = QColor(bc)
+            if "restore_wheel" in eff and hasattr(proj, 'color_wheel'):
+                proj.color_wheel = eff["restore_wheel"]
             br = max(0, lvl) / 100.0
             proj.color = QColor(
                 int(bc.red()   * br),
@@ -5706,9 +5985,9 @@ class PlanDeFeu(QFrame):
         return out
 
     def _gradient_scalars(self, projectors, spec):
-        return _pixel_map.spatial_positions(
+        return _pixel_map.spec_positions(
             [(getattr(p, 'canvas_x', None), getattr(p, 'canvas_y', None))
-             for p in projectors], spec.shape, spec.angle)
+             for p in projectors], spec)
 
     def start_gradient_effect(self, projectors, spec):
         """Lance un dégradé sur ces fixtures. Chacune lit sa couleur à sa
@@ -5717,6 +5996,10 @@ class PlanDeFeu(QFrame):
         if not projs:
             return []
         snap = self.snapshot_led_state(projs)
+        # Roue d'origine des fixtures déjà sous effet (sinon on mémoriserait
+        # le slot posé par le dégradé comme position de retour).
+        _old_wheels = {id(p): self._led_effects[id(p)].get("restore_wheel")
+                       for p in projs if self._led_effects.get(id(p))}
         # Une fixture déjà sous effet garde son VRAI état d'origine : relancer
         # le dégradé ne doit pas mémoriser les couleurs du dégradé comme état
         # de retour, sinon « Arrêter » les laisserait figées.
@@ -5735,6 +6018,10 @@ class PlanDeFeu(QFrame):
                 p.level = 100
         self.start_led_effect(projs, "gradient", float(spec.speed))
         self.set_restore_state(projs, snap)
+        for p in projs:
+            w = _old_wheels.get(id(p))
+            if w is not None:
+                self._led_effects[id(p)]["restore_wheel"] = w
         for p, s in zip(projs, self._gradient_scalars(projs, spec)):
             eff = self._led_effects.get(id(p))
             if eff:
@@ -6477,6 +6764,17 @@ class PlanDeFeu(QFrame):
                 int(color.green() * brightness),
                 int(color.blue() * brightness)
             )
+            # Effet rapide en cours (chenillard, respiration, scintillement…) :
+            # il suit la couleur choisie. Il tournait sur la couleur figée à son
+            # lancement — blanc le plus souvent — et le clic sur une pastille
+            # ne changeait rien (remontée de Nico, 04/11/26). Couleur de retour
+            # au stop = celle-ci aussi : c'est la dernière que l'on a choisie.
+            # Arc-en-ciel / dégradé / strobe : la couleur, c'est l'effet.
+            _eff = self._led_effects.get(id(proj))
+            if _eff and _eff.get("type") in ("flash", "breath", "color_pulse"):
+                _eff["saved_color"] = QColor(color)
+                _eff["pulse_color"] = QColor(color)
+                _eff["restore_color"] = QColor(color)
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
         self.canvas.update()

@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.12"
+VERSION = "3.2.13"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -1142,7 +1142,7 @@ def gradient_layer_outputs(layers, projectors, all_projectors, t):
                        machines, groupes du clip) — leur ORDRE sert à Pair/Impair.
     `all_projectors` = le patch complet, pour les clés de la cible « Sélection ».
     """
-    from pixel_map import spatial_positions, output_for
+    from pixel_map import spec_positions, output_for, is_wheel_fixture
     out = {}
     layers = [l for l in (layers or []) if _layer_get(l, 'attribute') == GRADIENT_ATTR]
     if not layers or not projectors:
@@ -1174,14 +1174,14 @@ def gradient_layer_outputs(layers, projectors, all_projectors, t):
         if not cibles:
             continue
         spec = gradient_layer_spec(layer)
-        pos = spatial_positions(
+        pos = spec_positions(
             [(getattr(p, 'canvas_x', None), getattr(p, 'canvas_y', None)) for p in cibles],
-            spec.shape, spec.angle)
+            spec)
         amp = max(0.0, float(_layer_get(layer, 'size', 100) or 0)) / 100.0
         turns = float(spec.speed or 0.0) * float(t)
         d = out.setdefault(id(layer), {})
         for p, s in zip(cibles, pos):
-            val = output_for(spec, s, turns)
+            val = output_for(spec, s, turns, is_wheel_fixture(p))
             d[id(p)] = (val[0] / 255.0 * amp, val[1] / 255.0 * amp,
                         val[2] / 255.0 * amp)
     return out

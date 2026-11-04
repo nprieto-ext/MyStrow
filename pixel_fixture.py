@@ -193,6 +193,24 @@ def generate_matrix_projectors(spec: PixelFixtureSpec,
         px.matrix_phys_h = spec.phys_h
         projectors.append(px)
 
+    # ── Canaux globaux de FIN (ex. 16 × W après 32 pixels RGB) ───────────────
+    # Un 2e master, non dessiné, qui réserve ces canaux : sans lui, l'appareil
+    # suivant était patché par-dessus. Laissés à 0 (blancs éteints).
+    if spec.global_tail:
+        tail = Projector(group, name=f"{base_name} · Master 2",
+                         fixture_type=spec.fixture_type)
+        tail.start_address = (base_address + head_len
+                              + spec.pixel_count * pix_len)
+        tail.universe = universe
+        tail.dmx_profile = list(spec.global_tail)
+        tail.matrix_id = mid
+        tail.matrix_role = "master"
+        tail.matrix_rows = spec.rows
+        tail.matrix_cols = spec.cols
+        tail.matrix_phys_w = spec.phys_w
+        tail.matrix_phys_h = spec.phys_h
+        projectors.append(tail)
+
     return projectors
 
 
