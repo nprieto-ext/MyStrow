@@ -5041,6 +5041,16 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                            "Ce compte dispose déjà d'une licence à vie. "
                            "Votre code n'a pas été consommé — gardez-le.", 409)
 
+        # Interface vendue seule (MyStrowFan, offre « sans licence ») : le
+        # boîtier est connu mais n'apporte aucun mois. Sans ce garde, le
+        # « or 12 » ci-dessous offrirait un an.
+        if is_dmy and "months" in ser_data and not int(ser_data.get("months") or 0):
+            return _ko("no_license",
+                       "Ce boîtier est vendu sans licence : il fonctionne avec "
+                       "un abonnement MyStrow (mystrow.fr/tarifs)." if lang == "fr" else
+                       "This interface comes without a license: it works with "
+                       "a MyStrow subscription (mystrow.fr/en/#pricing).", 409)
+
         # Consommation atomique : deux envois simultanés du même code ne
         # peuvent pas donner deux licences.
         months = int((ser_data if is_dmy else code_data).get("months") or 12)
@@ -5296,6 +5306,20 @@ def boitier_detect(req: https_fn.Request) -> https_fn.Response:
                 if lic.exists and (lic.to_dict() or {}).get("plan_type") == "lifetime":
                     status = "lifetime"
 
+        # « Dans la nature » : la seule trace d'une interface vendue sans
+        # licence (elle ne s'active jamais). Première vue figée, dernière vue
+        # rafraîchie au plus une fois par jour pour ne pas écrire à chaque scan.
+        now = time.time()
+        if now - float(data.get("seen_last_utc") or 0) > 86400:
+            vu = {"seen_last_utc": now,
+                  "seen_count": firestore.Increment(1)}
+            if not data.get("seen_first_utc"):
+                vu["seen_first_utc"] = now
+            try:
+                found[0].reference.set(vu, merge=True)
+            except Exception as e:
+                print(f"[boitier_detect] suivi non écrit : {e}")
+
         out = {"ok": True, "known": True, "status": status, "months": months}
         if status != "other":
             out["serial"] = serial
@@ -5305,6 +5329,184 @@ def boitier_detect(req: https_fn.Request) -> https_fn.Response:
     except Exception as e:
         traceback.print_exc()
         print(f"[boitier_detect] erreur : {e}")
+        return _rep({"ok": False, "error": "server"}, 500)
+
+
+# ===========================================================================
+# MYSTROWFAN — enregistrement des boîtiers depuis le poste de conditionnement
+# ===========================================================================
+#
+# MyStrowFan.exe tourne chez la personne qui prépare les colis : il ne doit
+# PAS porter le compte de service (accès total à la base). Il passe ici, avec
+# une clé de poste. Une clé ne sait faire que trois choses : lire l'état d'un
+# boîtier par son identifiant USB, en enregistrer un nouveau (numéro créé ici,
+# offre 0 / 2 / 12 mois), et ajouter un événement à son historique.
+#
+# Clés : `postes_boitiers/{sha256(clé)}` {nom, actif, created_utc}. La clé en
+# clair n'est stockée nulle part côté serveur ; tools/creer_poste_boitiers.py
+# la crée et l'affiche une fois. Révoquer = `actif: false`.
+#
+# Risque assumé : une clé valide permet de créer des boîtiers à 12 mois, donc
+# des licences. D'où le plafond quotidien et le nom du poste dans l'historique.
+
+_FAN_OFFRES = (0, 2, 12)
+_FAN_MAX_PAR_JOUR = 300
+
+
+def _fan_poste(key: str):
+    """(référence, données) du poste actif portant cette clé, sinon (None, {})."""
+    key = (key or "").strip()
+    if len(key) < 24:
+        return None, {}
+    h = hashlib.sha256(key.encode()).hexdigest()
+    ref = _get_db().collection("postes_boitiers").document(h)
+    snap = ref.get()
+    data = (snap.to_dict() or {}) if snap.exists else {}
+    if not data.get("actif"):
+        return None, {}
+    return ref, data
+
+
+def _fan_vue(serial: str, data: dict) -> dict:
+    """Ce que le poste a le droit de voir d'un boîtier (jamais le client)."""
+    return {"known": True, "serial": serial,
+            "months": int(data.get("months") or 0),
+            "batch": data.get("batch", ""),
+            "firmware": data.get("firmware", ""),
+            "flashed_utc": float(data.get("flashed_utc") or 0),
+            "initialized_utc": float(data.get("initialized_utc") or 0),
+            "activated": bool(data.get("activated_uid")),
+            "seen": bool(data.get("seen_first_utc"))}
+
+
+@https_fn.on_request(max_instances=3)
+def boitier_enregistrer(req: https_fn.Request) -> https_fn.Response:
+    """POST {"action": "lookup"|"register"|"event", "usb_id": ..., ...}
+    En-tête X-Poste-Key obligatoire.
+
+    register : {"months": 0|2|12, "firmware", "firmware_sha", "flashed_utc",
+                "test": "ok"} → crée MS-DMY-XXXX-XXXX ; un usb_id déjà connu
+                renvoie le boîtier existant (created: false), sans rien changer.
+    event    : {"evt": "maj firmware"|"test dmx"|..., "firmware", ...} →
+                ajouté à `history` d'un boîtier connu.
+    """
+    _H = {"Content-Type": "application/json"}
+
+    def _rep(payload: dict, status: int = 200) -> https_fn.Response:
+        return https_fn.Response(json.dumps(payload), status=status, headers=_H)
+
+    if req.method != "POST":
+        return _rep({"ok": False, "error": "method"}, 405)
+
+    ip = (req.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+    poste_ref, poste = _fan_poste(req.headers.get("X-Poste-Key", ""))
+    if poste_ref is None:
+        # Même limite de débit que /activate pour qui essaie des clés.
+        _act_throttle_ok(ip)
+        return _rep({"ok": False, "error": "bad_key"}, 401)
+
+    try:
+        body = json.loads(req.get_data() or b"{}")
+    except Exception:
+        return _rep({"ok": False, "error": "bad_json"}, 400)
+    action = body.get("action") or ""
+    usb_id = "".join(c for c in str(body.get("usb_id") or "").upper() if c.isalnum())
+    if not _USB_ID_RE.match(usb_id):
+        return _rep({"ok": False, "error": "bad_usb_id"}, 400)
+
+    nom_poste = str(poste.get("nom") or "poste")[:40]
+    fw = str(body.get("firmware") or "")[:16]
+    fw_sha = str(body.get("firmware_sha") or "")[:16]
+    now = time.time()
+
+    def _evt(evt: str, utc: float) -> dict:
+        return {"evt": evt[:40], "utc": utc, "usb_id": usb_id, "firmware": fw,
+                "firmware_sha": fw_sha, "poste": f"MyStrowFan · {nom_poste}"}
+
+    try:
+        db = _get_db()
+        boitiers = db.collection("boitiers")
+        found = boitiers.where("usb_id", "==", usb_id).limit(1).get()
+        existant = found[0] if found else None
+
+        if action == "lookup":
+            if not existant:
+                return _rep({"ok": True, "known": False})
+            return _rep({"ok": True, **_fan_vue(existant.id, existant.to_dict() or {})})
+
+        if action == "event":
+            if not existant:
+                return _rep({"ok": False, "error": "unknown"}, 404)
+            maj = {"history": firestore.ArrayUnion([_evt(str(body.get("evt") or "?"), now)])}
+            if body.get("evt") == "maj firmware" and fw:
+                maj.update({"firmware": fw, "firmware_sha": fw_sha,
+                            "flashed_utc": float(body.get("flashed_utc") or now)})
+            existant.reference.set(maj, merge=True)
+            return _rep({"ok": True})
+
+        if action != "register":
+            return _rep({"ok": False, "error": "bad_action"}, 400)
+
+        if existant:
+            return _rep({"ok": True, "created": False,
+                         **_fan_vue(existant.id, existant.to_dict() or {})})
+
+        try:
+            months = int(body.get("months"))
+        except (TypeError, ValueError):
+            months = -1
+        if months not in _FAN_OFFRES:
+            return _rep({"ok": False, "error": "bad_months"}, 400)
+
+        # Plafond quotidien par poste : une clé qui fuit ne fabrique pas
+        # mille licences dans la nuit.
+        jour = time.strftime("%Y-%m-%d", time.gmtime(now))
+        compte = poste.get("jours", {}).get(jour, 0) if isinstance(poste.get("jours"), dict) else 0
+        if int(compte) >= _FAN_MAX_PAR_JOUR:
+            return _rep({"ok": False, "error": "daily_cap"}, 429)
+
+        # Verrou sur l'identifiant USB : deux enregistrements simultanés du
+        # même boîtier (double clic, deux postes) n'en créent qu'un.
+        try:
+            db.collection("boitiers_usb").document(usb_id).create(
+                {"utc": now, "poste": nom_poste})
+        except Conflict:
+            time.sleep(1.5)
+            again = boitiers.where("usb_id", "==", usb_id).limit(1).get()
+            if again:
+                return _rep({"ok": True, "created": False,
+                             **_fan_vue(again[0].id, again[0].to_dict() or {})})
+            return _rep({"ok": False, "error": "busy"}, 409)
+
+        import secrets as _secrets
+        while True:
+            c = "".join(_secrets.choice(_DMY_ALPHABET) for _ in range(8))
+            serial = f"MS-DMY-{c[:4]}-{c[4:]}"
+            if not boitiers.document(serial).get().exists:
+                break
+
+        flashed = float(body.get("flashed_utc") or 0)
+        history = []
+        if flashed:
+            history.append(_evt("flash", flashed))
+        if body.get("test") == "ok":
+            history.append(_evt("test dmx OK", now))
+        libelle = "sans licence" if months == 0 else ("1 an" if months == 12 else f"{months} mois")
+        history.append(_evt(f"init {libelle}", now))
+        doc = {"serial": serial, "batch": f"DMY-{months}M", "months": months,
+               "usb_id": usb_id, "usb_id_utc": now, "initialized_utc": now,
+               "created_utc": now, "firmware": fw, "firmware_sha": fw_sha,
+               "poste": nom_poste, "history": history}
+        if flashed:
+            doc["flashed_utc"] = flashed
+        boitiers.document(serial).set(doc)
+        poste_ref.set({"jours": {jour: firestore.Increment(1)},
+                       "dernier_utc": now, "total": firestore.Increment(1)}, merge=True)
+        print(f"[boitier_enregistrer] {nom_poste} : {serial} {libelle} carte {usb_id}")
+        return _rep({"ok": True, "created": True, **_fan_vue(serial, doc)})
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[boitier_enregistrer] erreur : {e}")
         return _rep({"ok": False, "error": "server"}, 500)
 
 

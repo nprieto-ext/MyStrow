@@ -6343,7 +6343,7 @@ class AdminPanel(QMainWindow):
         lbl_offre.setStyleSheet(f"color:{TEXT_DIM}; background:transparent;")
         hdr_lay.addWidget(lbl_offre)
         self._bx_offre = QComboBox()
-        self._bx_offre.addItems(["2 mois", "1 an"])
+        self._bx_offre.addItems(["2 mois", "1 an", "Sans licence"])
         self._bx_offre.setFixedHeight(28)
         hdr_lay.addWidget(self._bx_offre)
         self._bx_flash = QCheckBox("Flasher le firmware")
@@ -6433,7 +6433,7 @@ class AdminPanel(QMainWindow):
         t = self._bx_table
         t.setSortingEnabled(False)
         t.setRowCount(len(rows))
-        n_act = 0
+        n_act = n_vu = 0
         for i, r in enumerate(rows):
             holder = r.get("activated_uid") or ""
             if holder:
@@ -6442,8 +6442,18 @@ class AdminPanel(QMainWindow):
                 if r.get("activated_utc"):
                     statut += f" le {heure(float(r['activated_utc']))}"
                 coul = "#4caf50"
+            elif r.get("seen_first_utc"):
+                # Branché dans MyStrow chez quelqu'un (boitier_detect) sans
+                # activation : interface seule vendue, ou client qui hésite.
+                n_vu += 1
+                statut = (f"dans la nature — vu le {heure(float(r['seen_first_utc']))}"
+                          + (" (sans licence)" if not int(r.get("months") or 0)
+                             else ", pas encore activé"))
+                coul = ACCENT
             else:
-                statut, coul = "libre (en stock)", TEXT_DIM
+                statut, coul = "pas encore activé (en stock)", TEXT_DIM
+            if r.get("poste"):
+                statut += f" · préparé par {r['poste']}"
             vals = [r["_id"], libelle_offre(int(r.get("months") or 0)),
                     r.get("usb_id", "—"), r.get("firmware", "—"),
                     heure(float(r["flashed_utc"])) if r.get("flashed_utc") else "—",
@@ -6458,7 +6468,8 @@ class AdminPanel(QMainWindow):
                 t.setItem(i, c, it)
         t.setSortingEnabled(True)
         self._bx_stats_lbl.setText(
-            f"{len(rows)} boîtier(s) · {n_act} activé(s) · {len(rows) - n_act} en stock"
+            f"{len(rows)} boîtier(s) · {n_act} activé(s) · {n_vu} dans la nature "
+            f"sans activation · {len(rows) - n_act - n_vu} en stock"
             + (f" · {n_retired} n° gravé(s) retiré(s)" if n_retired else ""))
 
     def _on_boitier_history(self, row, _col):

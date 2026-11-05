@@ -27,7 +27,7 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--months", type=int, default=0,
+    ap.add_argument("--months", type=int, default=None,
                     help="duree de licence offerte par chaque boitier de la "
                          "serie (sans lui : question au lancement)")
     ap.add_argument("--batch", default="",
@@ -39,7 +39,7 @@ def main() -> None:
     args = ap.parse_args()
 
     choix = list(OFFRES.items())
-    while args.months <= 0:
+    while args.months is None or args.months < 0:
         print("Quels boitiers initialiser a la suite ?")
         for i, (nom, _) in enumerate(choix, 1):
             print(f"  {i}) offre {nom}")

@@ -53,7 +53,7 @@ USB_ID_RE = re.compile(r"^[0-9A-F]{12}$")
 # Meme alphabet que _DMY_ALPHABET dans functions/main.py (ni I, ni O, ni 0).
 DMY_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 # Offres proposees au lancement : libelle -> mois.
-OFFRES = {"2 mois": 2, "1 an": 12}
+OFFRES = {"2 mois": 2, "1 an": 12, "Sans licence": 0}
 
 
 class Arret(Exception):
@@ -68,6 +68,8 @@ def nouveau_numero() -> str:
 
 
 def libelle_offre(months: int) -> str:
+    if months == 0:
+        return "sans licence"      # interface vendue seule
     return "1 an" if months == 12 else f"{months} mois"
 
 
@@ -113,7 +115,8 @@ class Initialiseur:
 
     def __init__(self, db, months: int, batch: str = "", push: bool = True,
                  flash: bool = True, log=print, on_boitier=None):
-        if months <= 0:
+        # 0 = interface vendue seule : connue, suivie, aucun mois offert.
+        if months < 0:
             raise ValueError("offre invalide")
         self.db = db
         self.months = months
