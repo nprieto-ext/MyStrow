@@ -37,8 +37,19 @@ grossit est la bande passante — chaque lecture rapatrie tout le document.
 
 Ce qui est synchronisé : le patch (`~/.maestro_dmx_patch.json`, profils
 complets de chaque projecteur inclus — pas besoin de la bibliothèque de
-fixtures) et les effets (éditeur, bibliothèque modifiée, boutons E1-E8). Les
-mémoires / pages AKAI ne le sont pas (pas demandé).
+fixtures), les effets (éditeur, bibliothèque modifiée, boutons E1-E8) et,
+depuis le 09/11/2026, les mémoires et pages AKAI. Celles-ci vivent dans
+`~/.maestro_akai_config.json`, qui mélange contenu (mémoires, pages, pads FX,
+positions) et réglages PROPRES AU PC (vMix/OBS, manette, décalage audio,
+luminosité de l'APC…) : seules les clés de `PARTIAL` voyagent, le reste du
+fichier n'est jamais touché. Les shows (.tui, médias) ne sont pas synchronisés.
+
+Fiche du nuage, deux boutons :
+  - « Synchroniser maintenant » : envoie tout de suite et regarde si un autre
+    PC a envoyé du neuf (nuage ☁ ↓ jaune) ;
+  - « Importer depuis le compte » : remplace ce PC par le contenu du compte,
+    après confirmation. Mémoires/pages AKAI rechargées à chaud ; patch et
+    effets → redémarrage (l'appli les garde en mémoire et les réécrirait).
 
 Stockage : Firestore `user_sync/{uid}` {payload, updated_utc}. `payload` =
 `{"files": {clé: {"content": texte, "sha": …, "utc": …}}}` en JSON, compressé.
@@ -64,6 +75,13 @@ FILES = {
     "fx_custom":      _HOME / ".mystrow_custom_effects.json",
     "fx_library":     _HOME / ".mystrow_effect_library.json",
     "fx_assignments": _HOME / ".mystrow_effect_assignments.json",
+    "akai":           _HOME / ".maestro_akai_config.json",
+}
+
+# Fichiers dont seule une partie des clés JSON voyage (le reste est propre au PC).
+PARTIAL = {
+    "akai": ("memories", "memory_custom_colors", "bank_pages",
+             "fx_pads", "position_presets", "position_pads"),
 }
 
 STATE_FILE = _HOME / ".mystrow_cloud_sync.json"
@@ -82,14 +100,35 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _canon(sub: dict) -> str:
+    """Texte stable d'une partie de fichier : même contenu → même sha."""
+    return json.dumps(sub, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def read_local(key: str):
-    """(texte, sha, mtime) du fichier local, ou (None, None, 0) s'il manque."""
+    """(texte, sha, mtime) du fichier local, ou (None, None, 0) s'il manque.
+
+    Fichier partiel (`PARTIAL`) : le texte est la seule partie synchronisée.
+    """
     path = FILES[key]
     try:
         text = path.read_text(encoding="utf-8")
-        return text, _sha(text), path.stat().st_mtime
+        mtime = path.stat().st_mtime
     except (OSError, UnicodeDecodeError):
         return None, None, 0.0
+    keys = PARTIAL.get(key)
+    if keys is not None:
+        try:
+            full = json.loads(text)
+        except ValueError:
+            return None, None, 0.0
+        if not isinstance(full, dict):
+            return None, None, 0.0
+        sub = {k: full[k] for k in keys if k in full}
+        if not sub:
+            return None, None, 0.0
+        text = _canon(sub)
+    return text, _sha(text), mtime
 
 
 def _is_valid_json(text: str) -> bool:
@@ -110,6 +149,24 @@ def write_local(key: str, text: str) -> bool:
     if not _is_valid_json(text):
         return False
     path = FILES[key]
+    keys = PARTIAL.get(key)
+    if keys is not None:
+        # Partiel : on ne remplace QUE les clés synchronisées, le reste du
+        # fichier (réglages de ce PC) est conservé tel quel.
+        sub = json.loads(text)
+        if not isinstance(sub, dict):
+            return False
+        full = {}
+        try:
+            cur = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(cur, dict):
+                full = cur
+        except (OSError, ValueError, UnicodeDecodeError):
+            pass
+        for k in keys:
+            full.pop(k, None)
+        full.update({k: v for k, v in sub.items() if k in keys})
+        text = json.dumps(full, indent=2)
     try:
         if path.exists():
             bak = path.with_name(path.name + time.strftime(".avant-synchro-%Y%m%d-%H%M%S"))
@@ -136,8 +193,10 @@ def decode_payload(text: str) -> dict:
     if text.startswith("z1:"):
         text = zlib.decompress(base64.b64decode(text[3:])).decode("utf-8")
     files = (json.loads(text or "{}") or {}).get("files") or {}
+    # Les clés inconnues sont GARDÉES : une version plus récente de l'appli a
+    # pu en ajouter, et les jeter ici les effacerait du compte au prochain envoi.
     return {k: v for k, v in files.items()
-            if k in FILES and isinstance(v, dict) and isinstance(v.get("content"), str)}
+            if isinstance(v, dict) and isinstance(v.get("content"), str)}
 
 
 # ── État de synchro et cache (par PC) ────────────────────────────────────────
@@ -308,9 +367,18 @@ def push(uid: str, local: dict, known=None):
         if r is None or r.get("sha") == ent["sha"] or ent["utc"] >= float(r.get("utc") or 0):
             merged[k] = ent
             pris[k] = ent["sha"]
+    # Un fichier absent du compte alors que ce PC l'a : une ancienne version
+    # de l'appli sur un autre PC a pu l'effacer en ne le connaissant pas.
+    # On le remet (lecture seule des fichiers locaux, sans risque en thread).
+    for k in FILES:
+        if k not in merged:
+            t, sha, mtime = read_local(k)
+            if t is not None and _is_valid_json(t):
+                merged[k] = {"content": t, "sha": sha, "utc": mtime}
+                pris[k] = sha
     text = encode_payload(merged)
     if len(text) > PAYLOAD_MAX:
-        print("[CloudSync] patch + effets trop gros pour le compte (> 900 Ko)")
+        print("[CloudSync] contenu trop gros pour le compte (> 900 Ko)")
         return None
     now = time.time()
     body = json.dumps({"fields": fc._dict_to_fields({
@@ -381,6 +449,48 @@ def apply_take(remote: dict, keys: list, state: dict) -> list:
             state["synced"][k] = remote[k].get("sha") or _sha(remote[k]["content"])
             ok.append(k)
     return ok
+
+
+def remote_news(remote: dict, state: dict) -> list:
+    """Fichiers que le compte a en plus récent que ce PC (envoyés par un autre
+    PC), à récupérer au prochain démarrage. Thread principal (lit le disque)."""
+    S = state.get("synced") or {}
+    out = []
+    for k in FILES:
+        r = remote.get(k)
+        if not r or r.get("sha") == S.get(k):
+            continue
+        _t, L, _m = read_local(k)
+        if r.get("sha") != L:
+            out.append(k)
+    return out
+
+
+def import_plan(remote: dict) -> list:
+    """« Importer depuis le compte » : fichiers dont la version du compte
+    diffère de ce PC. Thread principal (lit le disque, pas le réseau)."""
+    out = []
+    for k in FILES:
+        r = remote.get(k)
+        if r and r.get("sha") != read_local(k)[1]:
+            out.append(k)
+    return out
+
+
+def import_apply(uid: str, remote: dict, utc: float, keys: list) -> list:
+    """Écrit les fichiers du compte choisis (copie de sécurité avant chacun).
+    Thread principal. Renvoie les clés réellement écrites."""
+    state = state_for(uid)
+    written = apply_take(remote, keys, state)
+    state["asked"] = True
+    asked_keys = state.setdefault("asked_keys", [])
+    asked_keys.extend(k for k in written if k not in asked_keys)
+    save_state(state)
+    if utc:
+        save_cache(uid, utc, remote)
+    if written:
+        print(f"[CloudSync] importé depuis le compte : {', '.join(written)}")
+    return written
 
 
 def local_changes(state: dict) -> dict:
@@ -454,10 +564,19 @@ def finish_startup_pull(puller: StartupPull, ask_first_time=None) -> list:
     state["synced"].update(plan["synced"])
     take = list(plan["take"])
     if plan["conflicts"]:
-        if not state.get("asked") and ask_first_time is not None:
+        # La question est posée une fois par PC… et à nouveau pour un fichier
+        # que ce PC n'a JAMAIS échangé (ex. mémoires ajoutées le 09/11) : le
+        # « plus récent gagne » y serait faux — la config AKAI est réécrite à
+        # chaque fermeture, sa date ne dit rien des mémoires.
+        S = state.get("synced") or {}
+        asked_keys = state.setdefault("asked_keys", [])
+        new_keys = [k for k in plan["conflicts"]
+                    if not S.get(k) and k not in asked_keys]
+        if (not state.get("asked") or new_keys) and ask_first_time is not None:
             if ask_first_time(plan["conflicts"]):
                 take += plan["conflicts"]
             # Garder ce PC : rien à prendre, ses fichiers partiront à l'envoi.
+            asked_keys.extend(k for k in plan["conflicts"] if k not in asked_keys)
         else:
             take += resolve_conflicts_by_date(remote, plan["conflicts"])
     state["asked"] = True
@@ -485,7 +604,19 @@ class Pusher:
         self._thread = None
         self._result = None
         self._retry_at = 0.0
+        self._force = False
+        self.news = []         # fichiers plus récents dans le compte (autre PC)
+        self._imp_thread = None
+        self._imp_box = None
         self.status = "idle"   # idle | pending | sending | ok | offline | off
+
+    def sync_now(self):
+        """« Synchroniser maintenant » : envoi immédiat (sans attendre le calme
+        ni la pause hors ligne) + vérification de ce que le compte a de neuf.
+        Le travail se fait au prochain `tick`, réseau en thread comme toujours."""
+        self._force = True
+        self._retry_at = 0.0
+        self._last_change = 0.0
 
     def _mtimes_now(self) -> dict:
         out = {}
@@ -496,22 +627,62 @@ class Pusher:
                 out[k] = 0.0
         return out
 
+    def request_import(self) -> bool:
+        """Lit le compte en arrière-plan pour « Importer ». Résultat via
+        `take_import_result()`. False si pas de compte ou déjà en cours."""
+        if self._imp_thread is not None:
+            return False
+        uid = account_uid()
+        if not uid:
+            return False
+        known = load_cache(uid)
+        box = self._imp_box = [uid, None]
+
+        def _run():
+            try:
+                box[1] = fetch_remote(uid, known=known)
+            except Exception as e:
+                print(f"[CloudSync] import : {e}")
+
+        self._imp_thread = threading.Thread(target=_run, daemon=True, name="cloud-import")
+        self._imp_thread.start()
+        return True
+
+    def take_import_result(self):
+        """(uid, (files, utc) ou None si injoignable) une fois la lecture
+        finie ; None tant qu'elle tourne ou si rien n'a été demandé."""
+        if self._imp_thread is None or self._imp_thread.is_alive():
+            return None
+        self._imp_thread = None
+        return tuple(self._imp_box)
+
     def tick(self, now: float = None) -> str:
+        """État affiché : comme `status`, mais « news » quand tout est envoyé
+        et qu'un autre PC a mis du neuf dans le compte."""
+        st = self._tick(now)
+        return "news" if (st == "ok" and self.news) else st
+
+    def _tick(self, now: float = None) -> str:
         now = time.time() if now is None else now
         # Résultat d'un envoi terminé : enregistré ici, sur le thread principal
         # (état et cache ne sont écrits que d'un seul fil).
         if self._thread is not None and not self._thread.is_alive():
-            uid, res = self._result
+            uid, sent, res, remote = self._result
             self._thread = None
-            if res is None:
+            if (sent and res is None) or (not sent and remote is None):
                 self.status = "offline"
                 self._retry_at = now + RETRY_AFTER_S
             else:
-                pris, files, utc = res
                 st = state_for(uid)
-                st["synced"].update(pris)
-                save_state(st)
-                save_cache(uid, utc, files)
+                if res is not None:
+                    pris, files, utc = res
+                    st["synced"].update(pris)
+                    save_state(st)
+                    save_cache(uid, utc, files)
+                elif remote is not None and remote[1]:
+                    save_cache(uid, remote[1], remote[0])
+                if remote is not None:
+                    self.news = remote_news(remote[0], st)
                 self.status = "ok"
                 self._retry_at = 0.0
         if self._thread is not None:
@@ -523,34 +694,45 @@ class Pusher:
             return self.status
         mt = self._mtimes_now()
         if self._mtimes is not None and mt != self._mtimes:
-            self._last_change = now
-            if self.status != "offline":
-                self.status = "pending"
+            # La config AKAI est réécrite pour un rien (luminosité, vue…) :
+            # « en attente » seulement si une partie synchronisée a bougé.
+            if local_changes(state_for(uid)):
+                self._last_change = now
+                if self.status != "offline":
+                    self.status = "pending"
         first = self._mtimes is None
         self._mtimes = mt
-        if not (first or self.status in ("idle", "pending", "offline")):
+        force = self._force
+        if not (first or force or self.status in ("idle", "pending", "offline")):
             return self.status
-        if now < self._retry_at or now - self._last_change < QUIET_S:
+        if not force and (now < self._retry_at or now - self._last_change < QUIET_S):
             return self.status
+        self._force = False
         state = state_for(uid)
         local = local_changes(state)
-        if not local:
+        if not local and not force:
             if self.status in ("idle", "pending"):
                 self.status = "ok"
             return self.status
 
         self.status = "sending"
         known = load_cache(uid)
-        self._result = (uid, None)
+        sent = bool(local)
+        self._result = (uid, sent, None, None)
 
         def _run():
-            res = None
+            res = remote = None
             try:
-                res = push(uid, local, known=known)
+                if sent:
+                    res = push(uid, local, known=known)
+                    if res is not None:
+                        remote = (res[1], res[2])
+                else:
+                    remote = fetch_remote(uid, known=known)
             except Exception as e:
                 print(f"[CloudSync] envoi : {e}")
             finally:
-                self._result = (uid, res)
+                self._result = (uid, sent, res, remote)
 
         self._thread = threading.Thread(target=_run, daemon=True, name="cloud-push")
         self._thread.start()

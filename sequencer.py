@@ -6515,7 +6515,12 @@ class Sequencer(QFrame):
                                  if i < len(main_win.projectors)]
                     lyre_by_name = {p.name: p for p in lyres_cur if p.name}
 
-                    _ANIM_DUR = 1.5  # secondes
+                    # Minutage réglé au clic droit du pad POS (trajet, décalage,
+                    # ordre). Sans réglage : 1,5 s pour toutes, comme avant.
+                    # Même calcul que l'aperçu REC (timeline_editor).
+                    from core import (position_preset_timing, position_spread_ranks,
+                                      position_wave_fraction)
+                    _move, _spread, _order = position_preset_timing(preset, 1.5)
 
                     # Nouveau preset → capturer positions courantes comme point de départ
                     if getattr(self, '_pos_anim_target_idx', None) != preset_idx:
@@ -6527,17 +6532,27 @@ class Sequencer(QFrame):
                         }
 
                     elapsed = _time.monotonic() - getattr(self, '_pos_anim_start_t', 0.0)
-                    raw = min(1.0, elapsed / _ANIM_DUR)
-                    frac = raw * raw * (3.0 - 2.0 * raw)  # smoothstep
 
-                    for k, ps in enumerate(preset.get("projectors", [])):
-                        p = lyres_cur[k] if k < len(lyres_cur) else lyre_by_name.get(ps.get("name"))
-                        if p is None:
-                            continue
+                    # Cibles : même appariement que le rappel du pad et que
+                    # l'aperçu (`position_preset_values`, déjà calculé plus haut
+                    # pour le centre des effets) ; repli sur l'ancien appariement
+                    # par rang s'il n'a rien donné.
+                    _centers = getattr(main_win, '_timeline_pos_centers', None) or {}
+                    cibles = []
+                    if _centers:
+                        cibles = [(p, _centers[id(p)]) for p in lyres_cur if id(p) in _centers]
+                    else:
+                        for k, ps in enumerate(preset.get("projectors", [])):
+                            p = lyres_cur[k] if k < len(lyres_cur) else lyre_by_name.get(ps.get("name"))
+                            if p is not None:
+                                cibles.append((p, (int(ps.get("pan", 32768)),
+                                                   int(ps.get("tilt", 32768)))))
+
+                    rangs = position_spread_ranks(len(cibles), _order)
+                    for k, (p, (t_pan, t_tilt)) in enumerate(cibles):
+                        frac = position_wave_fraction(elapsed, rangs[k], _move, _spread)
                         s_pan, s_tilt = getattr(self, '_pos_anim_start_vals', {}).get(
                             id(p), (getattr(p, 'pan', 32768), getattr(p, 'tilt', 32768)))
-                        t_pan  = int(ps.get("pan",  32768))
-                        t_tilt = int(ps.get("tilt", 32768))
                         p.pan  = int(s_pan  + (t_pan  - s_pan)  * frac)
                         p.tilt = int(s_tilt + (t_tilt - s_tilt) * frac)
             # --- Cas 2 : trajectoire ou effet automatique (16-bit) ---

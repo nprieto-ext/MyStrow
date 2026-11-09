@@ -177,6 +177,10 @@ CHANNEL_DISPLAY = {
 # reset de fin de bloc la relisent tous, plutot que d'ecrire quatre fois la
 # meme correspondance et de la laisser deriver.
 PRESET_TYPES = ("Preset1", "Preset2", "Preset3", "Preset4")
+
+# Noms écrits par tools/qlcplus_import.py dans fixtures_qlcplus.json et que le
+# moteur ne connaît pas : 225 fixtures avaient un canal ambre mort (05/11/2026).
+QLC_CHANNEL_ALIASES = {"A": "Ambre", "Effect": "Effects", "GoboRot": "Gobo1Rot"}
 _PRESET_ATTR = {t: f"preset{i}" for i, t in enumerate(PRESET_TYPES, start=1)}
 
 
@@ -1418,6 +1422,16 @@ class ArtNetDMX:
                 elif ec and level == 0 and (ec.red() or ec.green() or ec.blue()):
                     # level=0 mais color non noire → effet actif (ex: strobe ON)
                     effect_active = True
+                # Lyre à ROUE (pas de R/G/B) : sa couleur demandée NOIRE doit
+                # fermer le Dim, la roue ne sait pas faire le noir. Sans ça,
+                # base_color noire (effet lancé depuis un plateau au noir) ×
+                # couleur noire = « pas d'effet » → Dim 255 sur le dernier slot :
+                # un dégradé Rouge/Noir restait rouge plein à la place du noir.
+                if (ec and level > 0 and not effect_active
+                        and not (ec.red() or ec.green() or ec.blue())
+                        and "ColorWheel" in profile
+                        and not ("R" in profile and "G" in profile and "B" in profile)):
+                    effect_active = True
 
                 if effect_active and ec:
                     # Effet actif : extraire couleur pure + luminosité depuis proj.color
@@ -1542,6 +1556,9 @@ class ArtNetDMX:
                 ch = channels[idx]
                 if ch <= 0:
                     continue
+                # Anciens noms de la bibliothèque QLC+ (« A » = ambre…) : sans
+                # ça le canal sortait 0 en dur, y compris dans les shows déjà patchés.
+                ch_type = QLC_CHANNEL_ALIASES.get(ch_type, ch_type)
 
                 # Couche d'effet « Canal » (éditeur d'effets) : prioritaire le
                 # temps de l'effet, y compris sur un canal forcé à la main —

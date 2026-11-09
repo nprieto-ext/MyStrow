@@ -4594,7 +4594,8 @@ class _HoverCard(QFrame):
     est sur l'élément OU sur elle (délai de grâce pour franchir l'espace) ;
     elle peut porter un vrai bouton.
 
-    `content()` rend (html, texte du bouton ou None, couleur d'accent).
+    `content()` rend (html, bouton, couleur d'accent). `bouton` = texte, None
+    (aucun) ou tuple de textes : alors `on_click(index)` reçoit le n° cliqué.
     """
 
     def __init__(self, anchor, content, on_click=None):
@@ -4615,10 +4616,19 @@ class _HoverCard(QFrame):
         self._body = QLabel()
         self._body.setTextFormat(Qt.RichText)
         lay.addWidget(self._body)
-        self._btn = QPushButton()
-        self._btn.setCursor(Qt.PointingHandCursor)
-        self._btn.clicked.connect(self._clicked)
-        lay.addWidget(self._btn, alignment=Qt.AlignLeft)
+        self._multi = False
+        self._btns = []
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        for i in range(2):
+            b = QPushButton()
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, i=i: self._clicked(i))
+            row.addWidget(b)
+            self._btns.append(b)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self._btn = self._btns[0]
 
         self._show_t = QTimer(self)
         self._show_t.setSingleShot(True)
@@ -4636,10 +4646,13 @@ class _HoverCard(QFrame):
         self._hide_t.stop()
         self.hide()
 
-    def _clicked(self):
+    def _clicked(self, index=0):
         self.close_now()
         if self._on_click is not None:
-            self._on_click()
+            if self._multi:
+                self._on_click(index)
+            else:
+                self._on_click()
 
     def eventFilter(self, obj, ev):
         if obj is self._anchor or obj is self:
@@ -4686,14 +4699,18 @@ class _HoverCard(QFrame):
         html, button, accent = self._content()
         if self._body.text() != html:
             self._body.setText(html)
-        self._btn.setVisible(button is not None)
-        if button is not None:
-            self._btn.setText(button)
-            self._btn.setStyleSheet(
-                f"QPushButton {{ background:#202020; color:{accent};"
-                f" border:1px solid {accent}; border-radius:5px;"
-                f" padding:5px 16px; font-weight:bold; }}"
-                "QPushButton:hover { background:#2c2c2c; }")
+        self._multi = isinstance(button, (tuple, list))
+        labels = (list(button) if self._multi
+                  else [] if button is None else [button])
+        for i, b in enumerate(self._btns):
+            b.setVisible(i < len(labels))
+            if i < len(labels):
+                b.setText(labels[i])
+                b.setStyleSheet(
+                    f"QPushButton {{ background:#202020; color:{accent};"
+                    f" border:1px solid {accent}; border-radius:5px;"
+                    f" padding:5px 16px; font-weight:bold; }}"
+                    "QPushButton:hover { background:#2c2c2c; }")
         self.adjustSize()
         self._place()
 
@@ -4757,7 +4774,8 @@ class _StatusCornerWidget(QWidget):
         self._cloud = QLabel("☁")
         self._cloud.setVisible(False)
         lay.addWidget(self._cloud, alignment=Qt.AlignVCenter)
-        self._cloud_card = _HoverCard(self._cloud, self._cloud_card_content)
+        self._cloud_card = _HoverCard(self._cloud, self._cloud_card_content,
+                                      self.cloud_clicked.emit)
 
         # Timer horloge
         self._tick_clock = QTimer(self)
@@ -4780,6 +4798,7 @@ class _StatusCornerWidget(QWidget):
     _COUNTDOWN_SOON  = "color:#ff9a2a; font-size:9px; font-weight:bold;"
 
     clock_clicked = Signal()
+    cloud_clicked = Signal(int)   # fiche du nuage : 0 = synchroniser, 1 = importer
 
     def _on_clock_pressed(self, event):
         if event.button() == Qt.LeftButton:
@@ -4884,6 +4903,7 @@ class _StatusCornerWidget(QWidget):
         "idle":    ("☁ ↑", "#5a8ab0", "cloud_tt_state_sending", "cloud_tt_foot_pending"),
         "pending": ("☁ ↑", "#5a8ab0", "cloud_tt_state_pending", "cloud_tt_foot_pending"),
         "offline": ("☁",   "#555555", "cloud_tt_state_offline", "cloud_tt_foot_offline"),
+        "news":    ("☁ ↓", "#d4a017", "cloud_tt_state_news",    "cloud_tt_foot_news"),
     }
 
     def set_cloud(self, status: str):
@@ -4937,7 +4957,11 @@ class _StatusCornerWidget(QWidget):
                 f"<table style='margin-top:6px;' cellspacing='0' cellpadding='2'>{rows}</table>"
                 "</div>"
                 f"<div style='color:#777; margin-top:6px;'>{tr(foot)}</div>")
-        return html, None, accent
+        if self._cloud_status == "sending":
+            button = None            # déjà en cours
+        else:
+            button = (tr("cloud_tt_btn_sync"), tr("cloud_tt_btn_import"))
+        return html, button, accent
 
 
 class PanTiltLimitWidget(QWidget):
@@ -6379,24 +6403,28 @@ class MainWindow(QMainWindow):
         act_de = lang_menu.addAction(tr("menu_lang_de"))
         act_pt = lang_menu.addAction(tr("menu_lang_pt"))
         act_ja = lang_menu.addAction(tr("menu_lang_ja"))
+        act_it = lang_menu.addAction(tr("menu_lang_it"))
         act_fr.setCheckable(True)
         act_en.setCheckable(True)
         act_es.setCheckable(True)
         act_de.setCheckable(True)
         act_pt.setCheckable(True)
         act_ja.setCheckable(True)
+        act_it.setCheckable(True)
         act_fr.setChecked(get_language() == "fr")
         act_en.setChecked(get_language() == "en")
         act_es.setChecked(get_language() == "es")
         act_de.setChecked(get_language() == "de")
         act_pt.setChecked(get_language() == "pt")
         act_ja.setChecked(get_language() == "ja")
+        act_it.setChecked(get_language() == "it")
         act_fr.triggered.connect(lambda: self._change_language("fr"))
         act_en.triggered.connect(lambda: self._change_language("en"))
         act_es.triggered.connect(lambda: self._change_language("es"))
         act_de.triggered.connect(lambda: self._change_language("de"))
         act_pt.triggered.connect(lambda: self._change_language("pt"))
         act_ja.triggered.connect(lambda: self._change_language("ja"))
+        act_it.triggered.connect(lambda: self._change_language("it"))
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_restart"), self.restart_application)
 
@@ -6404,6 +6432,7 @@ class MainWindow(QMainWindow):
         self._status_corner = _StatusCornerWidget()
         bar.setCornerWidget(self._status_corner, Qt.TopRightCorner)
         self._status_corner.clock_clicked.connect(self._open_schedule_dialog)
+        self._status_corner.cloud_clicked.connect(self._cloud_sync_now)
         self._status_corner.set_countdown_source(self._clock_schedule_info)
 
         # ── Synchro patch + effets avec le compte (façon iCloud) ──────────────
@@ -7323,9 +7352,29 @@ class MainWindow(QMainWindow):
 
         self.akai.setMinimumWidth(320)
 
+        # Petits écrans (13" à 150 % ≈ 670 px utiles) : la colonne AKAI + journal
+        # demande ~675 px de haut et imposait cette hauteur à toute la fenêtre, le
+        # bas passait sous la barre des tâches. Dans une zone qui défile, elle ne
+        # force plus rien ; sur un écran normal la barre n'apparaît jamais.
+        akai_scroll = QScrollArea()
+        akai_scroll.setWidget(self.akai)
+        akai_scroll.setWidgetResizable(True)
+        akai_scroll.setFrameShape(QFrame.NoFrame)
+        akai_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        akai_scroll.setMinimumWidth(320)
+        akai_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollBar:vertical { background: #111; width: 8px; margin: 0; }"
+            "QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 4px; min-height: 30px; }"
+            "QScrollBar::handle:vertical:hover { background: #0077bb; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+        )
+        self._akai_scroll = akai_scroll
+
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(2)
-        main_split.addWidget(self.akai)
+        main_split.addWidget(akai_scroll)
         main_split.addWidget(self._center_stack)
         main_split.addWidget(right)
         main_split.setStretchFactor(0, 0)  # AKAI = taille fixe
@@ -9392,6 +9441,88 @@ class MainWindow(QMainWindow):
             if slot["type"] in ("group", "fx"):
                 pad.setToolTip(tip)
                 pad.setToolTipDuration(800 if self._mem_rec_mode else -1)
+
+    def _cloud_sync_now(self, which=0):
+        """Boutons de la fiche du nuage : 0 = synchroniser maintenant (envoi
+        immédiat + regarder si un autre PC a envoyé du neuf), 1 = importer
+        depuis le compte. Réseau en arrière-plan, comme toujours."""
+        if self._cloud_pusher is None:
+            return
+        if which == 1:
+            self._cloud_import()
+            return
+        self._cloud_pusher.sync_now()
+        self._cloud_tick()
+
+    def _cloud_import(self):
+        """« Importer depuis le compte » : lecture du compte en thread, puis
+        confirmation et écriture sur le thread principal."""
+        if not self._cloud_pusher.request_import():
+            return
+        t = QTimer(self)
+        t.setInterval(150)
+
+        def _poll():
+            r = self._cloud_pusher.take_import_result()
+            if r is None:
+                return
+            t.stop()
+            t.deleteLater()
+            self._cloud_import_finish(*r)
+
+        t.timeout.connect(_poll)
+        t.start()
+
+    def _cloud_import_finish(self, uid, res):
+        import cloud_sync
+        title = tr("cloud_imp_title")
+        if res is None:
+            QMessageBox.warning(self, title, tr("cloud_imp_offline"))
+            return
+        remote, utc = res
+        if not remote:
+            QMessageBox.information(self, title, tr("cloud_imp_empty"))
+            return
+        keys = cloud_sync.import_plan(remote)
+        if not keys:
+            self._cloud_pusher.news = []
+            self._cloud_tick()
+            QMessageBox.information(self, title, tr("cloud_imp_same"))
+            return
+        items = []
+        if "patch" in keys:
+            items.append(tr("cloud_item_patch"))
+        if any(k.startswith("fx_") for k in keys):
+            items.append(tr("cloud_item_fx"))
+        if "akai" in keys:
+            items.append(tr("cloud_item_akai"))
+        when = (_dt.datetime.fromtimestamp(utc).strftime("%d/%m/%Y · %H:%M")
+                if utc else "—")
+        # Patch et effets vivent en mémoire dans l'appli (et y seraient
+        # réécrits) : on redémarre. Mémoires / pages AKAI : rechargées à chaud.
+        restart = any(k != "akai" for k in keys)
+        text = tr("cloud_imp_confirm", items="\n".join(items), when=when)
+        if restart:
+            text += tr("cloud_imp_restart_note")
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(text)
+        b_ok = box.addButton(tr("cloud_imp_btn"), QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(b_ok)
+        box.exec()
+        if box.clickedButton() is not b_ok:
+            return
+        written = cloud_sync.import_apply(uid, remote, utc, keys)
+        self._cloud_pusher.news = [k for k in self._cloud_pusher.news
+                                   if k not in written]
+        if restart and written:
+            self._restart_now()
+            return
+        if "akai" in written:
+            self._load_akai_config_auto()
+            self._log_message(tr("cloud_imp_done"), "info")
+        self._cloud_tick()
 
     def _cloud_tick(self):
         """Minuteur de synchro : jamais d'exception ni d'attente réseau ici."""
@@ -12527,12 +12658,18 @@ class MainWindow(QMainWindow):
         # ailleurs que là où le rappel pose la lyre.
         cibles = position_preset_values(preset, lyres_cur)
 
+        # Temps de déplacement propre au preset (clic droit → ⏱️), 0,5 s sinon.
+        move_ms = int(round(self._pos_move_secs(preset) * 1000))
+        # Décalage : les lyres partent l'une après l'autre, dans l'ordre choisi.
+        servies = [p for p in lyres_cur if cibles.get(id(p))]
+        rangs = self._pos_spread_ranks(len(servies), preset.get("spread_order", "fwd"))
+        spread_ms = int(round(max(0.0, float(preset.get("spread", 0) or 0)) * 1000))
         applied = 0
-        for p in lyres_cur:
-            pt = cibles.get(id(p))
-            if pt:
-                self._start_pan_tilt_transition(p, pt[0], pt[1], 500)
-                applied += 1
+        for k, p in enumerate(servies):
+            pt = cibles[id(p)]
+            self._start_pan_tilt_transition(p, pt[0], pt[1], move_ms,
+                                            delay_ms=rangs[k] * spread_ms)
+            applied += 1
 
         if applied == 0:
             self._log_message(tr("mwx_052", a=pos_col + 1, a1=row + 1), "warn")
@@ -12580,6 +12717,8 @@ class MainWindow(QMainWindow):
         preset = {"name": name, "projectors": snap}
 
         if cur_idx is not None and cur_idx < len(self.position_presets):
+            # Ré-enregistrer la position ne doit pas perdre son temps de déplacement.
+            self._pos_keep_move(self.position_presets[cur_idx], preset)
             self.position_presets[cur_idx] = preset
         else:
             self.position_presets.append(preset)
@@ -12617,6 +12756,17 @@ class MainWindow(QMainWindow):
             pname = self.position_presets[cur_idx]["name"]
             rename_act = menu.addAction(tr("pos_ctx_rename", name=pname))
             rename_act.triggered.connect(lambda: self._rename_position_akai(pos_col, row))
+            _pr = self.position_presets[cur_idx]
+            _move, _spread = _pr.get("move"), _pr.get("spread")
+            if _move is None and not _spread:
+                _mlbl = tr("pos_ctx_move")
+            else:
+                _v = self._fmt_mem_fade(self._pos_move_secs(_pr))
+                if _spread:
+                    _v += f"  ·  ↗ {self._fmt_mem_fade(_spread)}"
+                _mlbl = tr("pos_ctx_move_set", v=_v)
+            move_act = menu.addAction(_mlbl)
+            move_act.triggered.connect(lambda: self._edit_position_move(pos_col, row))
             clear_act = menu.addAction(tr("pos_ctx_clear"))
             clear_act.triggered.connect(lambda: self._clear_position_akai(pos_col, row))
 
@@ -12633,6 +12783,189 @@ class MainWindow(QMainWindow):
                 )
 
         menu.exec(btn.mapToGlobal(pos))
+
+    _POS_MOVE_DEFAULT = 0.5   # s — durée historique du rappel d'un pad POS
+
+    def _pos_move_secs(self, preset) -> float:
+        """Temps de déplacement d'un preset position (0,5 s s'il n'est pas réglé)."""
+        try:
+            v = (preset or {}).get("move")
+            return self._POS_MOVE_DEFAULT if v is None else max(0.0, float(v))
+        except (TypeError, ValueError):
+            return self._POS_MOVE_DEFAULT
+
+    _POS_TIMING_KEYS = ("move", "spread", "spread_order")
+    _POS_SPREAD_ORDERS = ("fwd", "rev", "out", "in")
+
+    @staticmethod
+    def _pos_spread_ranks(n, order):
+        """Rang de départ de chaque lyre — cf. `core.position_spread_ranks`."""
+        from core import position_spread_ranks
+        return position_spread_ranks(n, order)
+
+    @classmethod
+    def _pos_keep_move(cls, old, new):
+        """Reporte le minutage (temps, décalage, ordre) de `old` sur `new`."""
+        if isinstance(old, dict) and isinstance(new, dict):
+            for k in cls._POS_TIMING_KEYS:
+                if k in old and k not in new:
+                    new[k] = old[k]
+        return new
+
+    def _edit_position_move(self, pos_col, row):
+        """Boîte de réglage du temps de déplacement d'un pad POS.
+
+        Le réglage vit dans le PRESET (comme son nom) : tous les pads qui
+        partagent ce preset glissent à la même vitesse.
+        """
+        cur_idx = self.position_pads[pos_col][row] if pos_col < _POS_COL_MAX else None
+        if cur_idx is None or cur_idx >= len(self.position_presets):
+            return
+        preset = self.position_presets[cur_idx]
+        from plan_de_feu import _CurseurCanal, _feuille_curseur
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("pos_move_title"))
+        dlg.setMinimumWidth(430)
+        dlg.setStyleSheet(
+            "QDialog{background:#0d0d0d;}"
+            "QLabel{color:#e0e0e0;background:transparent;}"
+            "QPushButton{background:#1a1a1a;color:#ccc;border:1px solid #2a2a2a;"
+            "border-radius:5px;padding:7px 16px;font-size:12px;}"
+            "QPushButton:hover{background:#242424;border-color:#3a3a3a;color:#fff;}"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(14)
+
+        cible = QLabel(f"POS {pos_col + 1}.{row + 1}  ·  {preset.get('name', '')}")
+        cible.setStyleSheet("color:#00d4ff;font-size:12px;font-weight:bold;"
+                            "background:transparent;")
+        lay.addWidget(cible)
+
+        def _ligne_curseur(libelle, dixiemes, plafond):
+            """Libellé + curseur (unité = dixième de seconde) + valeur lue."""
+            ligne = QWidget()
+            h = QHBoxLayout(ligne)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(10)
+            lbl = QLabel(libelle)
+            lbl.setFixedWidth(140)
+            lbl.setStyleSheet("color:#999;font-size:12px;font-weight:bold;"
+                              "background:transparent;")
+            sli = _CurseurCanal(Qt.Horizontal)
+            sli.setRange(0, max(plafond, dixiemes))
+            sli.setValue(dixiemes)
+            sli.setStyleSheet(_feuille_curseur(True, self._MEM_FADE_COLOR))
+            sli.setFixedHeight(22)
+            sli.setCursor(Qt.PointingHandCursor)
+            val = QLabel()
+            val.setFixedWidth(58)
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val.setStyleSheet(f"color:{self._MEM_FADE_COLOR};font-size:12px;"
+                              "font-weight:bold;background:transparent;")
+
+            def montrer(v):
+                val.setText(self._fmt_mem_fade(v / 10.0))
+            sli.valueChanged.connect(montrer)
+            montrer(sli.value())
+            h.addWidget(lbl)
+            h.addWidget(sli, 1)
+            h.addWidget(val)
+            lay.addWidget(ligne)
+            return sli
+
+        # Plafonds : 30 s de trajet, 5 s entre deux lyres (au-delà on est dans
+        # un effet ou une séquence, pas dans un rappel de position).
+        sli = _ligne_curseur(tr("pos_move_lbl"),
+                             int(round(self._pos_move_secs(preset) * 10)), 300)
+        try:
+            _spread0 = max(0.0, float(preset.get("spread", 0) or 0))
+        except (TypeError, ValueError):
+            _spread0 = 0.0
+        sli_spread = _ligne_curseur(tr("pos_spread_lbl"), int(round(_spread0 * 10)), 50)
+
+        ordre = QWidget()
+        ho = QHBoxLayout(ordre)
+        ho.setContentsMargins(0, 0, 0, 0)
+        ho.setSpacing(10)
+        lbl_o = QLabel(tr("pos_spread_order_lbl"))
+        lbl_o.setFixedWidth(140)
+        lbl_o.setStyleSheet("color:#999;font-size:12px;font-weight:bold;"
+                            "background:transparent;")
+        combo = QComboBox()
+        combo.setStyleSheet("QComboBox{background:#1a1a1a;color:#e0e0e0;border:1px solid #2a2a2a;"
+                            "border-radius:4px;padding:4px 8px;font-size:12px;}"
+                            "QComboBox QAbstractItemView{background:#1a1a1a;color:#e0e0e0;"
+                            "selection-background-color:#1a2a4a;}")
+        for code in self._POS_SPREAD_ORDERS:
+            combo.addItem(tr(f"pos_spread_order_{code}"), code)
+        _o = preset.get("spread_order", "fwd")
+        combo.setCurrentIndex(self._POS_SPREAD_ORDERS.index(_o)
+                              if _o in self._POS_SPREAD_ORDERS else 0)
+        # Toujours déroulable (un menu grisé passe pour un bug). Choisir un
+        # ordre alors que le décalage est à 0 n'aurait aucun effet : on pose
+        # alors un décalage de 0,3 s, visible sur le curseur juste au-dessus.
+        def _ordre_choisi(_i):
+            if sli_spread.value() == 0:
+                sli_spread.setValue(3)
+        combo.currentIndexChanged.connect(_ordre_choisi)
+
+        # Grisé « pour l'œil » seulement quand le décalage est à 0 : le menu
+        # reste déroulable (setEnabled(False) l'empêcherait de s'ouvrir).
+        def _teinte_ordre(v):
+            actif = v > 0
+            txt, bord = ("#e0e0e0", "#2a2a2a") if actif else ("#555", "#1f1f1f")
+            combo.setStyleSheet(
+                f"QComboBox{{background:#1a1a1a;color:{txt};border:1px solid {bord};"
+                "border-radius:4px;padding:4px 8px;font-size:12px;}"
+                "QComboBox QAbstractItemView{background:#1a1a1a;color:#e0e0e0;"
+                "selection-background-color:#1a2a4a;}")
+            lbl_o.setStyleSheet(f"color:{'#999' if actif else '#4a4a4a'};font-size:12px;"
+                                "font-weight:bold;background:transparent;")
+        sli_spread.valueChanged.connect(_teinte_ordre)
+        _teinte_ordre(sli_spread.value())
+        ho.addWidget(lbl_o)
+        ho.addWidget(combo, 1)
+        lay.addWidget(ordre)
+
+        hint = QLabel(tr("pos_move_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#666;font-size:11px;background:transparent;")
+        lay.addWidget(hint)
+
+        barre = QHBoxLayout()
+        btn_def = QPushButton(tr("pos_move_reset"))
+
+        def _defaut():
+            sli.setValue(int(round(self._POS_MOVE_DEFAULT * 10)))
+            sli_spread.setValue(0)
+            dlg.accept()
+        btn_def.clicked.connect(_defaut)
+        barre.addWidget(btn_def)
+        barre.addStretch()
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Cancel).setText(tr("btn_cancel"))
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        barre.addWidget(btns)
+        lay.addLayout(barre)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        secs = sli.value() / 10.0
+        if abs(secs - self._POS_MOVE_DEFAULT) < 1e-6:
+            preset.pop("move", None)
+        else:
+            preset["move"] = secs
+        spread = sli_spread.value() / 10.0
+        if spread > 0:
+            preset["spread"] = spread
+            preset["spread_order"] = combo.currentData() or "fwd"
+        else:
+            preset.pop("spread", None)
+            preset.pop("spread_order", None)
+        self._save_akai_config_auto()
 
     def _load_pdf_presets(self):
         """Charge les presets Pan/Tilt du fichier Plan de Feu."""
@@ -12670,7 +13003,7 @@ class MainWindow(QMainWindow):
                 i = par_nom.get(pdf.get("name"))
                 if i is None:
                     continue
-                maj = self._pdf_preset_to_akai(pdf)
+                maj = self._pos_keep_move(presets[i], self._pdf_preset_to_akai(pdf))
                 if maj != presets[i]:
                     presets[i] = maj
                     n += 1
@@ -12711,7 +13044,7 @@ class MainWindow(QMainWindow):
                 return None
             for i, existant in enumerate(presets):
                 if existant.get("name") == akai.get("name"):
-                    presets[i] = akai
+                    presets[i] = self._pos_keep_move(existant, akai)
                     self._save_akai_config_auto()
                     return i
             presets.append(akai)
@@ -12747,7 +13080,7 @@ class MainWindow(QMainWindow):
         # Mettre à jour si même nom existe déjà (pour prendre en compte les modifs du plan de feu)
         for i, existing in enumerate(self.position_presets):
             if existing["name"] == akai["name"]:
-                self.position_presets[i] = akai
+                self.position_presets[i] = self._pos_keep_move(existing, akai)
                 self._assign_position_akai(pos_col, row, i)
                 self._save_akai_config_auto()
                 return
@@ -13472,8 +13805,13 @@ class MainWindow(QMainWindow):
             self._stacked_effects = [e for e in self._stacked_effects
                                      if e.get('idx') != effect_idx]
 
-    def _start_pan_tilt_transition(self, proj, new_pan: int, new_tilt: int, duration_ms: int = 500):
-        """Lance une animation fluide pan/tilt vers (new_pan, new_tilt)."""
+    def _start_pan_tilt_transition(self, proj, new_pan: int, new_tilt: int, duration_ms: int = 500,
+                                   delay_ms: int = 0):
+        """Lance une animation fluide pan/tilt vers (new_pan, new_tilt).
+
+        `delay_ms` : la lyre attend sur place avant de partir (déplacement
+        décalé d'un pad POS — les lyres partent l'une après l'autre).
+        """
         import time as _t
         cur_pan  = getattr(proj, 'pan',  32768)
         cur_tilt = getattr(proj, 'tilt', 32768)
@@ -13498,7 +13836,7 @@ class MainWindow(QMainWindow):
             # Dernière valeur interpolée : sert au déplacement par écart
             # quand un effet tient la lyre.
             'lp':       cur_pan,  'lt': cur_tilt,
-            'start':    _t.monotonic(),
+            'start':    _t.monotonic() + max(0, delay_ms) / 1000.0,
             'duration': duration_ms / 1000.0,
         }
         if not self._pan_tilt_anim_timer.isActive():
@@ -13526,7 +13864,11 @@ class MainWindow(QMainWindow):
         now  = _t.monotonic()
         done = []
         for pid, tr in self._pan_tilt_transitions.items():
-            alpha = min(1.0, (now - tr['start']) / tr['duration'])
+            # max(0) : départ différé (décalage entre lyres) ; durée 0 = saut net.
+            _dur = tr['duration']
+            alpha = 1.0 if _dur <= 0 else max(0.0, min(1.0, (now - tr['start']) / _dur))
+            if now < tr['start'] and _dur > 0:
+                continue        # pas encore son tour : la lyre reste où elle est
             # smoothstep : décélération naturelle comme une vraie lyre
             a = alpha * alpha * (3.0 - 2.0 * alpha)
             proj = tr['proj']
@@ -22223,7 +22565,7 @@ class MainWindow(QMainWindow):
     def _change_language(self, lang: str):
         set_language(lang)
         label = {"fr": "Français", "en": "English", "es": "Español",
-                 "de": "Deutsch", "pt": "Português", "ja": "日本語"}.get(lang, lang)
+                 "de": "Deutsch", "pt": "Português", "ja": "日本語", "it": "Italiano"}.get(lang, lang)
         QMessageBox.information(self, tr("lang_changed_title"), tr("lang_changed_msg", label=label))
 
     def on_update_available(self, version, exe_url, hash_url, sig_url=""):
@@ -22435,16 +22777,20 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            if hasattr(self, 'midi_handler') and self.midi_handler:
-                try:
-                    if self.midi_handler.midi_in:
-                        self.midi_handler.midi_in.close_port()
-                    if self.midi_handler.midi_out:
-                        self.midi_handler.midi_out.close_port()
-                except:
-                    pass
-            python = sys.executable
-            os.execv(python, [python] + sys.argv)
+            self._restart_now()
+
+    def _restart_now(self):
+        """Redémarrage sans question (déjà confirmé par l'appelant)."""
+        if hasattr(self, 'midi_handler') and self.midi_handler:
+            try:
+                if self.midi_handler.midi_in:
+                    self.midi_handler.midi_in.close_port()
+                if self.midi_handler.midi_out:
+                    self.midi_handler.midi_out.close_port()
+            except:
+                pass
+        python = sys.executable
+        os.execv(python, [python] + sys.argv)
 
     def toggle_blackout_from_midi(self):
         """Toggle le blackout depuis le bouton 9 de l'AKAI"""
@@ -24264,7 +24610,7 @@ class MainWindow(QMainWindow):
                 _sp.blockSignals(False)
 
         def _on_pt_range(attr, value):
-            idx = _sel[0]
+            idx = _pt_target(_sel[0])
             if idx is None or idx >= len(self.projectors):
                 return
             setattr(self.projectors[idx], attr, float(value))
@@ -24718,8 +25064,42 @@ class MainWindow(QMainWindow):
         # même, à tort, qu'il n'y avait rien à enregistrer.
         # Seul `_on_pt_position_changed` reste volontairement propre : le point
         # jaune teste le mouvement en direct, il ne règle rien de sauvegardable.
+        def _has_pantilt(i):
+            """Le membre i porte-t-il un canal Pan ou Tilt ?"""
+            if i is None or i >= len(self.projectors):
+                return False
+            prof = ((fixture_data[i].get('profile') if i < len(fixture_data) else None)
+                    or getattr(self.projectors[i], 'dmx_profile', None) or [])
+            return any(str(c).strip().lower().startswith(('pan', 'tilt')) for c in prof)
+
+        def _pt_target(idx):
+            """Projecteur qui reçoit les réglages pan/tilt de la carte idx.
+
+            Une barre « swing » (têtes motorisées) est une matrice : la carte
+            affichée est son membre d'adresse la plus basse, qui n'est pas
+            forcément celui qui porte le canal Tilt. Les limites et le
+            débattement doivent aller sur CE membre-là, sinon la sortie DMX
+            (qui borne pan/tilt projecteur par projecteur) ne les verrait pas.
+            """
+            if idx is None or idx >= len(self.projectors):
+                return None
+            _g = _matrix_info_for(idx)
+            if _g:
+                for j in sorted(_g["members"],
+                                key=lambda k: self.projectors[k].start_address):
+                    if _has_pantilt(j):
+                        return j
+            return idx
+
+        def _pt_visible(idx, ftype):
+            """Zone de mouvement + débattement : lyres, lasers, et tout appareil
+            qui a un canal Pan/Tilt (barre swing typée « Barre LED »…)."""
+            if ftype in ('Moving Head', 'Laser'):
+                return True
+            return _has_pantilt(_pt_target(idx))
+
         def _on_pt_limits_changed(pm, px, tm, tx):
-            idx = _sel[0]
+            idx = _pt_target(_sel[0])
             if idx is None or idx >= len(self.projectors): return
             proj = self.projectors[idx]
             proj.pan_min  = pm * 256
@@ -24729,7 +25109,7 @@ class MainWindow(QMainWindow):
             _mark_dirty()
 
         def _on_pt_position_changed(pan_c, tilt_c):
-            idx = _sel[0]
+            idx = _pt_target(_sel[0])
             if idx is None or idx >= len(self.projectors): return
             proj = self.projectors[idx]
             proj.pan  = pan_c  << 8
@@ -24739,7 +25119,7 @@ class MainWindow(QMainWindow):
         pt_widget.position_changed.connect(_on_pt_position_changed)
 
         def _pt_reset():
-            idx = _sel[0]
+            idx = _pt_target(_sel[0])
             if idx is None or idx >= len(self.projectors): return
             proj = self.projectors[idx]
             proj.pan_min = 0; proj.pan_max = 65535
@@ -24748,13 +25128,14 @@ class MainWindow(QMainWindow):
             _mark_dirty()
 
         def _pt_apply(same_name_only):
-            idx = _sel[0]
+            idx = _pt_target(_sel[0])
             if idx is None or idx >= len(self.projectors): return
             src = self.projectors[idx]
             ref_name = src.name if same_name_only else None
             for i, p in enumerate(self.projectors):
                 if i == idx: continue
-                if p.fixture_type not in ('Moving Head', 'Laser'): continue
+                if (p.fixture_type not in ('Moving Head', 'Laser')
+                        and not _has_pantilt(i)): continue
                 if same_name_only and p.name != ref_name: continue
                 p.pan_min  = src.pan_min;  p.pan_max  = src.pan_max
                 p.tilt_min = src.tilt_min; p.tilt_max = src.tilt_max
@@ -26195,6 +26576,7 @@ class MainWindow(QMainWindow):
                                               else tr("mw_replace_m"))
                     act_replace.setToolTip(tr("mw_replace_fixture"))
                     act_dup = m.addAction(tr("mw_duplicate_m"))
+                    act_export = m.addAction(tr("mw_export_fixture_m"))
                     m.addSeparator()
                     act_del = m.addAction(tr("mw_delete_m"))
                     _chosen = m.exec(e.globalPos())
@@ -26202,6 +26584,8 @@ class MainWindow(QMainWindow):
                         _del_selected()
                     elif _chosen == act_dup:
                         _duplicate_selected()
+                    elif _chosen == act_export:
+                        _export_selected()
                     elif _chosen == act_locate:
                         _locate_selected()
                     elif _chosen == act_replace:
@@ -26327,8 +26711,8 @@ class MainWindow(QMainWindow):
             if idx < len(_cards) and _cards[idx] is not None:
                 scroll.ensureWidgetVisible(_cards[idx])
 
-            # Pan/tilt limits section — visible only for Moving Head
-            is_mh = fd.get('fixture_type', '') in ('Moving Head', 'Laser')
+            # Pan/tilt limits section — lyres, lasers, et tout appareil à Pan/Tilt
+            is_mh = _pt_visible(idx, fd.get('fixture_type', ''))
             pt_section.setVisible(is_mh)
             rng_box.setVisible(is_mh)
 
@@ -26355,7 +26739,7 @@ class MainWindow(QMainWindow):
                 _fill_px_layout(_gpx)
                 _refresh_px_strip(idx)
             if is_mh:
-                proj = self.projectors[idx]
+                proj = self.projectors[_pt_target(idx)]
                 pt_widget.set_limits(
                     proj.pan_min >> 8, proj.pan_max >> 8,
                     proj.tilt_min >> 8, proj.tilt_max >> 8
@@ -26372,6 +26756,9 @@ class MainWindow(QMainWindow):
             _push_history()
             fd   = fixture_data[idx]
             proj = self.projectors[idx]
+            # Adresse AVANT la modif : sert à garder l'ordre des membres d'une
+            # barre quand on la réadresse (cf. plus bas).
+            _prev_start = fd.get('start_address', 1)
             fd['name']          = det_name_e.text().strip() or fd['group']
             fd['fixture_type']  = det_type_cb.currentData() or det_type_cb.currentText()
             fd['group']         = _selected_group[0] or fd['group']
@@ -26394,11 +26781,17 @@ class MainWindow(QMainWindow):
             if _mid_c is not None:
                 _mem = [i for i, f2 in enumerate(fixture_data)
                         if f2.get('matrix_id') == _mid_c]
-                # Ordre CANONIQUE : master (canaux de tête) puis pixels dans
-                # l'ordre de câblage. Trier sur l'adresse courante serait faux :
-                # celle du représentant vient d'être modifiée, il se retrouverait
-                # à la fin et le master passerait après les pixels.
+                # Ordre = celui des adresses AVANT la modif : c'est l'ordre réel
+                # des canaux de l'appareil. Trier sur l'adresse courante serait
+                # faux (celle du représentant vient de changer), et un ordre
+                # « tous les masters puis les pixels » l'était aussi : une barre
+                # a souvent un 2e bloc de canaux de contrôle APRÈS les pixels
+                # (Eurolite LED Bar 8 Swing 49 ch : Tilt/Speed en tête, 7 canaux
+                # Mode en queue). Chaque réadressage remontait ce bloc derrière
+                # le premier master et décalait toutes les têtes de 7 canaux.
                 _mem.sort(key=lambda i: (
+                    _prev_start if i == idx
+                    else fixture_data[i].get('start_address', 0),
                     0 if fixture_data[i].get('matrix_role') == 'master' else 1,
                     fixture_data[i].get('pixel_index') or 0))
                 _base = fd['start_address']
@@ -26500,12 +26893,12 @@ class MainWindow(QMainWindow):
             else:
                 _update_chips(fixture_data[idx].get('profile', []))
             _commit()
-            is_mh = det_type_cb.currentData() in ('Moving Head', 'Laser')
+            is_mh = _pt_visible(idx, det_type_cb.currentData())
             pt_section.setVisible(is_mh)
             rng_box.setVisible(is_mh)
             px_section.setVisible(bool(_matrix_info_for(idx)))
             if is_mh and idx is not None and idx < len(self.projectors):
-                proj = self.projectors[idx]
+                proj = self.projectors[_pt_target(idx)]
                 pt_widget.set_limits(
                     proj.pan_min >> 8, proj.pan_max >> 8,
                     proj.tilt_min >> 8, proj.tilt_max >> 8
@@ -26626,6 +27019,56 @@ class MainWindow(QMainWindow):
             canvas.start_locate(proj.group, local_idx)
 
         btn_det_locate.clicked.connect(_locate_selected)
+
+        def _export_selected():
+            """Clic droit → Exporter : écrit la fixture sélectionnée en .mystrow.
+
+            Le fichier reprend le profil RÉEL du patch (canaux, noms, valeurs par
+            défaut, roues couleur/gobo calibrées), donc ce qu'on a corrigé à la
+            main part avec — et il se réimporte tel quel dans la bibliothèque.
+            """
+            import re as _re
+            from PySide6.QtWidgets import QFileDialog, QMessageBox
+            from fixture_parser import export_mystrow
+            idx = _sel[0]
+            if idx is None or idx >= len(self.projectors):
+                return
+            proj = self.projectors[idx]
+            cfg = self._fixture_to_config(idx, proj)
+            profile = list(cfg.get('profile') or [])
+            labels = list(cfg.get('channel_labels') or [])
+            if len(labels) != len(profile):
+                labels = []
+            name = (proj.name or proj.group or "Fixture").split(" · ")[0].strip()
+            mode = {"name": f"{len(profile)}CH", "channelCount": len(profile),
+                    "profile": profile}
+            if labels:
+                mode["labels"] = labels
+            fixture = {
+                "name":              name,
+                "manufacturer":      cfg.get('manufacturer', '') or '',
+                "fixture_type":      cfg.get('fixture_type') or 'PAR LED',
+                "source":            "custom",
+                "modes":             [mode],
+                "color_wheel_slots": cfg.get('color_wheel_slots', []),
+                "gobo_wheel_slots":  cfg.get('gobo_wheel_slots', []),
+                "channel_defaults":  cfg.get('channel_defaults', {}),
+                "labels":            labels,
+            }
+            safe = _re.sub(r'[\\/:*?"<>|]+', "_", name) or "fixture"
+            start = os.path.join(os.path.expanduser("~"), "Documents", safe + ".mystrow")
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, tr("mw_export_fixture_title"), start,
+                "MyStrow fixture (*.mystrow)")
+            if not path:
+                return
+            if not path.lower().endswith(".mystrow"):
+                path += ".mystrow"
+            try:
+                export_mystrow(fixture, path)
+            except Exception as e:
+                QMessageBox.warning(dialog, tr("mw_export_fixture_title"),
+                                    tr("mw_export_fixture_err", err=str(e)))
 
         def _duplicate_selected():
             """Clic droit → Dupliquer : N copies de la machine sélectionnée.
@@ -27864,6 +28307,28 @@ class MainWindow(QMainWindow):
             QDialog.keyPressEvent(dialog, event)
 
         dialog.keyPressEvent = _patch_key
+
+        def _patch_change(ev):
+            """Réduire le patch = réduire TOUTE l'app.
+
+            Le patch est modal (`exec()`) : réduit seul, il disparaissait (pas
+            d'icône à lui dans la barre des tâches) tout en continuant de
+            bloquer la fenêtre principale — un main visible mais figé, dont on
+            ne sortait qu'en rouvrant le patch. On remet donc le patch dans son
+            état d'avant et on réduit la fenêtre principale : il est réduit avec
+            elle (fenêtre possédée) et revient par-dessus au clic sur MyStrow.
+            """
+            QDialog.changeEvent(dialog, ev)
+            if (ev.type() == QEvent.WindowStateChange
+                    and dialog.windowState() & Qt.WindowMinimized):
+                _old = ev.oldState() & ~Qt.WindowMinimized
+
+                def _fold():
+                    dialog.setWindowState(_old)
+                    self.showMinimized()
+                QTimer.singleShot(0, _fold)
+
+        dialog.changeEvent = _patch_change
 
         _build_cards()
         if select_idx is not None and 0 <= select_idx < len(fixture_data):

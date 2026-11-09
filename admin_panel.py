@@ -766,6 +766,64 @@ def _query_boitier_commandes(id_token: str) -> list:
     return rows
 
 
+def _query_assistant_reports(id_token: str) -> list:
+    """Lots envoyés par l'assistant des clients qui l'ont accepté (Cloud Function
+    assistant_report → `assistant_reports`). Purgés après 12 mois (purge_journaux)."""
+    rows = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/assistant_reports?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:          # collection encore vide
+                return rows
+            raise
+        for doc in data.get("documents", []):
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            fields["_id"] = doc["name"].split("/")[-1]
+            rows.append(fields)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    rows.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+    return rows
+
+
+def _assistant_rows(reports: list) -> list:
+    """Une ligne par demande ou erreur, avec le client et la version du lot."""
+    rows = []
+    for rep in reports:
+        for it in rep.get("items") or []:
+            if isinstance(it, dict):
+                rows.append({**it, "email": rep.get("email", ""),
+                             "version": rep.get("app_version", ""),
+                             "os": rep.get("os", ""), "app_lang": rep.get("app_lang", "")})
+    rows.sort(key=lambda r: r.get("ts") or 0, reverse=True)
+    return rows
+
+
+def _assistant_missed(r: dict) -> bool:
+    """Demande non comprise : action `unknown`, ou rien fait du tout."""
+    did = r.get("did") or []
+    return r.get("k") == "req" and (not did or any('"unknown"' in d for d in did))
+
+
+def _assistant_line(r: dict) -> str:
+    ts = r.get("ts") or 0
+    head = (f"[{datetime.fromtimestamp(ts).strftime('%d/%m %H:%M') if ts else '?'}] "
+            f"{r.get('email', '')} v{r.get('version', '')} {r.get('lang', '') or r.get('app_lang', '')}")
+    if r.get("k") == "err":
+        return f"{head} ERREUR sur « {r.get('t', '')} »\n{r.get('err', '')}"
+    return (f"{head} {r.get('src', '')} : « {r.get('t', '')} »\n"
+            f"   compris : {' · '.join(r.get('did') or []) or '(rien)'}\n"
+            f"   réponse : {' / '.join(r.get('r') or [])}")
+
+
 def _fetch_stock_fanny(id_token: str):
     """Stock d'interfaces nues chez Fanny (meta/stock_fanny.boitier), None si non suivi."""
     req = urllib.request.Request(f"{_FS_BASE}/meta/stock_fanny",
@@ -4018,6 +4076,13 @@ class AdminPanel(QMainWindow):
         self._btn_nav_bx.clicked.connect(lambda: self._switch_view(8))
         nav_lay.addWidget(self._btn_nav_bx)
 
+        # Phrases et erreurs de l'assistant remontées par les clients (avec accord).
+        self._btn_nav_asst = QPushButton("Assistant")
+        self._btn_nav_asst.setFixedHeight(38)
+        self._btn_nav_asst.setStyleSheet(_nav_idle)
+        self._btn_nav_asst.clicked.connect(lambda: self._switch_view(9))
+        nav_lay.addWidget(self._btn_nav_asst)
+
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
 
@@ -4230,6 +4295,9 @@ class AdminPanel(QMainWindow):
 
         # ── Page 8 : Boîtiers maison (initialisation + suivi) ─────────────────
         self._build_boitiers_panel()
+
+        # ── Page 9 : Assistant (phrases et erreurs remontées) ─────────────────
+        self._build_assistant_panel()
 
     # ------------------------------------------------------------------
 
@@ -4983,6 +5051,7 @@ class AdminPanel(QMainWindow):
         self._btn_nav_mod.setStyleSheet(_active if idx == 6 else _idle)
         self._btn_nav_cmd.setStyleSheet(_active if idx == 7 else _idle)
         self._btn_nav_bx.setStyleSheet(_active if idx == 8 else _idle)
+        self._btn_nav_asst.setStyleSheet(_active if idx == 9 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -5002,6 +5071,8 @@ class AdminPanel(QMainWindow):
         if idx == 8:
             # Relu à chaque ouverture : un client a pu activer entre-temps.
             self._load_boitiers()
+        if idx == 9 and not getattr(self, "_asst_loaded", False):
+            self._load_assistant_reports()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -6313,6 +6384,168 @@ class AdminPanel(QMainWindow):
 
         self._cmd_rows = []
         self._content_stack.addWidget(page)
+
+    # ── Page Assistant ────────────────────────────────────────────────────────
+
+    _ASST_FILTRES = ["Tout", "Non comprises", "Erreurs", "Modèle local", "Règles"]
+
+    def _build_assistant_panel(self):
+        """Page 9 : ce que les clients demandent à l'assistant (s'ils l'ont accepté).
+        Une ligne par demande ; « Copier » prépare le texte à coller dans Claude
+        pour corriger le vocabulaire."""
+        page = QWidget()
+        page.setStyleSheet(f"background: {BG_MAIN};")
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        hdr = QFrame()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet(f"background:{BG_PANEL}; border-bottom:1px solid #1e1e1e;")
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(20, 0, 20, 0)
+        hdr_lay.setSpacing(10)
+        lbl_title = QLabel("Assistant")
+        lbl_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lbl_title.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        hdr_lay.addWidget(lbl_title)
+        self._asst_filter = QComboBox()
+        self._asst_filter.addItems(self._ASST_FILTRES)
+        self._asst_filter.setFixedHeight(28)
+        self._asst_filter.currentIndexChanged.connect(lambda _: self._fill_assistant())
+        hdr_lay.addWidget(self._asst_filter)
+        self._asst_search = QLineEdit()
+        self._asst_search.setPlaceholderText("Client, phrase…")
+        self._asst_search.setClearButtonEnabled(True)
+        self._asst_search.setFixedHeight(28)
+        self._asst_search.setFixedWidth(220)
+        self._asst_search.setStyleSheet(
+            f"QLineEdit {{ background:{BG_INPUT}; color:{TEXT}; border:1px solid #3a3a3a;"
+            f" border-radius:5px; padding:0 8px; font-size:12px; }}")
+        self._asst_search.textChanged.connect(lambda _: self._fill_assistant())
+        hdr_lay.addWidget(self._asst_search)
+        hdr_lay.addStretch()
+        self._asst_stats_lbl = QLabel("…")
+        self._asst_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+        hdr_lay.addWidget(self._asst_stats_lbl)
+        btn_copy = QPushButton("⧉  Copier pour Claude")
+        btn_copy.setFixedHeight(28)
+        btn_copy.setStyleSheet(_BTN_SECONDARY)
+        btn_copy.setToolTip("Copie les lignes sélectionnées (ou toutes les lignes affichées)")
+        btn_copy.clicked.connect(self._copy_assistant)
+        hdr_lay.addWidget(btn_copy)
+        btn_ref = QPushButton("↺  Actualiser")
+        btn_ref.setFixedHeight(28)
+        btn_ref.setStyleSheet(_BTN_SECONDARY)
+        btn_ref.clicked.connect(self._load_assistant_reports)
+        hdr_lay.addWidget(btn_ref)
+        root.addWidget(hdr)
+
+        cols = ["Date", "Client", "Version", "Langue", "Source", "Phrase", "Compris", "Réponse"]
+        self._asst_table = QTableWidget(0, len(cols))
+        self._asst_table.setHorizontalHeaderLabels(cols)
+        hh = self._asst_table.horizontalHeader()
+        for c in range(5):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        for c in (5, 6):
+            hh.setSectionResizeMode(c, QHeaderView.Interactive)
+        hh.setStretchLastSection(True)
+        self._asst_table.setColumnWidth(5, 280)
+        self._asst_table.setColumnWidth(6, 260)
+        self._asst_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._asst_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._asst_table.setAlternatingRowColors(True)
+        self._asst_table.verticalHeader().setVisible(False)
+        self._asst_table.setToolTip("Double-clic : tout le détail (erreur complète)")
+        self._asst_table.cellDoubleClicked.connect(self._asst_detail)
+        root.addWidget(self._asst_table, 1)
+
+        self._asst_rows, self._asst_shown = [], []
+        self._content_stack.addWidget(page)
+
+    def _load_assistant_reports(self):
+        self._asst_stats_lbl.setText("Chargement…")
+
+        def _on_data(reports):
+            self._asst_loaded = True
+            self._asst_rows = _assistant_rows(reports)
+            self._fill_assistant()
+
+        def _on_err(e):
+            msg = str(e)
+            if "403" in msg:
+                msg = "accès refusé — règle Firestore assistant_reports"
+            self._asst_stats_lbl.setText(f"⚠ {msg}")
+
+        _run_async(self, lambda: _query_assistant_reports(self._token()),
+                   on_success=_on_data, on_error=_on_err)
+
+    def _fill_assistant(self):
+        f = self._asst_filter.currentIndex()
+        q = self._asst_search.text().strip().lower()
+        keep = {
+            0: lambda r: True,
+            1: _assistant_missed,
+            2: lambda r: r.get("k") == "err",
+            3: lambda r: r.get("src") == "model",
+            4: lambda r: r.get("src") == "rules",
+        }[f]
+        rows = [r for r in self._asst_rows if keep(r) and (
+            not q or q in (r.get("email", "") + " " + (r.get("t") or "")).lower())]
+        self._asst_shown = rows[:2000]
+        t = self._asst_table
+        t.setUpdatesEnabled(False)
+        t.setRowCount(0)
+        for r in self._asst_shown:
+            i = t.rowCount()
+            t.insertRow(i)
+            ts = r.get("ts") or 0
+            err = r.get("k") == "err"
+            cells = [
+                datetime.fromtimestamp(ts).strftime("%d/%m %H:%M") if ts else "",
+                r.get("email", ""),
+                r.get("version", ""),
+                r.get("lang", "") or r.get("app_lang", ""),
+                "ERREUR" if err else r.get("src", ""),
+                r.get("t", ""),
+                ((r.get("err") or "").strip().splitlines() or [""])[-1] if err
+                else " · ".join(r.get("did") or []),
+                " / ".join(r.get("r") or []),
+            ]
+            color = "#ff6b6b" if err else "#f0c040" if _assistant_missed(r) else None
+            for c, v in enumerate(cells):
+                it = QTableWidgetItem(str(v))
+                it.setToolTip(str(v)[:1500])
+                if color and c in (4, 5, 6):
+                    it.setForeground(QColor(color))
+                t.setItem(i, c, it)
+        t.setUpdatesEnabled(True)
+        n_err = sum(1 for r in self._asst_rows if r.get("k") == "err")
+        n_miss = sum(1 for r in self._asst_rows if _assistant_missed(r))
+        clients = len({r.get("email") for r in self._asst_rows})
+        self._asst_stats_lbl.setText(
+            f"{len(rows)} affichée(s) · {len(self._asst_rows)} au total · {n_miss} non comprise(s)"
+            f" · {n_err} erreur(s) · {clients} client(s)")
+
+    def _copy_assistant(self):
+        sel = sorted({ix.row() for ix in self._asst_table.selectedIndexes()})
+        rows = [self._asst_shown[i] for i in sel if i < len(self._asst_shown)] or self._asst_shown
+        QApplication.clipboard().setText("\n\n".join(_assistant_line(r) for r in rows))
+        self._asst_stats_lbl.setText(f"✓ {len(rows)} ligne(s) copiée(s)")
+
+    def _asst_detail(self, row, _col):
+        if row >= len(self._asst_shown):
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Assistant — détail")
+        dlg.resize(760, 480)
+        lay = QVBoxLayout(dlg)
+        txt = QPlainTextEdit()
+        txt.setReadOnly(True)
+        r = self._asst_shown[row]
+        txt.setPlainText(_assistant_line(r) + f"\n\nSystème : {r.get('os', '')}")
+        lay.addWidget(txt)
+        dlg.exec()
 
     # ── Page Boîtiers maison ──────────────────────────────────────────────────
 

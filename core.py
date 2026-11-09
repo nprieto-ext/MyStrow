@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.13"
+VERSION = "3.2.14"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -687,6 +687,62 @@ def spread_rank(i, n, mode="lineaire"):
         h ^= h >> 16
         return (h % 10000) / 10000.0
     return i / n
+
+
+# ── Minutage d'un preset position (pad POS, clip Position de REC Lumière) ────
+# Réglé au clic droit du pad POS, stocké DANS le preset :
+#   "move"         durée du trajet de chaque lyre (s)
+#   "spread"       décalage entre deux départs (s)
+#   "spread_order" fwd | rev | out | in
+# Sans "move", chaque usage garde sa durée historique (0,5 s au pad, 1,5 s en
+# REC Lumière) : un show existant ne change pas tant qu'on ne règle rien.
+POSITION_SPREAD_ORDERS = ("fwd", "rev", "out", "in")
+
+
+def position_spread_ranks(n, order):
+    """Rang de départ de chaque lyre (0 = part la première).
+
+    fwd : ordre du patch · rev : inverse · out : du centre vers les côtés ·
+    in : des côtés vers le centre (les lyres symétriques partent ensemble).
+    """
+    if n <= 0:
+        return []
+    if order == "rev":
+        return [n - 1 - i for i in range(n)]
+    if order in ("out", "in"):
+        mid = (n - 1) / 2.0
+        dist = [int(abs(i - mid)) for i in range(n)]
+        if order == "in":
+            top = max(dist)
+            return [top - d for d in dist]
+        return dist
+    return list(range(n))
+
+
+def position_preset_timing(preset, default_move):
+    """(trajet s, décalage s, ordre) d'un preset, avec repli sur `default_move`."""
+    p = preset or {}
+
+    def _f(v, d):
+        try:
+            return d if v is None else max(0.0, float(v))
+        except (TypeError, ValueError):
+            return d
+    order = p.get("spread_order", "fwd")
+    if order not in POSITION_SPREAD_ORDERS:
+        order = "fwd"
+    return _f(p.get("move"), default_move), _f(p.get("spread"), 0.0), order
+
+
+def position_wave_fraction(elapsed, rank, move, spread):
+    """Avancement 0..1 (lissé) d'une lyre de rang `rank`, `elapsed` s après le départ."""
+    t = elapsed - rank * spread
+    if t <= 0:
+        return 0.0
+    if move <= 0:
+        return 1.0
+    a = min(1.0, t / move)
+    return a * a * (3.0 - 2.0 * a)
 
 
 def position_preset_values(preset, lyres):
@@ -1501,6 +1557,13 @@ def emitted_brightness(proj) -> float:
         # level=0 mais couleur non noire → un effet tient la fixture allumee
         # (frame ON d'un strobe, par exemple).
         effect_active = bool(max_c)
+    # Couleur NOIRE = faisceau fermé (fixture à roue : la roue ne fait pas le
+    # noir, c'est le Dim). Sans ça base_color noire × couleur noire passait
+    # pour « pas d'effet » → intensité = level (100 %) : un dégradé Rouge/Noir
+    # lancé depuis le noir montrait du rouge plein (ou le blanc de la roue sur
+    # Open) à la place du noir. Même règle que `ArtNetDMX`.
+    if level > 0 and max_c == 0:
+        return 0.0
     if effect_active:
         return max_c / 255.0
     return max(0.0, min(1.0, level / 100.0))

@@ -137,7 +137,7 @@ _FIXTURE_TYPE_ALIASES = {
 }
 
 _LANG_NAMES = {"fr": "French", "en": "English", "es": "Spanish",
-               "de": "German", "pt": "Portuguese", "ja": "Japanese"}
+               "de": "German", "pt": "Portuguese", "ja": "Japanese", "it": "Italian"}
 
 # Types dont les valeurs sont des POSITIONS (slots nommés) : seuls ceux-là
 # acceptent une liste de slots dans `preset_slots`.

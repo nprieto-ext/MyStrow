@@ -954,7 +954,8 @@ def _langue_installeur() -> str:
     maestro.iss : un nom inconnu fait echouer Setup au demarrage.
     """
     return {"fr": "french", "es": "spanish", "de": "german",
-            "pt": "brazilianportuguese", "ja": "japanese"}.get(get_language(), "english")
+            "pt": "brazilianportuguese", "ja": "japanese",
+            "it": "italian"}.get(get_language(), "english")
 
 
 def _confirmer_fermeture(parent, version) -> bool:

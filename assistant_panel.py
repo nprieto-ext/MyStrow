@@ -75,8 +75,11 @@ class AssistantStore:
         règles ou le modèle local) et répondu. C'est la matière pour améliorer le
         vocabulaire (ce qui a été mal compris n'apparaît pas dans « unknown »)."""
         lst = self.data.setdefault("history", [])
-        lst.append({"t": text, "ts": int(time.time()), "lang": lang, "src": source, "did": actions, "r": replies})
+        entry = {"t": text, "ts": int(time.time()), "lang": lang, "src": source, "did": actions, "r": replies}
+        lst.append(entry)
         del lst[:-_MAX_HISTORY]
+        import assistant_report
+        assistant_report.queue_request(self, entry)
         self.save()
 
     def note_unknown(self, text: str):
@@ -286,6 +289,29 @@ R = {
     "btn_no": {"fr": "Non", "en": "No", "es": "No", "de": "Nein", "pt": "Não", "ja": "いいえ"},
     "cancelled": {"fr": "D'accord, je ne fais rien.", "en": "Ok, I won't do anything.", "es": "Vale, no hago nada.",
                   "de": "Ok, ich mache nichts.", "pt": "Certo, não faço nada.", "ja": "わかりました、何もしません。"},
+    "share_ask": {"fr": "Pour que je progresse, je peux envoyer à l'équipe MyStrow ce que tu me demandes, mes réponses et mes erreurs "
+                        "(liés à ton compte, rien d'autre de ton show). Tu es d'accord ?",
+                  "en": "To help me improve, I can send the MyStrow team what you ask me, my answers and my errors "
+                        "(linked to your account, nothing else from your show). Is that ok?",
+                  "es": "Para mejorar, puedo enviar al equipo de MyStrow lo que me pides, mis respuestas y mis errores "
+                        "(vinculados a tu cuenta, nada más de tu show). ¿Te parece bien?",
+                  "de": "Damit ich besser werde, kann ich dem MyStrow-Team deine Anfragen, meine Antworten und meine Fehler schicken "
+                        "(mit deinem Konto verknüpft, sonst nichts aus deiner Show). Einverstanden?",
+                  "pt": "Para melhorar, posso enviar à equipa MyStrow o que me pedes, as minhas respostas e os meus erros "
+                        "(ligados à tua conta, nada mais do teu show). Concordas?",
+                  "ja": "改善のため、あなたの依頼・私の返答・エラーを MyStrow チームに送ってもいいですか？（アカウントに紐づきます。ショーの他の内容は送りません）"},
+    "share_on": {"fr": "Merci ! J'enverrai tes demandes à l'équipe. Pour arrêter, dis « n'envoie plus mes phrases ».",
+                 "en": "Thanks! I'll send your requests to the team. To stop, say “stop sending my sentences”.",
+                 "es": "¡Gracias! Enviaré tus peticiones al equipo. Para parar, di «no envíes más mis frases».",
+                 "de": "Danke! Ich schicke deine Anfragen ans Team. Zum Beenden sag „schick meine Sätze nicht mehr“.",
+                 "pt": "Obrigado! Vou enviar os teus pedidos à equipa. Para parar, diz «não envies mais as minhas frases».",
+                 "ja": "ありがとうございます！依頼をチームに送ります。やめるときは「送信をやめて」と言ってください。"},
+    "share_off": {"fr": "D'accord, je n'envoie rien. Tu peux changer d'avis : dis « envoie mes phrases ».",
+                  "en": "Ok, I won't send anything. You can change your mind: say “send my sentences”.",
+                  "es": "Vale, no envío nada. Puedes cambiar de opinión: di «envía mis frases».",
+                  "de": "Ok, ich schicke nichts. Du kannst es dir anders überlegen: sag „schick meine Sätze“.",
+                  "pt": "Certo, não envio nada. Podes mudar de ideias: diz «envia as minhas frases».",
+                  "ja": "わかりました、何も送りません。気が変わったら「送信して」と言ってください。"},
     "patch_search": {"fr": "🔎 J'ouvre le patch et je cherche « {q} » dans la bibliothèque : choisis le bon modèle, puis valide.",
                      "en": "🔎 Opening the patch and searching the library for “{q}”: pick the right model, then confirm.",
                      "es": "🔎 Abro el patch y busco «{q}» en la biblioteca: elige el modelo correcto y confirma.",
@@ -481,6 +507,8 @@ class AssistantExecutor:
             except Exception as exc:
                 print(f"[Assistant] {act} : {exc}")
                 out.append(f"✖ {exc}")
+                import assistant_report
+                assistant_report.queue_error(self.store, text, traceback.format_exc())
         out = [o for o in out if o]
         self.store.note(text, lang, actions, out, source="rules" if model_actions is None else "model")
         return out
@@ -803,6 +831,9 @@ class AssistantPanel(QWidget):
             self._model_ok = False
         self._queue, self._thinking = [], None     # demandes en attente du modèle
         self._rec_t0 = 0.0
+        self._share_asked = False            # question « j'envoie tes phrases ? » posée cette session
+        import assistant_report
+        self._reporter = assistant_report.Reporter(store, self)
         self._build()
 
     def _build(self):
@@ -887,7 +918,10 @@ class AssistantPanel(QWidget):
 
     def submit(self, text: str):
         try:
+            if self._share_command(text):
+                return
             self._submit(text)
+            self._maybe_ask_share()
         except Exception as exc:
             self._fail(exc)
 
@@ -901,6 +935,65 @@ class AssistantPanel(QWidget):
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + traceback.format_exc() + "\n")
         except Exception:
             pass
+        try:
+            import assistant_report
+            assistant_report.queue_error(self.store, self._history[-1] if self._history else "",
+                                         traceback.format_exc())
+            self.store.save()
+        except Exception:
+            pass
+        self._maybe_ask_share(force=True)
+
+    # ── remontée des demandes (avec accord) ──
+    _SHARE_OFF_RE = re.compile(
+        r"\b(n'?envoie plus|arr[eê]te d'?envoyer|ne partage plus|stop (le )?partage|stop sending|"
+        r"don'?t send|no env[ií]es|schick .*nicht mehr)", re.I)
+    _SHARE_ON_RE = re.compile(
+        r"^\s*(envoie|partage) (mes|les) (phrases|demandes)|^\s*send my (sentences|requests)", re.I)
+
+    def _share_command(self, text) -> bool:
+        text = text or ""
+        on = True if self._SHARE_ON_RE.search(text) else False if self._SHARE_OFF_RE.search(text) else None
+        if on is None:
+            return False
+        self._bubble(text, mine=True)
+        self._set_share(on, self.exec.rules(text).lang)
+        return True
+
+    def _maybe_ask_share(self, force=False):
+        """Une seule fois : après une phrase non comprise, une erreur, ou 5 demandes."""
+        if self.store.data.get("share") is not None or self._share_asked:
+            return
+        hist = self.store.data.get("history") or []
+        last = hist[-1] if hist else {}
+        missed = any(isinstance(a, dict) and a.get("do") == "unknown" for a in last.get("did") or [])
+        if not (force or missed or len(hist) >= 5):
+            return
+        self._share_asked = True
+        lang = last.get("lang") or get_language()
+        self._chat.append(
+            f'<table align="left" cellpadding="6" bgcolor="#181818" style="margin:3px 30px 3px 0;"><tr>'
+            f'<td style="color:#cccccc;">{html.escape(_r("share_ask", lang))}&nbsp;&nbsp;'
+            f'<a href="asst:share_yes:{lang}" style="color:#00d4ff;">{html.escape(_r("btn_yes", lang))}</a>'
+            f'&nbsp;·&nbsp;<a href="asst:share_no:{lang}" style="color:#888;">{html.escape(_r("btn_no", lang))}</a>'
+            f'</td></tr></table>')
+        sb = self._chat.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _set_share(self, on: bool, lang):
+        was = self.store.data.get("share")
+        self.store.data["share"] = on
+        if on and was is not True:
+            # Les dernières demandes (celles qui ont amené la question) partent aussi.
+            import assistant_report
+            for e in (self.store.data.get("history") or [])[-20:]:
+                assistant_report.queue_request(self.store, e)
+        if not on:
+            self.store.data["outbox"] = []
+        self.store.save()
+        self._say_assistant(_r("share_on" if on else "share_off", lang))
+        if on:
+            QTimer.singleShot(3000, self._reporter.flush)
 
     def _submit(self, text: str):
         text = (text or "").strip()
@@ -962,6 +1055,9 @@ class AssistantPanel(QWidget):
     def _on_anchor(self, url):
         if url.toString() in ("asst:yes", "asst:no"):
             self._answer_pending(url.toString() == "asst:yes")
+        elif url.toString().startswith("asst:share_"):
+            _, what, lang = (url.toString().split(":") + ["", ""])[:3]
+            self._set_share(what == "share_yes", lang or get_language())
         elif url.scheme() == "https":
             from PySide6.QtGui import QDesktopServices
             QDesktopServices.openUrl(url)

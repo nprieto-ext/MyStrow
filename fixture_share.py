@@ -54,6 +54,7 @@ _TERMS_URLS = {
     "de": "https://mystrow.fr/de/terms#contributions",
     "pt": "https://mystrow.fr/pt/terms#contributions",
     "ja": "https://mystrow.fr/en/terms#contributions",  # pas de version japonaise du site
+    "it": "https://mystrow.fr/en/terms#contributions",  # pas de CGU italiennes sur le site
 }
 
 

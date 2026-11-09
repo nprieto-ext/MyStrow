@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=3.2.13
+AppVersion=3.2.14
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -35,6 +35,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
+Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
 
 [Files]
 Source: "..\dist\MyStrow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

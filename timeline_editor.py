@@ -2824,12 +2824,26 @@ class LightTimelineEditor(QDialog):
                 # Même appariement que le centre d'effet et que le rappel manuel
                 # (`position_preset_values`) : l'appariement par rang qui était
                 # codé ici donnait une visée différente sur la 2e lyre.
+                # Minutage du preset (trajet, décalage, ordre — clic droit du
+                # pad POS) : MÊME calcul que le show (`sequencer`, cas 1) et
+                # même repli à 1,5 s quand rien n'est réglé. L'aperçu prenait
+                # 0,5 s quand le show prenait 1,5 s.
                 centers = self.main_window._timeline_pos_centers
                 if centers and hasattr(self.main_window, '_start_pan_tilt_transition'):
-                    for p in self.main_window.projectors:
-                        pt = centers.get(id(p))
-                        if pt is not None:
-                            self.main_window._start_pan_tilt_transition(p, pt[0], pt[1], 500)
+                    from core import (position_preset_timing, position_spread_ranks,
+                                      find_position_preset)
+                    _pr = find_position_preset(
+                        getattr(self.main_window, 'position_presets', []) or [],
+                        getattr(new_pos_clip, 'position_preset_idx', None),
+                        getattr(new_pos_clip, 'position_preset_name', ''))
+                    _move, _spread, _order = position_preset_timing(_pr, 1.5)
+                    servies = [p for p in self.main_window.projectors if id(p) in centers]
+                    rangs = position_spread_ranks(len(servies), _order)
+                    for k, p in enumerate(servies):
+                        pt = centers[id(p)]
+                        self.main_window._start_pan_tilt_transition(
+                            p, pt[0], pt[1], int(round(_move * 1000)),
+                            delay_ms=int(round(rangs[k] * _spread * 1000)))
 
         # ── Mouvement de la piste Position (parité show) ─────────────────────
         # L'aperçu ne jouait AUCUN mouvement automatique : cercle, figure8,

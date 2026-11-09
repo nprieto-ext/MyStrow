@@ -209,5 +209,19 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == uid;
     }
 
+    // Demandes et erreurs de l'assistant, envoyées avec l'accord de
+    // l'utilisateur. Écrites UNIQUEMENT par la Cloud Function assistant_report
+    // (tri des champs, taille, quota) ; lecture admin : elles portent l'email.
+    match /assistant_reports/{reportId} {
+      allow read, delete: if request.auth != null
+                          && request.auth.token.email == "nicop421@gmail.com";
+      allow create, update: if false;
+    }
+    match /assistant_quota/{uid} {
+      allow read: if request.auth != null
+                  && request.auth.token.email == "nicop421@gmail.com";
+      allow write: if false;
+    }
+
   }
 }

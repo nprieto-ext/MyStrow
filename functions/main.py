@@ -2405,8 +2405,24 @@ def _run_ventes_amazon() -> int:
             sujet, titre = f"❌ MyStrow — Commande Amazon annulée ({oid})", "Commande annulée sur Amazon"
         else:
             sujet, titre = f"🛒 MyStrow — Vente Amazon ({oid})", "Nouvelle vente sur Amazon"
+        # Client Amazon Business : la politique Amazon exige une facture chargée
+        # dans le jour ouvré qui suit l'expédition (taux de défaut ≤ 5 %, sinon
+        # désactivation du compte). Le VCS est inaccessible (n° TVA rattaché à
+        # la Guadeloupe) et le rôle SP-API « Facturation des taxes » est
+        # restreint : la facture se fait donc à la main, d'où l'alerte.
+        business = ""
+        if cmd.get("IsBusinessOrder") and cmd.get("OrderStatus") != "Canceled":
+            sujet = f"🧾 FACTURE À CHARGER — Commande Amazon Business ({oid})"
+            titre = "Vente Amazon BUSINESS : facture obligatoire"
+            business = f"""
+<div class="box">⚠️ <b>Client Amazon Business.</b> Charger la facture
+<b>au plus tard le jour ouvré qui suit l'expédition</b> (FBA : souvent dès
+aujourd'hui).<br>1. Créer la facture dans Axonaut (TVA 20 % si livrée en
+métropole ; 0 % autoliquidation si pro UE avec n° de TVA).<br>2. La charger
+ici : <a href="https://sellercentral.amazon.fr/orders-v3/order/{oid}">commande
+{oid}</a> → « Télécharger la facture ».</div>"""
         _alert_admin(sujet, f"""
-<h2>{titre}</h2>
+<h2>{titre}</h2>{business}
 <div class="box">{lignes}<br>Commande <b>{oid}</b> — {cmd.get('OrderStatus', '')}
 ({cmd.get('FulfillmentChannel', '')})</div>
 <p>Stock FBA restant : {reste or '?'}</p>""")
@@ -3684,6 +3700,125 @@ def controller_submit(req: https_fn.Request) -> https_fn.Response:
         return https_fn.Response(
             json.dumps({"ok": False, "error": str(exc)}),
             status=500, headers=_JSON)
+
+
+# ===========================================================================
+# ASSISTANT : demandes et erreurs remontées (avec l'accord de l'utilisateur)
+# ===========================================================================
+
+# L'app envoie par lots (toutes les ~5 min) : 40 lots par jour couvrent une
+# journée de répétition, au-delà c'est une boucle ou un abus.
+_DAILY_ASSISTANT_REPORTS = 40
+_MAX_ASSISTANT_ITEMS     = 100
+_MAX_ASSISTANT_BYTES     = 96 * 1024
+
+
+def _clip(v, n: int) -> str:
+    return str(v if v is not None else "")[:n]
+
+
+def _clean_assistant_item(it) -> dict | None:
+    """Garde seulement les champs attendus, tronqués : rien d'arbitraire en base."""
+    if not isinstance(it, dict):
+        return None
+    kind = it.get("k")
+    if kind not in ("req", "err"):
+        return None
+    out = {"k": kind, "ts": int(it.get("ts") or 0)}
+    if kind == "req":
+        out.update({
+            "t":    _clip(it.get("t"), 500),
+            "lang": _clip(it.get("lang"), 5),
+            "src":  _clip(it.get("src"), 10),
+            "did":  [_clip(a, 300) for a in (it.get("did") or [])][:12],
+            "r":    [_clip(r, 400) for r in (it.get("r") or [])][:6],
+        })
+        if not out["t"].strip():
+            return None
+    else:
+        out.update({"t": _clip(it.get("t"), 500), "err": _clip(it.get("err"), 4000)})
+    return out
+
+
+@https_fn.on_request(max_instances=5, timeout_sec=30)
+def assistant_report(req: https_fn.Request) -> https_fn.Response:
+    """
+    Endpoint HTTPS : POST /assistant_report
+
+    L'assistant intégré envoie, si l'utilisateur l'a accepté, ses demandes (ce
+    qui a été dit, compris, répondu) et ses erreurs internes. Sert à corriger
+    le vocabulaire et les bugs à partir des vraies phrases des clients.
+
+    Body : {"items": [...], "app_version": str, "app_lang": str, "os": str}
+    Réponse : {"ok": true, "n": nombre gardé}
+    """
+    _get_db()
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return https_fn.Response(json.dumps({"ok": False, "error": "auth"}),
+                                 status=403, headers=_JSON)
+    try:
+        decoded = auth.verify_id_token(auth_header[len("Bearer "):])
+        uid   = decoded.get("uid", "")
+        email = decoded.get("email", "")
+    except Exception as e:
+        print(f"[assistant_report] Token invalide : {e}")
+        return https_fn.Response(json.dumps({"ok": False, "error": "token"}),
+                                 status=403, headers=_JSON)
+
+    raw = req.get_data() or b"{}"
+    if len(raw) > _MAX_ASSISTANT_BYTES:
+        return https_fn.Response(json.dumps({"ok": False, "error": "trop gros"}),
+                                 status=413, headers=_JSON)
+    try:
+        body = json.loads(raw)
+    except Exception:
+        return https_fn.Response(json.dumps({"ok": False, "error": "json"}),
+                                 status=400, headers=_JSON)
+
+    items = [c for c in (_clean_assistant_item(i) for i in
+                         (body.get("items") or [])[:_MAX_ASSISTANT_ITEMS]) if c]
+    if not items:
+        return https_fn.Response(json.dumps({"ok": True, "n": 0}),
+                                 status=200, headers=_JSON)
+    try:
+        db = _get_db()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        qref = db.collection("assistant_quota").document(uid)
+
+        @firestore.transactional
+        def _take(transaction):
+            snap = qref.get(transaction=transaction)
+            data = snap.to_dict() if snap.exists else {}
+            used = int(data.get("count", 0) or 0) if data.get("day") == today else 0
+            if used >= _DAILY_ASSISTANT_REPORTS:
+                return False
+            transaction.set(qref, {"day": today, "count": used + 1,
+                                   "updatedAt": time.time()}, merge=True)
+            return True
+
+        if not _take(db.transaction()):
+            return https_fn.Response(json.dumps({"ok": False, "error": "quota"}),
+                                     status=429, headers=_JSON)
+
+        db.collection("assistant_reports").add({
+            "uid":         uid,
+            "email":       email,
+            "created_at":  time.time(),
+            "app_version": _clip(body.get("app_version"), 20),
+            "app_lang":    _clip(body.get("app_lang"), 5),
+            "os":          _clip(body.get("os"), 40),
+            "n_req":       sum(1 for i in items if i["k"] == "req"),
+            "n_err":       sum(1 for i in items if i["k"] == "err"),
+            "items":       items,
+        })
+        print(f"[assistant_report] {email} : {len(items)} élément(s)")
+        return https_fn.Response(json.dumps({"ok": True, "n": len(items)}),
+                                 status=200, headers=_JSON)
+    except Exception as exc:
+        print(f"[assistant_report] ERREUR: {exc}")
+        return https_fn.Response(json.dumps({"ok": False, "error": str(exc)}),
+                                 status=500, headers=_JSON)
 
 
 # ===========================================================================
@@ -5739,6 +5874,23 @@ def _run_purge_downloads(mois: int = 13) -> int:
         total += len(docs)
 
 
+def _run_purge_assistant(mois: int = 12) -> int:
+    """Efface les demandes remontées par l'assistant (`assistant_reports`) au-delà
+    de `mois` mois : la politique de confidentialité annonce « 12 mois au plus »."""
+    db     = _get_db()
+    limite = time.time() - mois * 30.44 * 86400
+    total  = 0
+    while True:
+        docs = list(db.collection("assistant_reports").where("created_at", "<", limite).limit(400).stream())
+        if not docs:
+            return total
+        batch = db.batch()
+        for d in docs:
+            batch.delete(d.reference)
+        batch.commit()
+        total += len(docs)
+
+
 # Tous les jours à 3 h UTC : purge du journal des téléchargements (RGPD).
 # ── Déclaration URSSAF mensuelle ──────────────────────────────────────────
 
@@ -5836,3 +5988,121 @@ def declaration_mensuelle(event: scheduler_fn.ScheduledEvent) -> None:
 @scheduler_fn.on_schedule(schedule="0 3 * * *", max_instances=1)
 def purge_journaux(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[Purge] {_run_purge_downloads()} téléchargement(s) de plus de 13 mois effacé(s)")
+    print(f"[Purge] {_run_purge_assistant()} remontée(s) de l'assistant de plus de 12 mois effacée(s)")
+
+
+# ── App Store : notifications serveur (V2) ───────────────────────────────────
+# Apple POSTe {"signedPayload": "<JWS>"} à chaque événement (achat, remboursement…).
+# Le JWS porte sa chaîne de certificats (x5c) : on exige que la racine soit
+# EXACTEMENT « Apple Root CA - G3 » (empreinte épinglée), que chaque maillon soit
+# signé par le suivant, puis on vérifie la signature ES256 avec la feuille.
+# Sans ça, n'importe qui pourrait nous faire croire à une vente.
+_APPLE_ROOT_G3_SHA256 = "63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179"
+_APPLE_BUNDLE_ID = "com.happlysas.mystrow"
+
+
+def _apple_jws_decode(token: str) -> dict:
+    import base64
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    import jwt as pyjwt
+
+    header = pyjwt.get_unverified_header(token)
+    if header.get("alg") != "ES256":
+        raise ValueError(f"alg inattendu : {header.get('alg')}")
+    chain = [x509.load_der_x509_certificate(base64.b64decode(c))
+             for c in header.get("x5c") or []]
+    if len(chain) != 3:
+        raise ValueError("chaîne x5c incomplète")
+    leaf, inter, root = chain
+    if root.fingerprint(hashes.SHA256()).hex() != _APPLE_ROOT_G3_SHA256:
+        raise ValueError("racine différente d'Apple Root CA - G3")
+    now = datetime.now(timezone.utc)
+    for cert, issuer in ((leaf, inter), (inter, root)):
+        issuer.public_key().verify(cert.signature, cert.tbs_certificate_bytes,
+                                   ec.ECDSA(cert.signature_hash_algorithm))
+        if not (cert.not_valid_before_utc <= now <= cert.not_valid_after_utc):
+            raise ValueError("certificat expiré")
+    return pyjwt.decode(token, leaf.public_key(), algorithms=["ES256"],
+                        options={"verify_aud": False})
+
+
+_APPLE_TYPES = {
+    "ONE_TIME_CHARGE": ("💶", "Nouvelle vente App Store"),
+    "REFUND":          ("↩️", "Remboursement App Store"),
+    "REFUND_REVERSED": ("💶", "Remboursement annulé (vente rétablie)"),
+    "CONSUMPTION_REQUEST": ("❓", "Apple demande des infos sur une demande de remboursement"),
+    "TEST":            ("🧪", "Notification de test App Store"),
+}
+
+
+@https_fn.on_request(max_instances=3, timeout_sec=30)
+def appstore_notifications(req: https_fn.Request) -> https_fn.Response:
+    """URL à déclarer dans App Store Connect › Informations sur l'app ›
+    Notifications du serveur App Store (Production ET Sandbox, version 2)."""
+    if req.method != "POST":
+        return https_fn.Response("POST only", status=405)
+    try:
+        body = req.get_json(silent=True) or {}
+        payload = _apple_jws_decode(body.get("signedPayload", ""))
+    except Exception as e:
+        print(f"[AppStore] Notification rejetée : {e}")
+        return https_fn.Response("invalid", status=400)
+
+    ntype = payload.get("notificationType", "")
+    sous_type = payload.get("subtype") or ""
+    uuid = payload.get("notificationUUID", "")
+    data = payload.get("data") or {}
+    env = data.get("environment", "")
+    if data.get("bundleId") not in (None, _APPLE_BUNDLE_ID):
+        print(f"[AppStore] bundleId inattendu : {data.get('bundleId')}")
+        return https_fn.Response("ok")
+
+    # Apple renvoie la même notification tant qu'on ne répond pas 200 :
+    # une seule alerte par notificationUUID.
+    if uuid:
+        try:
+            _get_db().collection("ventes_appstore").document(uuid).create({
+                "type": ntype, "subtype": sous_type, "env": env, "recu_utc": time.time()})
+        except Conflict:
+            return https_fn.Response("ok")
+
+    tx = {}
+    if data.get("signedTransactionInfo"):
+        try:
+            tx = _apple_jws_decode(data["signedTransactionInfo"])
+        except Exception as e:
+            print(f"[AppStore] Transaction illisible : {e}")
+    if uuid and tx:
+        _get_db().collection("ventes_appstore").document(uuid).set({
+            "produit": tx.get("productId", ""), "prix_milli": tx.get("price"),
+            "devise": tx.get("currency", ""), "pays": tx.get("storefront", ""),
+            "transaction": tx.get("transactionId", ""),
+        }, merge=True)
+
+    print(f"[AppStore] {ntype}/{sous_type} env={env} produit={tx.get('productId')} "
+          f"prix={tx.get('price')} {tx.get('currency')} pays={tx.get('storefront')}")
+
+    # Les autres types (renouvellements d'abonnement…) ne nous concernent pas.
+    if ntype not in _APPLE_TYPES:
+        return https_fn.Response("ok")
+    emoji, titre = _APPLE_TYPES[ntype]
+    bac = " [SANDBOX]" if env == "Sandbox" else ""
+    prix = ""
+    if tx.get("price") is not None:
+        prix = f"{tx['price'] / 1000:.2f} {tx.get('currency', '')}".strip()
+    quand = ""
+    if tx.get("purchaseDate"):
+        quand = datetime.fromtimestamp(tx["purchaseDate"] / 1000, timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    _alert_admin(
+        f"{emoji} MyStrow — {titre}{bac}" + (f" ({prix}, {tx.get('storefront', '')})" if prix else ""),
+        f"""
+<h2>{titre}{bac}</h2>
+<div class="box">Produit : <b>{html_escape(tx.get('productId', '—'))}</b><br>
+Prix payé : <b>{html_escape(prix or '—')}</b> (TTC, avant commission Apple)<br>
+Pays : {html_escape(tx.get('storefront', '—'))}<br>
+Date : {html_escape(quand or '—')}<br>
+Transaction : {html_escape(str(tx.get('transactionId', '—')))}</div>
+<p>Type Apple : {html_escape(ntype)}{(' / ' + html_escape(sous_type)) if sous_type else ''}</p>""")
+    return https_fn.Response("ok")

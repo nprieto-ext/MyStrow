@@ -43,6 +43,11 @@ _CONTROLLER_SUBMIT_URL = (
     f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/controller_submit"
 )
 
+# Cloud Function qui reçoit les demandes / erreurs de l'assistant (avec accord)
+_ASSISTANT_REPORT_URL = (
+    f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/assistant_report"
+)
+
 # Cloud Function qui RENVOIE les identifiants (email + mot de passe) au client.
 _RESET_EMAIL_URL = (
     f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/send_reset_email"
@@ -819,6 +824,29 @@ def submit_controller_profile(fingerprint: str, profile: dict, id_token: str) ->
 
     if not result.get("ok"):
         raise Exception(result.get("error", "Partage refusé."))
+    return result
+
+
+def send_assistant_report(payload: dict, id_token: str) -> dict:
+    """Envoie un lot de demandes / erreurs de l'assistant (Cloud Function
+    assistant_report). Lève une Exception si le serveur refuse ou est injoignable :
+    l'appelant garde alors le lot pour plus tard."""
+    req = urllib.request.Request(
+        _ASSISTANT_REPORT_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {id_token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_SSL_CTX) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise Exception(f"HTTP {e.code}")
+    except (urllib.error.URLError, OSError) as e:
+        raise Exception(_net_error_msg(e))
+    if not result.get("ok"):
+        raise Exception(result.get("error", "refusé"))
     return result
 
 

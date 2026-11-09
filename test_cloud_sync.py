@@ -363,5 +363,138 @@ class Sobriete(Base):
         self.assertIsNone(cs.load_cache("autre"))
 
 
+class MemoiresAkai(Base):
+    """09/11/2026 : mémoires + pages AKAI suivent le compte, mais PAS les
+    réglages propres au PC rangés dans le même fichier (vMix, décalage…)."""
+
+    PC = {"memories": [[None, {"r": 1}]], "bank_pages": [[{"t": "fx"}]],
+          "vmix": {"ip": "10.0.0.5"}, "light_sync_offset_ms": 120}
+
+    def test_seule_la_partie_synchronisee_est_lue(self):
+        self.ecrire("akai", self.PC)
+        text, _sha, _m = cs.read_local("akai")
+        self.assertEqual(json.loads(text), {"memories": self.PC["memories"],
+                                            "bank_pages": self.PC["bank_pages"]})
+
+    def test_recuperer_garde_les_reglages_du_pc(self):
+        self.ecrire("akai", self.PC)
+        compte = cs._canon({"memories": [[{"r": 9}]], "bank_pages": [[]]})
+        self.assertTrue(cs.write_local("akai", compte))
+        full = self.lire("akai")
+        self.assertEqual(full["memories"], [[{"r": 9}]])
+        self.assertEqual(full["vmix"], {"ip": "10.0.0.5"})
+        self.assertEqual(full["light_sync_offset_ms"], 120)
+        # Relu : même sha que le compte → pas renvoyé pour rien
+        self.assertEqual(cs.read_local("akai")[1], cs._sha(compte))
+
+    def test_reglage_du_pc_modifie_rien_a_envoyer(self):
+        self.ecrire("akai", self.PC)
+        st = cs.state_for("u1")
+        st["synced"]["akai"] = cs.read_local("akai")[1]
+        autre = dict(self.PC, light_sync_offset_ms=300, vmix={"ip": "x"})
+        self.ecrire("akai", autre)
+        self.assertNotIn("akai", cs.local_changes(st))
+
+    def test_pc_deja_connecte_question_posee_pour_les_memoires(self):
+        # PC déjà synchronisé (patch) AVANT l'ajout des mémoires : asked=True,
+        # mais l'AKAI n'a jamais été échangé → on demande, pas « le plus récent ».
+        self.ecrire("akai", self.PC)
+        st = cs.state_for("u1"); st["asked"] = True; cs.save_state(st)
+        compte = {"akai": _entry(cs._canon({"memories": [[{"r": 9}]]}), utc=1.0)}
+        ecrits, questions = self.demarrer(compte, reponse=True)
+        self.assertEqual(questions, [["akai"]])
+        self.assertEqual(ecrits, ["akai"])
+        # Une seule fois : au lancement suivant (conflit de nouveau), pas de question
+        self.ecrire("akai", dict(self.PC, memories=[[{"r": 3}]]))
+        compte = {"akai": _entry(cs._canon({"memories": [[{"r": 4}]]}), utc=1.0)}
+        _e, questions = self.demarrer(compte, reponse=True)
+        self.assertEqual(questions, [])
+
+    def test_cle_inconnue_du_compte_conservee(self):
+        files = {"patch": _entry("{}"), "futur": _entry("[1]")}
+        self.assertIn("futur", cs.decode_payload(cs.encode_payload(files)))
+
+
+class SynchroManuelle(Base):
+    def test_synchroniser_maintenant_sans_modif_regarde_le_compte(self):
+        self.ecrire("patch", {"v": 1})
+        st = cs.state_for("u1")
+        st["synced"]["patch"] = cs.read_local("patch")[1]
+        cs.save_state(st)
+        cs.push = lambda *a, **k: self.fail("rien à envoyer")
+        cs.fetch_remote = lambda uid, known=None, token=None: (
+            {"patch": _entry('{"v": 2}', utc=9.0)}, 9.0)
+        p = cs.Pusher()
+        p.tick()                              # premier passage : rien à faire
+        self.assertIsNone(p._thread)
+        p.sync_now()
+        self.assertEqual(p.tick(), "sending")
+        p._thread.join(1)
+        self.assertEqual(p.tick(), "news", "un autre PC a envoyé un patch")
+        self.assertEqual(p.news, ["patch"])
+
+    def test_synchroniser_maintenant_n_attend_pas_30_s(self):
+        envois = []
+
+        def ok(uid, local, known=None):
+            envois.append(sorted(local))
+            return {k: v["sha"] for k, v in local.items()}, dict(local), 5.0
+
+        cs.push = ok
+        p = cs.Pusher()
+        p.tick()
+        time.sleep(0.02)
+        self.ecrire("patch", {"v": 1})
+        self.assertEqual(p.tick(), "pending")
+        p.sync_now()
+        p.tick(); p._thread.join(1)
+        self.assertEqual(p.tick(), "ok")
+        self.assertEqual(envois, [["patch"]])
+
+    def test_importer_le_compte_gagne_meme_si_ce_pc_a_change(self):
+        # PC B a touché ses mémoires APRÈS l'envoi du PC A : au démarrage, B
+        # garde les siennes (plus récentes). « Importer » prend celles de A,
+        # sans toucher aux réglages propres à B.
+        self.ecrire("akai", {"memories": [[{"r": 2}]], "vmix": {"ip": "b"}})
+        st = cs.state_for("u1"); st["asked"] = True
+        st["synced"]["akai"] = "ancien"; cs.save_state(st)
+        compte = {"akai": _entry(cs._canon({"memories": [[{"r": 9}]]}), utc=1.0),
+                  "patch": _entry('{"v": 1}')}
+        self.ecrire("patch", {"v": 1})
+        self.assertEqual(cs.import_plan(compte), ["akai"], "patch déjà identique")
+        ecrits = cs.import_apply("u1", compte, 7.0, ["akai"])
+        self.assertEqual(ecrits, ["akai"])
+        self.assertEqual(self.lire("akai"),
+                         {"memories": [[{"r": 9}]], "vmix": {"ip": "b"}})
+        self.assertEqual(cs.import_plan(compte), [], "plus rien à importer")
+        self.assertNotIn("akai", cs.local_changes(cs.state_for("u1")),
+                         "importé = pas renvoyé au compte")
+        self.assertEqual(cs.load_cache("u1")[0], 7.0)
+
+    def test_importer_lecture_en_arriere_plan(self):
+        compte = {"patch": _entry('{"v": 3}')}
+        cs.fetch_remote = lambda uid, known=None, token=None: (compte, 4.0)
+        p = cs.Pusher()
+        self.assertTrue(p.request_import())
+        self.assertFalse(p.request_import(), "un seul import à la fois")
+        p._imp_thread.join(1)
+        self.assertEqual(p.take_import_result(), ("u1", (compte, 4.0)))
+        self.assertIsNone(p.take_import_result())
+
+    def test_importer_hors_ligne(self):
+        cs.fetch_remote = lambda uid, known=None, token=None: None
+        p = cs.Pusher()
+        p.request_import(); p._imp_thread.join(1)
+        self.assertEqual(p.take_import_result(), ("u1", None))
+
+    def test_synchroniser_maintenant_hors_ligne(self):
+        cs.fetch_remote = lambda uid, known=None, token=None: None
+        p = cs.Pusher()
+        p.tick()
+        p.sync_now()
+        p.tick(); p._thread.join(1)
+        self.assertEqual(p.tick(), "offline")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

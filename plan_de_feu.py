@@ -1383,6 +1383,13 @@ def _load_qlc_fixtures():
         try:
             with open(path, "r", encoding="utf-8") as f:
                 _qlc_fixtures_cache = json.load(f)
+            # « A » / « Effect » / « GoboRot » : noms que le moteur DMX ne
+            # connaît pas (canal mort). Remis aux noms MyStrow dès le chargement.
+            from artnet_dmx import QLC_CHANNEL_ALIASES as _AL
+            for fx in _qlc_fixtures_cache:
+                for m in fx.get("modes", []):
+                    if "channels" in m:
+                        m["channels"] = [_AL.get(c, c) for c in m["channels"]]
         except Exception:
             _qlc_fixtures_cache = []
     return _qlc_fixtures_cache
