@@ -108,3 +108,12 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: false
+        # Soumis à l'examen Apple tout seul, puis publié dès la validation, à
+        # 100 % (décision du 10/11/2026). Texte « Nouveautés » : mobile/release_notes.json
+        # (à mettre à jour à chaque version). ⚠ cancel_previous_submissions annule
+        # une soumission encore en attente chez Apple (l'achat intégré examiné
+        # avec elle repart en fin de file) : vérifier avant de lancer.
+        submit_to_app_store: true
+        release_type: AFTER_APPROVAL
+        cancel_previous_submissions: true
+        phased_release: false
