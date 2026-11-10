@@ -25,7 +25,7 @@
 
   const DICT = {
     // ── En-tête, onglets, voyants ──
-    "AKAI": "AKAI", "SCÈNE": "STAGE", "MEDIA": "MEDIA", "SURFACE": "SURFACE", "LIVE ●": "LIVE ●",
+    "AKAI": "AKAI", "CONTRÔLE": "CONTROL", "SCÈNE": "STAGE", "MEDIA": "MEDIA", "SURFACE": "SURFACE", "LIVE ●": "LIVE ●",
     "⚙ RÉGLAGES": "⚙ SETTINGS", "Réglages": "Settings", "RÉGLAGES": "SETTINGS",
     "Réglages : projecteurs, sortie DMX, accueil": "Settings: fixtures, DMX output, home",
     "DÉMO": "DEMO", "Version démo": "Demo version", "SANS PC": "NO PC",
@@ -125,9 +125,9 @@
     "Vous avez une carte d'activation (pack MyStrow) : activez-la sur le site. Il crée votre compte et vous envoie le mot de passe par email ; revenez ensuite vous connecter ici.":
       "Got an activation card (MyStrow Pack)? Activate it on the website. It creates your account and emails you the password; then come back here to sign in.",
     "Activer ma carte sur mystrow.fr ↗": "Activate my card on mystrow.fr ↗",
-    "Récupérer la config du PC": "Get my PC config", "Recherche…": "Searching…",
-    "Rien n'a encore été envoyé. Sur le PC : menu Connexion › Contrôle › « Envoyer ma config vers la tablette ».":
-      "Nothing has been sent yet. On the PC: menu Connection › Control › “Send my config to the tablet”.",
+    "Importer depuis mon compte": "Import from my account", "⬇ Importer depuis mon compte": "⬇ Import from my account", "Recherche…": "Searching…",
+    "Rien dans votre compte pour l'instant. Ouvrez MyStrow sur votre PC, connecté au même compte : votre config y part toute seule.":
+      "Nothing in your account yet. Open MyStrow on your PC, signed in to the same account: your config is sent automatically.",
     "Revenir à la config d'avant l'import": "Go back to the config before the import",
     "Remplacer la config de la tablette": "Replace the tablet's config",
     "Elle remplace le patch, les pages AKAI, les mémoires et les positions de la tablette. La sortie DMX (USB ou node) ne change pas. Vos effets créés sur la tablette restent.":
@@ -211,6 +211,12 @@
     "MyStrow — Tablette": "MyStrow — Tablet", "Piloter MyStrow sur mon PC": "Control MyStrow on my PC",
     "La tablette devient la télécommande du logiciel ouvert sur votre ordinateur, sur le même Wi-Fi.": "The tablet becomes the remote control of the software open on your computer, on the same Wi-Fi.",
     "Jouer sans PC": "Play without a PC", "Bêta": "Beta",
+    "CONTRE / HAUT": "BACK / TOP", "FACE / BAS": "FRONT / BOTTOM",
+    "Pas encore d'interface ?": "No interface yet?", "Voir l'interface MyStrow ↗": "See the MyStrow interface ↗", "Commander l'interface ↗": "Order the interface ↗",
+    "L'interface USB-DMX MyStrow se branche sur la prise USB-C de la tablette et est reconnue toute seule, sans réglage.":
+      "The MyStrow USB-DMX interface plugs into the tablet's USB-C port and is recognized automatically, no setup needed.",
+    "L'interface USB-DMX MyStrow se branche sur la prise USB-C de l'iPad ou de l'iPhone et est reconnue toute seule, sans réglage. 69 € TTC, livrée en France métropolitaine.":
+      "The MyStrow USB-DMX interface plugs into the USB-C port of your iPad or iPhone and is recognized automatically, no setup needed. €69 incl. VAT, shipped within mainland France.",
     "La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.": "The tablet controls your fixtures itself, through a USB-DMX interface or an Art-Net node.",
     "Connexion au PC": "Connect to the PC", "Sur le PC, dans MyStrow :": "On the PC, in MyStrow:", "Connexion › Entrée externe": "Connection › External input",
     "Entrée externe": "External input", "La tablette et le PC sur": "The tablet and the PC on", "le même Wi-Fi": "the same Wi-Fi",
@@ -271,8 +277,8 @@
     "Que voulez-vous faire ?": "What do you want to do?", "Perso": "Custom", "Générique": "Generic", "Générique tablette": "Generic tablet",
     "Le projecteur est gardé sur cette tablette, dans votre bibliothèque : cherchez-le ensuite par son nom pour l'ajouter au patch.":
       "The fixture is kept on this tablet, in your library: then search for it by name to add it to the patch.",
-    "Les projecteurs suivants prennent les adresses 1, 11, 21… comme dans MyStrow sur PC (plus de 10 canaux : dizaine suivante, 1, 21, 41…). Réglez vos projecteurs sur ces adresses.":
-      "The following fixtures take addresses 1, 11, 21… as in MyStrow on PC (over 10 channels: next ten, 1, 21, 41…). Set your fixtures to these addresses.",
+    "Les projecteurs suivants prennent les adresses à la suite (un PAR de 5 canaux en 1, le suivant en 6, puis 11…). Réglez vos projecteurs sur ces adresses.":
+      "The following fixtures take consecutive addresses (a 5-channel PAR at 1, the next at 6, then 11…). Set your fixtures to these addresses.",
     "SORTIE": "OUTPUT", "Node Art-Net": "Art-Net node", "node Art-Net": "Art-Net node", "Filaire / node USB": "Wired / USB node", "Adresse du node": "Node address",
     "Chercher le node": "Find the node", "Chercher": "Search", "Aucun node n'a répondu.": "No node answered.", "Port": "Port",
     "Branchez l'interface USB-DMX sur la tablette : Opto ElectroConcept, ENTTEC Pro, DMXKing ou boîtier MyStrow. Son type est reconnu tout seul.":
@@ -397,7 +403,7 @@
     ["Interface USB · OK", "USB interface · OK"], ["Interface USB · coupée", "USB interface · off"], [" · coupée", " · off"],
     ["Node Art-Net", "Art-Net node"], ["interface USB-DMX", "USB-DMX interface"], ["node Art-Net", "Art-Net node"], ["Sortie DMX :", "DMX output:"], ["Sortie :", "Output:"], ["Dernière erreur :", "Last error:"],
     ["trames envoyées,", "frames sent,"], ["erreurs", "errors"], ["Nouvel essai toutes les 20 s.", "Retrying every 20 s."],
-    ["Config envoyée le", "Config sent on"], ["depuis «", "from “"], ["projecteurs ·", "fixtures ·"], ["mémoires ·", "memories ·"],
+    ["Config de votre compte, mise à jour le", "Your account config, updated on"], ["depuis «", "from “"], ["projecteurs ·", "fixtures ·"], ["mémoires ·", "memories ·"],
     ["effets ·", "effects ·"], ["positions", "positions"], ["Connectée depuis", "Connected for"], ["Hors ligne depuis", "Offline for"],
     ["nouvel essai dans", "retrying in"], ["Reconnexion à", "Reconnecting to"], ["Connexion à", "Connecting to"],
     ["Erreur du compte (", "Account error ("], ["Erreur :", "Error:"], ["Import impossible :", "Import failed:"],

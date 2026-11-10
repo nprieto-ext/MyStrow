@@ -143,11 +143,23 @@
   const byGroup = {};
   projectors.forEach((p) => { (byGroup[p.group] = byGroup[p.group] || []).push(p); });
   const usedGroups = GROUPS.filter((g) => byGroup[g]);
-  usedGroups.forEach((g, gi) => {
-    const list = byGroup[g];
+  // Place par défaut = celle du plan de feu du PC (plan_de_feu._DEFAULT_POSITIONS,
+  // lettre AKAI → groupe interne) : face en bas, contre en haut, latéraux sur
+  // les côtés, douches au milieu.
+  const spread = (x0, w, y) => (i, n) => [x0 + (i * w) / Math.max(n - 1, 1), y];
+  const DEFAULT_POS = {
+    A: spread(0.20, 0.60, 0.80),                       // face
+    B: (i) => [i % 2 ? 0.93 : 0.07, 0.50 + (Math.floor(i / 2) * 0.12)],   // latéraux
+    C: spread(0.15, 0.70, 0.10),                       // contre
+    D: spread(0.20, 0.20, 0.50), E: spread(0.40, 0.20, 0.50), F: spread(0.60, 0.20, 0.50),
+    G: spread(0.20, 0.60, 0.62), H: spread(0.20, 0.60, 0.46),
+  };
+  Object.entries(byGroup).forEach(([g, list]) => {
+    const fn = DEFAULT_POS[g] || spread(0.15, 0.70, 0.5);
     list.forEach((p, i) => {
-      p.x = (i + 1) / (list.length + 1);
-      p.y = usedGroups.length === 1 ? 0.5 : 0.15 + (0.7 * gi) / (usedGroups.length - 1);
+      // Un seul projecteur dans un groupe étalé : au centre de sa zone.
+      const [x, y] = list.length === 1 && g !== "B" ? [fn(0, 2)[0] + (fn(1, 2)[0] - fn(0, 2)[0]) / 2, fn(0, 2)[1]] : fn(i, list.length);
+      p.x = x; p.y = y;
     });
   });
   // Place choisie au doigt (mode DÉPLACER du plan) : gardée DANS la fixture,
@@ -1928,7 +1940,7 @@
       seq: { items: [], current_row: -1, playing: false },
       carts: [],
       projectors: projectors.map((p, i) => ({
-        name: p.name, group: p.group, x: p.x, y: p.y,
+        name: p.name, group: p.group, x: p.x, y: p.y, address: p.address,
         ...projColors([states[i]])[0],
         is_lyre: Engine.isLyre(p), ftype: p.fixture_type || "",
         ...wheelMeta(p),

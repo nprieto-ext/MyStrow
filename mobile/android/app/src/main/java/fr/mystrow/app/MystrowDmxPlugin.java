@@ -693,6 +693,8 @@ public class MystrowDmxPlugin extends Plugin {
                 o.put("serial", drv != null);
                 o.put("driver", drv != null ? drv.getClass().getSimpleName() : null);
                 o.put("permission", usb.hasPermission(d));
+                o.put("vid", d.getVendorId());
+                o.put("pid", d.getProductId());
                 UsbNetIfaces net = findUsbNet(d);
                 o.put("net", net == null ? null : (net.ncm ? "NCM" : "ECM"));
                 // Interfaces (classe/sous-classe/protocole, points d'accès) : dit ce
@@ -811,6 +813,33 @@ public class MystrowDmxPlugin extends Plugin {
             conn.close();
             throw e;
         }
+    }
+
+    /**
+     * Numéro de série USB du boîtier MyStrow branché (1A86:5740) = son identité
+     * pour l'activation de la licence incluse (même clé que boitier_detect.py
+     * sur PC : 12 hexa tirés de l'UID de la puce). Android ne le donne qu'après
+     * l'autorisation d'accès : la fenêtre système s'ouvre si besoin.
+     * → { usb_id } ou { usb_id: null } si aucun boîtier MyStrow n'est branché.
+     */
+    @PluginMethod
+    public void usbSerial(PluginCall call) {
+        UsbManager usb = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
+        UsbDevice box = null;
+        if (usb != null) {
+            for (UsbDevice d : usb.getDeviceList().values()) {
+                if (d.getVendorId() == 0x1A86 && d.getProductId() == 0x5740) { box = d; break; }
+            }
+        }
+        if (box == null) { JSObject r = new JSObject(); r.put("usb_id", null); call.resolve(r); return; }
+        final UsbDevice dev = box;
+        withUsbPermission(call, usb, dev, () -> {
+            JSObject r = new JSObject();
+            String sn = null;
+            try { sn = dev.getSerialNumber(); } catch (SecurityException ignored) { }
+            r.put("usb_id", sn == null || sn.isEmpty() ? null : sn.toUpperCase(java.util.Locale.ROOT));
+            call.resolve(r);
+        });
     }
 
     /**

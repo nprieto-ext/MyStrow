@@ -24,6 +24,10 @@
     .panel { background: #0f0e0b; border: 1px solid var(--border); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
     .eyebrow { font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .buy-box { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--accent-border, rgba(226,206,22,.35)); background: #1a1700; }
+    .buy-box b { color: var(--accent); font-size: 17px; }
+    .buy-box span { color: #cfcabd; font-size: 15px; line-height: 1.4; }
+    .buy-box .btn { align-self: flex-start; }
     .row > div { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 90px; }
     label { font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
     input, select { width: 100%; height: 46px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2); background: #0c0b09;
@@ -122,7 +126,7 @@
       <div><label for="qty">Quantité</label><input id="qty" inputmode="numeric" value="1"></div>
       <div><label for="addr">1re adresse DMX</label><input id="addr" inputmode="numeric"></div>
     </div>
-    <p class="hint">Les projecteurs suivants prennent les adresses 1, 11, 21… comme dans MyStrow sur PC (plus de 10 canaux : dizaine suivante, 1, 21, 41…). Réglez vos projecteurs sur ces adresses.</p>
+    <p class="hint">Les projecteurs suivants prennent les adresses à la suite (un PAR de 5 canaux en 1, le suivant en 6, puis 11…). Réglez vos projecteurs sur ces adresses.</p>
     <button class="btn primary" id="add" type="button">Ajouter</button>
   </section>
 
@@ -156,6 +160,7 @@
   <section class="panel" id="list-section">
     <div class="row" style="align-items:center">
       <div class="eyebrow" style="flex:1">Mon patch</div>
+      <button class="btn small" id="import-acct" type="button" hidden>⬇ Importer depuis mon compte</button>
       <button class="btn small danger" id="wipe" type="button">Tout effacer</button>
     </div>
     <div id="list"></div>
@@ -173,6 +178,12 @@
       <button class="btn" id="poll" type="button">Chercher</button>
     </div>
     <p class="hint" id="out-hint"></p>
+    <!-- Pas encore d'interface : lien d'achat, caché dès qu'un boîtier est branché. -->
+    <div class="buy-box" id="buy-box" hidden>
+      <b>Pas encore d'interface ?</b>
+      <span id="buy-txt">L'interface USB-DMX MyStrow se branche sur la prise USB-C de la tablette et est reconnue toute seule, sans réglage.</span>
+      <button class="btn" id="buy-btn" type="button">Voir l'interface MyStrow ↗</button>
+    </div>
     <!-- Diagnostic : plus sur l'accueil (le boîtier y est détecté tout seul), gardé ici pour le support. -->
     <p class="hint"><a href="dmxtest.html" style="color:inherit">Diagnostic avancé de la sortie DMX ›</a></p>
   </section>
@@ -180,6 +191,7 @@
 
 <script src="engine.js"></script>
 <script src="library.js"></script>
+<script src="account.js"></script>
 <script>
   "use strict";
   const Engine = window.MystrowEngine;
@@ -197,6 +209,15 @@
   show = show || { fixtures: [], output: { transport: "usb" } };
   show.output = show.output || { transport: "usb" };
   const save = () => { try { localStorage.setItem("mystrow.solo.show", JSON.stringify(show)); } catch (e) {} };
+
+  // « Importer depuis mon compte » : seulement si connecté ; l'import remplace
+  // le patch (la sortie DMX reste) puis la page se recharge.
+  if (window.MystrowAccount) {
+    const ib = $("import-acct");
+    const sync = () => { ib.hidden = !MystrowAccount.status().loggedIn; };
+    MystrowAccount.onChange(sync); sync();
+    ib.addEventListener("click", () => MystrowAccount.openImport({ onImported: () => location.reload() }));
+  }
 
   // ── Bibliothèque de fixtures ───────────────────────────────────────────────
   // Embarquée (library.js, générée depuis le PC) + fixtures de l'admin relues
@@ -334,14 +355,12 @@
   $("mode").addEventListener("change", showChannels);
 
   const end = (f) => f.address + Engine.channelCount(f.profile) - 1;
-  // Écart entre deux projecteurs : 10 canaux (grille 1, 11, 21… du PC), ou la
-  // dizaine au-dessus pour un appareil plus gros — une lyre de 16 canaux part
-  // en 1, 21, 41 et ne chevauche jamais la suivante. Plus de champ à régler.
-  const stepFor = (profile) => Math.max(10, Math.ceil(Engine.channelCount(profile) / 10) * 10);
-  // Prochaine adresse libre, alignée sur la grille 1, 11, 21…
+  // Adresses À LA SUITE, sans trou : un PAR 5 canaux en 1, le suivant en 6,
+  // puis 11… (l'ancienne grille de 10 en 10 surprenait : demande du 10/11/2026).
+  const stepFor = (profile) => Engine.channelCount(profile);
+  // Prochaine adresse libre : juste après le dernier canal utilisé.
   function nextAddress() {
-    const last = show.fixtures.reduce((m, f) => Math.max(m, end(f)), 0);
-    return last === 0 ? 1 : Math.ceil(last / 10) * 10 + 1;
+    return show.fixtures.reduce((m, f) => Math.max(m, end(f)), 0) + 1;
   }
 
   // ── Test d'un projecteur : blanc à fond sur lui seul ────────────────────────
@@ -730,7 +749,7 @@
   document.querySelectorAll("main > section").forEach((sec) => {
     if (OUT_VIEW ? sec.id !== "out-section" : sec.id === "out-section") sec.hidden = true;
   });
-  if (OUT_VIEW) { document.querySelector("h1").innerHTML = "SORTIE <span>DMX</span>"; $("add-open").hidden = true; }
+  if (OUT_VIEW) { document.querySelector("h1").innerHTML = "SORTIE <span>DMX</span>"; $("add-open").hidden = true; $("import-acct").remove(); }
   $("play").addEventListener("click", () => {
     if (!show.fixtures.length) { msg("Ajoutez d'abord des projecteurs.", true); return; }
     leave("remote.html?solo=1");
@@ -738,6 +757,28 @@
 
   // iPhone / iPad : en USB, seul le boîtier MyStrow (vu en MIDI USB, iOS n'ouvre pas les interfaces série).
   var IOS = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
+  // ── Achat d'une interface (encart de la Sortie DMX) ─────────────────────────
+  // Android : page /shop (packs). iPhone / iPad : paiement direct de l'interface
+  // SEULE (matériel physique, autorisé hors App Store — règle 3.1.3(e)) ; jamais
+  // de pack avec licence sur iOS (contenu numérique ⇒ achat intégré obligatoire,
+  // 3.1.1 ; cf. PACK_OK de standalone.js).
+  const BUY_URL = IOS ? "https://buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d" : "https://mystrow.fr/shop?utm_source=app_tablette#pack-mystrow";
+  if (IOS) { $("buy-txt").textContent = "L'interface USB-DMX MyStrow se branche sur la prise USB-C de l'iPad ou de l'iPhone et est reconnue toute seule, sans réglage. 69 € TTC, livrée en France métropolitaine."; $("buy-btn").textContent = "Commander l'interface ↗"; }
+  $("buy-btn").addEventListener("click", () => {
+    // En natif, Capacitor ouvre tout autre domaine hors de l'app (navigateur).
+    if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) location.href = BUY_URL;
+    else window.open(BUY_URL, "_blank", "noopener");
+  });
+  async function syncBuyBox() {
+    let box = false;
+    if (Dmx) {
+      const r = await Dmx.usbDevices().catch(() => null);
+      box = !!(r && (r.devices || []).some((x) => x.serial || x.net));
+    }
+    $("buy-box").hidden = box || show.output.transport === "artnet";
+  }
+  syncBuyBox(); setInterval(syncBuyBox, 4000);
+
   setTransport(show.output.transport || "usb");
   render();
   $("addr").value = nextAddress();

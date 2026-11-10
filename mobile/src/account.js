@@ -411,19 +411,20 @@
       const s = status();
       body.innerHTML = "";
       body.append(el("div", "who", s.email), el("p", s.licensed ? "ok" : "err", licenceText(s)));
-      const get = btn("Récupérer la config du PC", "main", async () => {
+      const get = btn("Importer depuis mon compte", "main", async () => {
         msg.className = ""; msg.textContent = "";
         busy(get, true, "Recherche…");
         try {
           const cfg = await fetchPcConfig();
-          busy(get, false, "Récupérer la config du PC");
+          busy(get, false, "Importer depuis mon compte");
           if (!cfg) {
-            msg.textContent = "Rien n'a encore été envoyé. Sur le PC : menu Connexion › Contrôle › « Envoyer ma config vers la tablette ».";
+            msg.textContent = "Rien dans votre compte pour l'instant. Ouvrez MyStrow sur votre PC, connecté au même compte : votre config y part toute seule.";
             return;
           }
           renderImport(cfg);
-        } catch (err) { msg.className = "err"; msg.textContent = err.message; busy(get, false, "Récupérer la config du PC"); }
+        } catch (err) { msg.className = "err"; msg.textContent = err.message; busy(get, false, "Importer depuis mon compte"); }
       });
+      get.id = "acct-import";
       body.append(get, msg);
       if (backup()) body.append(btn("Revenir à la config d'avant l'import", "", () => {
         if (restoreBackup()) { if (opts.onImported) opts.onImported(); else location.reload(); }
@@ -470,7 +471,7 @@
     function renderImport(cfg) {
       const sm = cfg.summary || {}, p = cfg.payload;
       body.innerHTML = "";
-      body.append(el("p", "", "Config envoyée le " + (cfg.updated ? fmtDate(cfg.updated) : "?") + (cfg.label ? " depuis « " + cfg.label + " »" : "") + " :"),
+      body.append(el("p", "", "Config de votre compte, mise à jour le " + (cfg.updated ? fmtDate(cfg.updated) : "?") + (cfg.label ? " depuis « " + cfg.label + " »" : "") + " :"),
         el("div", "who", (sm.fixtures ?? (p.fixtures || []).length) + " projecteurs · " + (sm.memories ?? 0) + " mémoires · "
           + (sm.effects ?? 0) + " effets · " + (sm.positions ?? 0) + " positions"));
       (p.warnings || []).forEach((w) => body.append(el("p", "small", "⚠ " + w)));
@@ -483,9 +484,13 @@
     function render() { if (status().loggedIn) renderIn(); else renderOut(); changed(); }
     render();
     panel.hidden = false;
+    // opts.autoImport : bouton « Importer depuis mon compte » des écrans Sans PC / Patch.
+    if (opts.autoImport && status().loggedIn) { const g = panel.querySelector("#acct-import"); if (g) g.click(); }
   }
+  // Ouvre directement l'import (la fenêtre de connexion si pas connecté).
+  const openImport = (opts) => openPanel(Object.assign({}, opts, { autoImport: true }));
 
-  root.MystrowAccount = { signIn, signInWithProvider, cancelProvider, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel,
+  root.MystrowAccount = { idToken, signIn, signInWithProvider, cancelProvider, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel, openImport,
     storeAvailable, storeProduct, buyTablet, restoreTablet,
     onChange: (fn) => listeners.push(fn) };
 })(window);

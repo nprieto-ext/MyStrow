@@ -279,7 +279,18 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
             for i in 0..<MIDIGetNumberOfDestinations() {
                 let ep = MIDIGetDestination(i)
                 let n = stringProp(ep, kMIDIPropertyDisplayName) ?? stringProp(ep, kMIDIPropertyName) ?? "?"
-                let m = stringProp(ep, kMIDIPropertyManufacturer) ?? ""
+                var m = stringProp(ep, kMIDIPropertyManufacturer) ?? ""
+                // Selon la version d'iOS, le nom du point peut n'être que « Port 1 » :
+                // on lit aussi l'entité et l'appareil (« MyStrow USB-DMX », fabricant « MyStrow »).
+                var ent: MIDIEntityRef = 0
+                if MIDIEndpointGetEntity(ep, &ent) == noErr, ent != 0 {
+                    m += " " + (stringProp(ent, kMIDIPropertyName) ?? "")
+                    var dev: MIDIDeviceRef = 0
+                    if MIDIEntityGetDevice(ent, &dev) == noErr, dev != 0 {
+                        m += " " + (stringProp(dev, kMIDIPropertyName) ?? "")
+                            + " " + (stringProp(dev, kMIDIPropertyManufacturer) ?? "")
+                    }
+                }
                 list.append((ep, n, (n + " " + m).lowercased().contains("mystrow")))
             }
             return list

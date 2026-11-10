@@ -119,7 +119,7 @@
       </button>
       <button class="choice" id="go-solo" type="button">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M11 18.5h2"/><path d="M12 6.5l1.5 3 3.3.5-2.4 2.3.6 3.3-3-1.6-3 1.6.6-3.3-2.4-2.3 3.3-.5z"/></svg></span>
-        <span class="txt"><b>Jouer sans PC <span class="tag">Bêta</span></b><small>La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.</small></span>
+        <span class="txt"><b>Jouer sans PC</b><small>La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.</small></span>
         <span class="chev">›</span>
       </button>
     </div>
@@ -163,12 +163,13 @@
   <div class="view" id="view-solo" hidden>
     <button class="back" type="button" data-home>‹ Accueil</button>
     <header>
-      <h1>Jouer sans PC <span class="tag">Bêta</span></h1>
+      <h1>Jouer sans PC</h1>
       <p class="lede">Branchez l'interface USB-DMX sur la tablette, ou mettez la tablette sur le même réseau que le node Art-Net.</p>
     </header>
     <section class="panel">
       <div class="solo-state" id="solo-state"></div>
       <button class="btn btn-big" id="solo-btn" type="button">Jouer</button>
+      <button class="btn btn-ghost" id="import-btn" type="button" hidden>⬇ Importer depuis mon compte</button>
       <div class="row2">
         <button class="btn btn-ghost" id="patch-btn" type="button">Mes projecteurs (patch)</button>
         <button class="btn btn-ghost" id="output-btn" type="button">Sortie DMX</button>
@@ -179,6 +180,7 @@
 </main>
 
 <script src="account.js"></script>
+<script src="boitier.js"></script>
 <script>
   "use strict";
   // Version du protocole comprise par cette app (cf. PROTOCOL_VERSION de tablet_server.py).
@@ -292,12 +294,11 @@
   let boxTimer = null, boxBusy = false;
   async function detectBox(sh) {
     if (!Dmx) return null;
-    const ios = window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios";
-    if (!ios) {
-      const r = await Dmx.usbDevices().catch(() => null);
-      const d = r && (r.devices || []).find((x) => x.serial || x.net);
-      if (d) return { transport: "usb", label: "Interface USB connectée ✓ (" + d.name + ")" };
-    }
+    // iPhone / iPad aussi : le module iOS liste le boîtier MyStrow vu en MIDI USB
+    // (firmware 1.1+). Avant, l'USB n'était jamais demandé sur iOS ⇒ « aucun boîtier ».
+    const r = await Dmx.usbDevices().catch(() => null);
+    const d = r && (r.devices || []).find((x) => x.serial || x.net);
+    if (d) return { transport: "usb", label: "Interface USB connectée ✓ (" + d.name + ")" };
     const p = await Dmx.artPoll({ timeoutMs: 900 }).catch(() => null);
     const node = p && p.nodes && p.nodes[0];
     if (node) return { transport: "artnet", host: node.ip, label: "Node Art-Net connecté ✓ (" + node.ip + ")" };
@@ -334,6 +335,14 @@
   // Compte : licence (DMX sans limite de 10 min) et config envoyée par le PC.
   document.getElementById("account-btn").addEventListener("click", () => {
     if (window.MystrowAccount) MystrowAccount.openPanel({ onImported: () => { renderSolo(); location.href = "remote.html?solo=1"; } });
+  });
+  // « Importer depuis mon compte » : seulement si connecté (patch, mémoires,
+  // effets envoyés tout seuls par MyStrow sur le PC, cf. cloud_sync.mirror_to_tablet).
+  const importBtn = document.getElementById("import-btn");
+  const syncImportBtn = () => { importBtn.hidden = !(window.MystrowAccount && MystrowAccount.status().loggedIn); };
+  if (window.MystrowAccount) { MystrowAccount.onChange(syncImportBtn); syncImportBtn(); }
+  importBtn.addEventListener("click", () => {
+    MystrowAccount.openImport({ onImported: () => { renderSolo(); location.href = "remote.html?solo=1"; } });
   });
   document.getElementById("output-btn").addEventListener("click", () => { location.href = "patch.html#sortie"; });
   document.getElementById("solo-btn").addEventListener("click", () => {
