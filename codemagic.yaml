@@ -59,9 +59,11 @@ workflows:
       google_play:
         credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
         track: production
-        # Brouillon : la release arrive dans la Play Console, on y ajoute les
-        # notes de version et on clique « Publier » soi-même.
-        submit_as_draft: true
+        # Directement en production, 100 % des utilisateurs (décision du
+        # 10/11/2026) : Google fait son examen puis publie seul, plus rien à
+        # cliquer dans la Play Console. Le versionCode monte tout seul (étape
+        # plus haut). Pour revenir au brouillon : submit_as_draft: true.
+        submit_as_draft: false
 
   ios-appstore:
     name: iOS App Store (tablette)
