@@ -1104,8 +1104,8 @@
     const m = Math.floor(left / 60000), sec = Math.floor((left % 60000) / 1000);
     return "Il reste " + m + " min " + String(sec).padStart(2, "0") + " s avant que la sortie DMX se coupe.\n" + unlockText();
   }
-  // iPad / iPhone : achat intégré « MyStrow Tablette » (account.js), qui se
-  // fait dans la fenêtre Mon compte ; ailleurs, la licence du compte seule.
+  // iPad / iPhone / Android : achat intégré « MyStrow Tablette » (account.js),
+  // qui se fait dans la fenêtre Mon compte ; ailleurs, la licence du compte seule.
   const IAP_OK = !!(Account && Account.storeAvailable && Account.storeAvailable());
   const unlockAction = () => (IAP_OK ? [["Débloquer MyStrow Tablette", () => openAccount()]] : []);
   const unlockText = () => (IAP_OK

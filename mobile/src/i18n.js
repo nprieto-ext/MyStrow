@@ -103,6 +103,9 @@
     "Achat en attente d'autorisation : la sortie DMX sera débloquée dès qu'il sera accepté.":
       "Purchase awaiting approval: DMX output will be unlocked as soon as it is approved.",
     "Aucun achat de MyStrow Tablette trouvé pour cet identifiant Apple.": "No MyStrow Tablet purchase found for this Apple ID.",
+    "Aucun achat de MyStrow Tablette trouvé pour ce compte Google.": "No MyStrow Tablet purchase found for this Google account.",
+    "Un achat est déjà en cours.": "A purchase is already in progress.",
+    "Google Play indisponible : vérifiez la connexion et le compte Google de la tablette.": "Google Play unavailable: check the tablet's connection and Google account.",
     "Achat indisponible sur cet appareil.": "Purchase not available on this device.",
     "Achat non vérifié par l'App Store": "Purchase not verified by the App Store", "Produit introuvable": "Product not found",
     "Sur iPad, le DMX s'arrête si MyStrow reste en arrière-plan. Gardez l'app au premier plan pendant le show (Accès guidé).":

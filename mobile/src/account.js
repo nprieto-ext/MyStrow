@@ -181,7 +181,7 @@
     changed();
     return status();
   }
-  // `paid` = DMX sans limite : licence MyStrow active OU achat intégré iOS.
+  // `paid` = DMX sans limite : licence MyStrow active OU achat intégré (iOS / Android).
   // `licensed` = la licence du compte seule (textes de « Mon compte »).
   function status() {
     const a = load(KEY, null);
@@ -192,17 +192,19 @@
              paid: !!(fresh && active) || iapOwned, licensed: !!(fresh && active), iap: iapOwned, stale: !fresh };
   }
 
-  // ── Achat intégré iOS « MyStrow Tablette » ──────────────────────────────────
-  // Achat unique (App Store Connect, 149,99 €) qui lève la limite de 10 min
-  // sur cet identifiant Apple, sans compte MyStrow. Module natif
-  // MystrowStorePlugin.swift (StoreKit 2, vérifié et lisible hors ligne).
+  // ── Achat intégré « MyStrow Tablette » (iOS + Android) ───────────────────────
+  // Achat unique (49 €, même identifiant dans App Store Connect et la Play
+  // Console) qui lève la limite de 10 min sur cet identifiant Apple / ce compte
+  // Google, sans compte MyStrow. Modules natifs MystrowStorePlugin.swift
+  // (StoreKit 2) et MystrowStorePlugin.java (Play Billing 8), même interface.
   // Apple refuse tout autre moyen de payer dans l'app iOS (3.1.1) ; la licence
   // MyStrow achetée ailleurs reste acceptée à la connexion (3.1.3(b)).
   const IAP_ID = "com.happlysas.mystrow.tablette";
   const IAP_KEY = "mystrow.iap.tablette";            // dernier état connu, pour l'affichage immédiat
   const Store = () => {
     const c = window.Capacitor;
-    return (c && c.getPlatform && c.getPlatform() === "ios" && c.Plugins && c.Plugins.MystrowStore) || null;
+    const p = c && c.getPlatform && c.getPlatform();
+    return ((p === "ios" || p === "android") && c.Plugins && c.Plugins.MystrowStore) || null;
   };
   let iapOwned = !!(Store() && load(IAP_KEY, false));
   function setOwned(v) {
@@ -434,7 +436,7 @@
       // Licence relue en arrière-plan (achat fait depuis l'ouverture de l'app…).
       refreshLicense().then((n) => { const p = body.querySelector("p.ok,p.err"); if (p && n.loggedIn) { p.className = n.licensed ? "ok" : "err"; p.textContent = licenceText(n); } }).catch(() => {});
     }
-    // Achat intégré iOS : sans compte, ou compte sans licence.
+    // Achat intégré (iOS / Android) : sans compte, ou compte sans licence.
     function iapBox() {
       const box = el("div", "act");
       if (iapOwned) {
@@ -459,7 +461,8 @@
         busy(restore, true, "Recherche…");
         try {
           if (await restoreTablet()) { render(); return; }
-          m.textContent = "Aucun achat de MyStrow Tablette trouvé pour cet identifiant Apple.";
+          m.textContent = isIos() ? "Aucun achat de MyStrow Tablette trouvé pour cet identifiant Apple."
+            : "Aucun achat de MyStrow Tablette trouvé pour ce compte Google.";
         } catch (err) { m.className = "err"; m.textContent = err.message; }
         busy(restore, false, "Restaurer les achats");
       });

@@ -7,8 +7,8 @@ android {
         applicationId "fr.mystrow.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.2"
+        versionCode 5
+        versionName "1.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -55,6 +55,8 @@ dependencies {
     implementation project(':capacitor-android')
     // Interfaces USB-DMX (FTDI, CH340, CP210x…) : MystrowDmxPlugin
     implementation 'com.github.mik3y:usb-serial-for-android:3.11.0'
+    // Achat intégré « MyStrow Tablette » : MystrowStorePlugin (Play exige la v8+ depuis le 31/08/2026)
+    implementation 'com.android.billingclient:billing:8.0.0'
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

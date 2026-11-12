@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
         // Modules natifs locaux : à enregistrer AVANT super.onCreate.
         registerPlugin(MystrowDiscoveryPlugin.class);
         registerPlugin(MystrowDmxPlugin.class);
+        registerPlugin(MystrowStorePlugin.class);
         super.onCreate(savedInstanceState);
         enterImmersive();
     }
