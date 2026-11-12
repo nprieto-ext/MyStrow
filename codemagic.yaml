@@ -52,7 +52,7 @@ workflows:
           echo "versionCode $NEXT (Play : $LATEST, dépôt : $LOCAL)"
           sed -i '' "s/versionCode [0-9]*/versionCode $NEXT/" android/app/build.gradle
       - name: Compiler l'AAB
-        script: cd android && ./gradlew bundleRelease
+        script: cd android && chmod +x gradlew && ./gradlew bundleRelease
     artifacts:
       - android/app/build/outputs/bundle/release/*.aab
     publishing:
