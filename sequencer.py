@@ -1712,7 +1712,7 @@ class LiveModePanel(QWidget):
         dj_lbl.setFixedWidth(52)
         dj_row.addWidget(dj_lbl)
         self._midi_dj_combo = ComboSansMolette()
-        self._midi_dj_combo.addItems(["Virtual DJ", "Rekordbox", "Serato"])
+        self._midi_dj_combo.addItems(["Virtual DJ", "Rekordbox", "Serato", "Ableton Live"])
         self._midi_dj_combo.setFixedHeight(22)
         self._midi_dj_combo.setStyleSheet(
             "QComboBox { background:#0d180d; color:#88cc88; border:1px solid #2a4a2a;"
@@ -1780,7 +1780,7 @@ class LiveModePanel(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(tr("seq_dj_software")))
         combo = ComboSansMolette()
-        combo.addItems(["Virtual DJ", "Rekordbox", "Serato"])
+        combo.addItems(["Virtual DJ", "Rekordbox", "Serato", "Ableton Live"])
         row.addWidget(combo, 1)
         lay.addLayout(row)
 
@@ -1812,6 +1812,9 @@ class LiveModePanel(QWidget):
             elif soft == "Rekordbox":
                 s4 = tr("lv_g_rb4")
                 s5 = tr("lv_g_rb5", port=port)
+            elif soft == "Ableton Live":
+                s4 = tr("lv_g_abl4")
+                s5 = tr("lv_g_abl5", port=port)
             else:
                 s4 = tr("lv_g_ser4")
                 s5 = tr("lv_g_ser5", port=port)
@@ -1858,6 +1861,9 @@ class LiveModePanel(QWidget):
         elif soft == "Rekordbox":
             step4 = tr("lv_p_rb4")
             step5 = tr("lv_p_rb5", port=port)
+        elif soft == "Ableton Live":
+            step4 = tr("lv_p_abl4")
+            step5 = tr("lv_p_abl5", port=port)
         else:  # Serato
             step4 = tr("lv_p_ser4")
             step5 = tr("lv_p_ser5", port=port)
