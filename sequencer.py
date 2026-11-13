@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal, QMimeData, QSize
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import (QColor, QFont, QBrush, QCursor, QDrag, QActionGroup,
-                           QFontMetrics)
+                           QFontMetrics, QPalette)
 try:
     from PySide6.QtMultimedia import QMediaPlayer
 except ImportError:
@@ -3823,9 +3823,11 @@ class Sequencer(QFrame):
         self.del_btn.clicked.connect(self.delete_selected)
         header.addWidget(self.del_btn)
 
-        self.add_btn = QPushButton("➕")
+        # « + » texte et non l'émoji « ➕ » : sur Mac, l'émoji passe par Apple
+        # Color Emoji (gros pictogramme gris) au lieu du signe affiché sur PC.
+        self.add_btn = QPushButton("+")
         self.add_btn.setFixedSize(40, 32)
-        self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 18px; }")
+        self.add_btn.setStyleSheet(btn_style + "QPushButton { font-size: 20px; font-weight: bold; }")
         self.add_btn.clicked.connect(self.show_add_menu)
         header.addWidget(self.add_btn)
 
@@ -3947,6 +3949,16 @@ class Sequencer(QFrame):
         """Menu contextuel pour ajouter media, pause ou tempo"""
         menu = QMenu(self)
         menu.setStyleSheet(_SEQ_MENU_SS)
+        # Palette sombre en filet de sécurité : sur macOS le menu reprenait le
+        # texte clair de la feuille de style sur un fond blanc système
+        # (illisible), même souci que la liste des ports COM.
+        pal = menu.palette()
+        for role, c in ((QPalette.Window, "#161616"), (QPalette.Base, "#161616"),
+                        (QPalette.WindowText, "#dddddd"), (QPalette.Text, "#dddddd"),
+                        (QPalette.ButtonText, "#dddddd"),
+                        (QPalette.Highlight, "#2a4a5a"), (QPalette.HighlightedText, "#ffffff")):
+            pal.setColor(role, QColor(c))
+        menu.setPalette(pal)
         menu.addAction(tr("seq_menu_add_media"), self.add_files_dialog)
         menu.addAction(tr("seq_menu_add_pause"), self.add_pause)
         menu.exec(QCursor.pos())

@@ -63,6 +63,7 @@ class FauxWin:
     stop_effect              = mw.MainWindow.stop_effect
     _toggle_fx_pad           = mw.MainWindow._toggle_fx_pad
     _toggle_fx_pad_stacked   = mw.MainWindow._toggle_fx_pad_stacked
+    _apply_effect_start_look = mw.MainWindow._apply_effect_start_look
     _unstack_fx_pad          = mw.MainWindow._unstack_fx_pad
     _fx_col_amp              = mw.MainWindow._fx_col_amp
     _finish_stacked_once     = mw.MainWindow._finish_stacked_once

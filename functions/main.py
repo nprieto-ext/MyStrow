@@ -2431,6 +2431,49 @@ ici : <a href="https://sellercentral.amazon.fr/orders-v3/order/{oid}">commande
     return n
 
 
+def _run_avis_amazon() -> list[str]:
+    """Demande un avis pour chaque commande Amazon.fr devenue éligible.
+
+    Parcourt les commandes expédiées des 40 derniers jours (la fenêtre Amazon
+    s'arrête 30 jours après la livraison). Pour chacune, c'est l'API qui dit si
+    la demande est possible maintenant. Une commande traitée est notée dans
+    `avis_amazon/{id}` : elle n'est plus réinterrogée.
+    """
+    if not amazon_mcf.configured():
+        return []
+    db = _get_db()
+    apres = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 40 * 86400))
+    faites = []
+    for cmd in amazon_mcf.get_orders_expediees(apres):
+        if not str(cmd.get("SalesChannel", "")).startswith("Amazon"):
+            continue   # MCF du site : pas de demande d'avis possible
+        oid = cmd.get("AmazonOrderId", "")
+        ref = db.collection("avis_amazon").document(oid)
+        if ref.get().exists:
+            continue
+        time.sleep(1.1)   # quota Solicitations : 1 requête/s
+        try:
+            if not amazon_mcf.avis_possible(oid):
+                continue   # trop tôt (< 5 j après livraison) ou déjà demandé à la main
+            time.sleep(1.1)
+            amazon_mcf.demander_avis(oid)
+        except amazon_mcf.SpApiError as e:
+            if e.status == 403:
+                # Rôle « Communication avec l'acheteur » absent : inutile d'insister.
+                raise
+            print(f"[Avis Amazon] {oid} : {e}")
+            continue
+        ref.set({"demande_utc": time.time(), "achat": cmd.get("PurchaseDate", "")})
+        faites.append(oid)
+    if faites:
+        liste = "<br>".join(
+            f'<a href="https://sellercentral.amazon.fr/orders-v3/order/{o}">{o}</a>'
+            for o in faites)
+        _alert_admin(f"⭐ MyStrow — {len(faites)} demande(s) d'avis Amazon envoyée(s)",
+                     f"<h2>Demandes d'avis envoyées</h2><div class='box'>{liste}</div>")
+    return faites
+
+
 def _id_of(value) -> str:
     """Un champ Stripe peut arriver en identifiant nu ou en objet étendu."""
     if isinstance(value, dict):
@@ -3992,6 +4035,38 @@ def admin_cancel_subscription(req: https_fn.Request) -> https_fn.Response:
 
 
 @https_fn.on_request()
+def admin_boitier_retablir_abo(req: https_fn.Request) -> https_fn.Response:
+    """« Retour boîtier » de admin_panel.py : rend à l'abonnement Stripe
+    l'échéance qu'il avait avant l'activation (cf. _boitier_retablir_abo).
+    RÉSERVÉ aux admins. POST {"uid": "..."} → {"ok": true}."""
+    _H = {**_CORS_HEADERS, "Content-Type": "application/json"}
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    if not _verify_admin(req):
+        return https_fn.Response(json.dumps({"error": "Accès réservé aux administrateurs"}),
+                                 status=403, headers=_H)
+    try:
+        uid = (json.loads(req.data or b"{}").get("uid") or "").strip()
+    except Exception:
+        uid = ""
+    if not uid:
+        return https_fn.Response(json.dumps({"error": "uid manquant"}),
+                                 status=400, headers=_H)
+    try:
+        ref = _get_db().collection("licenses").document(uid)
+        snap = ref.get()
+        lic = (snap.to_dict() or {}) if snap.exists else {}
+        _boitier_retablir_abo(lic)
+        ref.set({f: firestore.DELETE_FIELD for f in _BOITIER_STRIPE_FIELDS},
+                merge=True)
+        return https_fn.Response(json.dumps({"ok": True}), status=200, headers=_H)
+    except Exception as exc:
+        print(f"[AdminRetablirAbo] {uid} : {exc}")
+        return https_fn.Response(json.dumps({"error": f"Erreur Stripe : {exc}"}),
+                                 status=500, headers=_H)
+
+
+@https_fn.on_request()
 def create_portal_session(req: https_fn.Request) -> https_fn.Response:
     """
     Crée une session Stripe Customer Portal pour l'utilisateur connecté.
@@ -4925,6 +5000,70 @@ def _stripe_period_end(sub_id: str) -> float:
     return max(ends) if ends else -1.0
 
 
+# Stripe refuse un essai de plus de 730 jours : marge d'un jour.
+_STRIPE_TRIAL_MAX_S = 729 * 86400
+
+
+def _boitier_suspendre_abo(lic_data: dict, until: float) -> dict:
+    """Abonné Stripe qui active un boîtier : plus aucun prélèvement avant la
+    fin de l'année offerte. Sans ça, il paierait son abonnement pour rien
+    pendant 12 mois (la facture ne raccourcit pas la licence, mais ne
+    l'allonge plus non plus : cf. _boitier_floor).
+
+    On repousse la prochaine échéance (`trial_end`) plutôt que de suspendre
+    la collecte (`pause_collection`) : avec une pause, le cycle continue de
+    tourner et la reprise d'un annuel tomberait des mois après la fin de
+    l'année offerte, licence coupée entre-temps. Ici le 1er prélèvement tombe
+    PILE à la fin de l'année boîtier, et son invoice.paid prolonge la licence.
+
+    → champs à poser sur la licence ({} si rien n'a été touché)."""
+    sub_id = lic_data.get("stripe_subscription_id") or ""
+    if not sub_id or lic_data.get("plan_type") == "lifetime":
+        return {}
+    sub = _stripe_get(f"/subscriptions/{sub_id}")
+    if sub.get("status") not in ("active", "trialing"):
+        return {}
+    if sub.get("cancel_at_period_end") or sub.get("cancel_at"):
+        return {}       # déjà résilié : il n'y a plus rien à prélever
+    ends = [sub.get("current_period_end"), sub.get("trial_end")]
+    ends += [it.get("current_period_end")
+             for it in ((sub.get("items") or {}).get("data") or [])]
+    prev_end = max([float(e) for e in ends if e] or [0.0])
+
+    now = time.time()
+    target = int(min(until, now + _STRIPE_TRIAL_MAX_S))
+    if target <= prev_end + 3600:
+        return {}       # l'échéance actuelle couvre déjà l'année offerte
+    _stripe_post(f"/subscriptions/{sub_id}",
+                 {"trial_end": str(target), "proration_behavior": "none"})
+    print(f"[boitier] abonnement {sub_id} : prochain prélèvement repoussé du "
+          f"{_fmt_date(prev_end)} au {_fmt_date(target)}")
+    return {"boitier_stripe_sub":      sub_id,
+            "boitier_stripe_prev_end": prev_end,
+            "boitier_stripe_until":    float(target)}
+
+
+def _boitier_retablir_abo(lic: dict) -> None:
+    """Boîtier repris (retour, revente) : l'abonnement retrouve l'échéance
+    qu'il avait avant l'activation — ou prélève tout de suite si elle est
+    passée. Lève une exception si Stripe refuse : l'appelant décide."""
+    sub_id = lic.get("boitier_stripe_sub") or ""
+    if not sub_id or sub_id != (lic.get("stripe_subscription_id") or ""):
+        return          # abonnement résilié ou remplacé depuis : rien à rendre
+    sub = _stripe_get(f"/subscriptions/{sub_id}")
+    if sub.get("status") != "trialing":
+        return
+    prev_end = float(lic.get("boitier_stripe_prev_end") or 0)
+    target = str(int(prev_end)) if prev_end > time.time() + 3600 else "now"
+    _stripe_post(f"/subscriptions/{sub_id}",
+                 {"trial_end": target, "proration_behavior": "none"})
+    print(f"[boitier] abonnement {sub_id} rétabli (échéance : {target})")
+
+
+_BOITIER_STRIPE_FIELDS = ("boitier_stripe_sub", "boitier_stripe_prev_end",
+                          "boitier_stripe_until")
+
+
 def _boitier_reprendre(uid: str, serial: str, new_email: str) -> bool:
     """Retire à `uid` la licence apportée par le boîtier `serial`.
 
@@ -4961,6 +5100,12 @@ def _boitier_reprendre(uid: str, serial: str, new_email: str) -> bool:
             months  = int(lic.get("boitier_months") or 12)
             new_exp = float(lic.get("expiry_utc", 0) or 0) - int(months * 30.5) * 86400
         if sub_id:
+            # Sans ça, la période « payée » lue ci-dessous serait la fin de
+            # l'année offerte (trial_end) : l'ancien détenteur la garderait.
+            try:
+                _boitier_retablir_abo(lic)
+            except Exception as e:
+                print(f"[boitier] ⚠ abonnement {sub_id} NON rétabli : {e}")
             paid = _stripe_period_end(sub_id)
             if paid < 0:
                 # Stripe muet : on ne coupe pas un abonné sur un doute, sa
@@ -4982,8 +5127,9 @@ def _boitier_reprendre(uid: str, serial: str, new_email: str) -> bool:
         update["plan_type"] = plan_type
     for f in ("boitier_until_utc", "boitier_months", "boitier_serial",
               "boitier_code", "boitier_utc", "boitier_prev_expiry_utc",
-              "boitier_prev_plan", "boitier_prev_plan_type",
-              "boitier_relances", "boitier_relances_until"):
+              "boitier_prev_plan", "boitier_prev_plan_type", "boitier_usb_id",
+              "boitier_relances", "boitier_relances_until",
+              *_BOITIER_STRIPE_FIELDS):
         update[f] = firestore.DELETE_FIELD
     ref.update(update)
 
@@ -5283,6 +5429,9 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                 "boitier_prev_expiry_utc": current,
                 "boitier_prev_plan":       lic_data.get("plan", ""),
                 "boitier_prev_plan_type":  lic_data.get("plan_type", ""),
+                # Identité USB du boîtier : l'app lève la limite de jours
+                # hors-ligne quand CE boîtier est branché (license_manager).
+                "boitier_usb_id": (ser_data.get("usb_id") or "") if is_dmy else "",
             }, merge=True)
 
             if code_ref is not None:
@@ -5321,6 +5470,19 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
                 traceback.print_exc()
                 print(f"[activate] ⚠ REPRISE ÉCHOUÉE {serial} chez {old_uid} : {e}")
 
+        # Abonné Stripe : pas de prélèvement pendant l'année offerte. Après
+        # coup : un Stripe en panne ne doit pas faire échouer l'activation.
+        stripe_until = 0.0
+        try:
+            pause = _boitier_suspendre_abo(lic_data, expiry)
+            if pause:
+                lic_ref.set(pause, merge=True)
+                stripe_until = pause["boitier_stripe_until"]
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[activate] ⚠ ABONNEMENT NON SUSPENDU pour {email} "
+                  f"({lic_data.get('stripe_subscription_id')}) : {e}")
+
         # À partir d'ici la licence est acquise : un email ou un Brevo en
         # panne ne doit plus faire échouer l'activation.
         try:
@@ -5348,6 +5510,8 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             "is_new":       is_new,
             "expiry":       expiry,
             "expiry_label": _fmt_date(expiry, lang),
+            "billing_resumes_label": (_fmt_date(stripe_until, lang)
+                                      if stripe_until else ""),
         }), status=200, headers=_H)
 
     except Exception as e:
@@ -5851,6 +6015,12 @@ def mcf_suivi(event: scheduler_fn.ScheduledEvent) -> None:
 @scheduler_fn.on_schedule(schedule="*/30 * * * *", max_instances=1)
 def ventes_amazon(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[Ventes Amazon] {_run_ventes_amazon()} nouvelle(s) vente(s)")
+
+
+# Tous les jours à 15 h UTC : demande d'avis Amazon sur les commandes éligibles.
+@scheduler_fn.on_schedule(schedule="0 15 * * *", max_instances=1)
+def avis_amazon(event: scheduler_fn.ScheduledEvent) -> None:
+    print(f"[Avis Amazon] demandes envoyées : {_run_avis_amazon()}")
 
 
 def _run_purge_downloads(mois: int = 13) -> int:

@@ -2490,9 +2490,20 @@ class FixtureCanvas(QWidget):
             # donnait un tilt différent selon le zoom.
             pan_val, tilt_val = beam_aim(dx / self._zoom, dy / self._zoom, r)
             # Le mode cible ne vise que l'avant-scène : on ne renvoie jamais
-            # la lyre vers l'arrière (tilt < 32768 = vers le fond, et 0/65535
-            # pointent vers le haut).
-            tilt_val = max(32768, min(49152, tilt_val))
+            # la lyre vers le fond (tilt < 32768).
+            #
+            # Le plafond était 49152 (192/255) en dur : le plan 2D ne connaît
+            # ni la hauteur de la lyre ni la distance de la piste, et une lyre
+            # posée bas (pied, totem) devait dépasser 192 pour éclairer la
+            # piste — le ciblage la calait en butée (client FuraxX, 13/11/2026).
+            # Désormais : la portée naturelle de `beam_aim` (l'horizontale,
+            # ≈ 213/255) et, si elle est réglée, la zone de la lyre
+            # (« Limites de mouvement »), seul garde-fou qui connaît le matériel.
+            tilt_val = max(32768, tilt_val)
+            _t_lo = getattr(proj, 'tilt_min', 0)
+            _t_hi = getattr(proj, 'tilt_max', 65535)
+            if isinstance(_t_lo, (int, float)) and isinstance(_t_hi, (int, float)) and _t_hi > _t_lo:
+                tilt_val = int(max(_t_lo, min(_t_hi, tilt_val)))
 
             # Appliquer le swap si actif : artnet_dmx va re-swapper, donc on
             # pre-swap ici pour que les bons axes arrivent sur les bons canaux.

@@ -21,6 +21,9 @@ from pathlib import Path
 import cloud_sync as cs
 
 
+TETE = ("updated_utc", "tablet_utc")   # lecture légère : date + marque tablette
+
+
 def _entry(text, utc=1000.0):
     return {"content": text, "sha": cs._sha(text), "utc": utc}
 
@@ -34,12 +37,17 @@ class Base(unittest.TestCase):
         self._cache = cs.CACHE_FILE
         cs.CACHE_FILE = self.tmp / "cache.json"
         self._uid, self._fetch, self._push = cs.account_uid, cs.fetch_remote, cs.push
+        self._mirror = cs.mirror_to_tablet
+        self.copies = []
+        cs.mirror_to_tablet = lambda: self.copies.append(1) or True
+        cs._TABLET_SEEN.clear()
         self._tok = cs._token
         cs.account_uid = lambda: "u1"
 
     def tearDown(self):
         cs.FILES, cs.STATE_FILE, cs.CACHE_FILE = self._files, self._state, self._cache
         cs.account_uid, cs.fetch_remote, cs.push = self._uid, self._fetch, self._push
+        cs.mirror_to_tablet = self._mirror
         cs._token = self._tok
 
     def ecrire(self, key, obj):
@@ -282,6 +290,7 @@ class Envoi(Base):
             def __exit__(self, *a): return False
 
         def faux(req, timeout=None, context=None):
+            ecrit["url"] = req.full_url
             texte = json.loads(req.data)["fields"]["payload"]["stringValue"]
             ecrit["brut"] = texte
             ecrit["payload"] = {"files": cs.decode_payload(texte)}
@@ -296,6 +305,8 @@ class Envoi(Base):
         finally:
             ur.urlopen = vrai
         self.assertEqual(set(pris), {"fx_custom"})
+        self.assertIn("updateMask.fieldPaths=payload", ecrit["url"],
+                      "la marque de la tablette n'est pas effacée")
         self.assertTrue(ecrit["brut"].startswith("z1:"), "contenu compresse")
         files = ecrit["payload"]["files"]
         self.assertEqual(files["patch"]["content"], '{"v": "autre PC"}')
@@ -335,7 +346,7 @@ class Sobriete(Base):
         appels = self._faux_get(lambda m: {"updated_utc": 42.0})
         res = cs.fetch_remote("u1", known=(42.0, files), token="t")
         self.assertEqual(res, (files, 42.0))
-        self.assertEqual(appels, ["updated_utc"], "seule la date est lue")
+        self.assertEqual(appels, [TETE], "seule la date est lue")
 
     def test_date_changee_contenu_telecharge(self):
         files = {"patch": _entry('{"v": 2}')}
@@ -343,7 +354,7 @@ class Sobriete(Base):
                                 {"updated_utc": 43.0, "payload": cs.encode_payload(files)})
         res = cs.fetch_remote("u1", known=(42.0, {}), token="t")
         self.assertEqual(res, (files, 43.0))
-        self.assertEqual(appels, ["updated_utc", None])
+        self.assertEqual(appels, [TETE, None])
 
     def test_compte_vide(self):
         self._faux_get(lambda m: {})
@@ -494,6 +505,87 @@ class SynchroManuelle(Base):
         p.sync_now()
         p.tick(); p._thread.join(1)
         self.assertEqual(p.tick(), "offline")
+
+
+class CopieTablette(Base):
+    """« Ça va me bouffer des trucs sur quelqu'un qui n'utilise jamais sa
+    tablette » (13/11/2026) : la copie au format tablette n'est écrite que
+    pour les comptes où l'app tablette a laissé sa marque."""
+
+    def _push_ok(self):
+        cs.push = lambda uid, local, known=None: (
+            {k: v["sha"] for k, v in local.items()}, dict(local), 5.0)
+
+    def test_sans_tablette_aucune_copie(self):
+        self._push_ok()
+        self.ecrire("patch", {"v": 1})
+        p = cs.Pusher()
+        p.tick(); p._thread.join(1); p.tick()
+        self.assertEqual(self.copies, [])
+
+    def test_tablette_vue_copie_apres_envoi(self):
+        self._push_ok()
+        cs._TABLET_SEEN["u1"] = 100.0
+        self.ecrire("patch", {"v": 1})
+        p = cs.Pusher()
+        p.tick(); p._thread.join(1); p.tick()
+        self.assertEqual(self.copies, [1])
+        st = cs.state_for("u1")
+        self.assertEqual(st["tablet_utc"], 100.0)
+        self.assertGreater(st["tablet_mirrored"], 100.0)
+
+    def test_marque_retenue_par_le_pc(self):
+        """Vue une fois : la copie continue même si la marque disparaît du
+        compte (ancienne version du PC qui réécrit tout le document)."""
+        self._push_ok()
+        st = cs.state_for("u1"); st["tablet_utc"] = 50.0; st["tablet_mirrored"] = 60.0
+        cs.save_state(st)
+        self.ecrire("patch", {"v": 1})
+        p = cs.Pusher()
+        p.tick(); p._thread.join(1); p.tick()
+        self.assertEqual(self.copies, [1])
+
+    def test_import_sans_rien_copie_au_lancement_du_pc(self):
+        """La tablette a cherché (marque) alors que ce PC n'a rien de neuf :
+        la copie part quand même au lancement, une seule fois."""
+        self.ecrire("patch", {"v": 1})
+        st = cs.state_for("u1")
+        st["synced"]["patch"] = cs.read_local("patch")[1]
+        cs.save_state(st)
+        lectures = []
+
+        def lire(uid, known=None, token=None):
+            lectures.append(uid)
+            cs._TABLET_SEEN[uid] = time.time()
+            return {}, 0.0
+
+        cs.fetch_remote = lire
+        cs._TABLET_SEEN["u1"] = time.time()      # vue par la lecture du démarrage
+        p = cs.Pusher()
+        p.tick(); p._thread.join(1)
+        self.assertEqual(p.tick(), "ok")
+        self.assertEqual(self.copies, [1])
+        cs._TABLET_SEEN["u1"] = 1.0              # plus de nouvelle marque
+        p2 = cs.Pusher()
+        p2.tick()
+        self.assertIsNone(p2._thread, "déjà copié : aucun appel réseau")
+        self.assertEqual(self.copies, [1])
+
+    def test_lecture_retient_la_marque(self):
+        appels = []
+
+        def get(uid, token, mask=None):
+            appels.append(mask)
+            return {"tablet_utc": 77.0}          # document créé par la tablette seule
+
+        vrai = cs._get_doc
+        cs._get_doc = get
+        try:
+            self.assertEqual(cs.fetch_remote("u1", token="t"), ({}, 0.0))
+        finally:
+            cs._get_doc = vrai
+        self.assertEqual(appels, [TETE], "pas de lecture en plus")
+        self.assertEqual(cs._TABLET_SEEN["u1"], 77.0)
 
 
 if __name__ == "__main__":

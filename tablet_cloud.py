@@ -102,6 +102,10 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
         for k in _FIXTURE_KEYS:
             if k in f and f[k] is not None:
                 t[k] = f[k]
+        # Place sur le plan de feu du PC : la tablette dessine au même endroit
+        # (standalone.js lit plan_x/plan_y, ceux du mode DÉPLACER).
+        if f.get("canvas_x") is not None and f.get("canvas_y") is not None:
+            t["plan_x"], t["plan_y"] = float(f["canvas_x"]), float(f["canvas_y"])
         if t.get("fixture_type") is None and "Pan" in profile:
             t["fixture_type"] = "Moving Head"
         # Débattement RÉSOLU (défaut par type : un laser n'est pas une lyre

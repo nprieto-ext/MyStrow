@@ -129,15 +129,15 @@
       "Got an activation card (MyStrow Pack)? Activate it on the website. It creates your account and emails you the password; then come back here to sign in.",
     "Activer ma carte sur mystrow.fr ↗": "Activate my card on mystrow.fr ↗",
     "Importer depuis mon compte": "Import from my account", "⬇ Importer depuis mon compte": "⬇ Import from my account", "Recherche…": "Searching…",
-    "Rien dans votre compte pour l'instant. Ouvrez MyStrow sur votre PC, connecté au même compte : votre config y part toute seule.":
-      "Nothing in your account yet. Open MyStrow on your PC, signed in to the same account: your config is sent automatically.",
+    "Rien dans votre compte pour l'instant. Ouvrez (ou relancez) MyStrow sur votre PC, connecté au même compte : votre config y part toute seule, puis réessayez.":
+      "Nothing in your account yet. Open (or restart) MyStrow on your PC, signed in to the same account: your config is sent automatically, then try again.",
     "Revenir à la config d'avant l'import": "Go back to the config before the import",
     "Remplacer la config de la tablette": "Replace the tablet's config",
     "Elle remplace le patch, les pages AKAI, les mémoires et les positions de la tablette. La sortie DMX (USB ou node) ne change pas. Vos effets créés sur la tablette restent.":
       "It replaces the tablet's patch, AKAI pages, memories and positions. The DMX output (USB or node) does not change. Effects you created on the tablet are kept.",
     "Ce compte n'a pas de licence payante (essai) : la sortie DMX reste limitée à 10 minutes par lancement.": "This account has no paid license (trial): DMX output stays limited to 10 minutes per session.",
     "Licence expirée : la sortie DMX reste limitée à 10 minutes.": "License expired: DMX output stays limited to 10 minutes.",
-    "Licence non vérifiée depuis plus de 7 jours : connectez la tablette à Internet.": "License not checked for more than 7 days: connect the tablet to the Internet.",
+    "Licence non vérifiée depuis plus de 16 jours : connectez la tablette à Internet.": "License not checked for more than 16 days: connect the tablet to the Internet.",
     "Adresse e-mail invalide.": "Invalid email address.", "E-mail ou mot de passe incorrect.": "Wrong email or password.",
     "Aucun compte avec cet e-mail.": "No account with this email.", "Mot de passe incorrect.": "Wrong password.",
     "Ce compte est désactivé.": "This account is disabled.", "Trop d'essais : réessayez dans quelques minutes.": "Too many attempts: try again in a few minutes.",

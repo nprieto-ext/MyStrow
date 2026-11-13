@@ -54,6 +54,11 @@ Fiche du nuage, deux boutons :
 Stockage : Firestore `user_sync/{uid}` {payload, updated_utc}. `payload` =
 `{"files": {clé: {"content": texte, "sha": …, "utc": …}}}` en JSON, compressé.
 Règle : chacun ne lit et n'écrit que le sien (firestore.rules).
+
+Tablette : la copie au format tablette (`user_configs/{uid}`) n'est écrite
+que pour les comptes qui utilisent l'app tablette. Celle-ci pose une marque
+`tablet_utc` dans `user_sync/{uid}` (connexion, « Importer ») ; le PC la lit
+avec la date, sans appel en plus, et copie dès qu'il la voit.
 """
 
 import base64
@@ -298,7 +303,9 @@ def _get_doc(uid: str, token: str, mask: str = None):
     import urllib.error
     import urllib.request
     import firebase_client as fc
-    url = _doc_url(uid) + (f"?mask.fieldPaths={mask}" if mask else "")
+    if isinstance(mask, str):
+        mask = (mask,)
+    url = _doc_url(uid) + ("?" + "&".join(f"mask.fieldPaths={m}" for m in mask) if mask else "")
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=NET_TIMEOUT_S,
@@ -324,10 +331,12 @@ def fetch_remote(uid: str, known=None, token=None):
     token = token or _token()
     if not token:
         return None
-    head = _get_doc(uid, token, mask="updated_utc")
+    head = _get_doc(uid, token, mask=("updated_utc", "tablet_utc"))
     if head is None:
         return None
-    if not head:
+    if head.get("tablet_utc"):
+        _TABLET_SEEN[uid] = float(head["tablet_utc"])
+    if not head.get("updated_utc"):
         return {}, 0.0
     utc = float(head.get("updated_utc") or 0)
     if known is not None and known[0] == utc:
@@ -383,8 +392,11 @@ def push(uid: str, local: dict, known=None):
     now = time.time()
     body = json.dumps({"fields": fc._dict_to_fields({
         "payload": text, "updated_utc": now})}).encode("utf-8")
+    # updateMask : ne réécrit que ces deux champs, la marque `tablet_utc`
+    # posée par la tablette reste.
     req = urllib.request.Request(
-        _doc_url(uid), data=body, method="PATCH",
+        _doc_url(uid) + "?updateMask.fieldPaths=payload&updateMask.fieldPaths=updated_utc",
+        data=body, method="PATCH",
         headers={"Authorization": f"Bearer {token}",
                  "Content-Type": "application/json"})
     try:
@@ -394,6 +406,33 @@ def push(uid: str, local: dict, known=None):
         print(f"[CloudSync] envoi impossible : {e}")
         return None
     return pris, merged, now
+
+
+# Comptes dont la tablette a laissé sa marque (`tablet_utc` dans user_sync,
+# posée par l'app tablette à la connexion et à chaque « Importer »). Rempli
+# par `fetch_remote` (même lecture que la date : aucun appel en plus).
+_TABLET_SEEN = {}
+
+
+def tablet_seen(uid: str, state: dict) -> float:
+    """Date de la dernière marque de la tablette (0 : jamais vue)."""
+    return max(float(state.get("tablet_utc") or 0), _TABLET_SEEN.get(uid, 0.0))
+
+
+def mirror_to_tablet() -> bool:
+    """Recopie la config au format de la tablette (`user_configs/{uid}`, lu
+    par le bouton « Importer depuis mon compte » de l'app). RÉSEAU (thread).
+    Seulement pour les comptes qui utilisent la tablette (`tablet_seen`) :
+    rien d'écrit sur le serveur pour les autres. Un échec ici ne touche pas
+    à la synchro du PC."""
+    try:
+        import socket
+        import tablet_cloud
+        tablet_cloud.upload(label=socket.gethostname())
+        return True
+    except Exception as e:
+        print(f"[CloudSync] copie pour la tablette impossible : {e}")
+        return False
 
 
 # ── Décision au démarrage (pure : aucun réseau, aucune écriture) ─────────────
@@ -667,8 +706,15 @@ class Pusher:
         # Résultat d'un envoi terminé : enregistré ici, sur le thread principal
         # (état et cache ne sont écrits que d'un seul fil).
         if self._thread is not None and not self._thread.is_alive():
-            uid, sent, res, remote = self._result
+            uid, sent, res, remote, tab, mirrored = self._result
             self._thread = None
+            if tab or mirrored:
+                st = state_for(uid)
+                if tab:
+                    st["tablet_utc"] = tab
+                if mirrored:
+                    st["tablet_mirrored"] = mirrored
+                save_state(st)
             if (sent and res is None) or (not sent and remote is None):
                 self.status = "offline"
                 self._retry_at = now + RETRY_AFTER_S
@@ -710,7 +756,12 @@ class Pusher:
         self._force = False
         state = state_for(uid)
         local = local_changes(state)
-        if not local and not force:
+        tab = tablet_seen(uid, state)
+        mirrored = float(state.get("tablet_mirrored") or 0)
+        # Tablette vue depuis la dernière copie (ex. « Importer » n'a rien
+        # trouvé) : la copie part même sans rien de neuf sur ce PC.
+        mirror_due = bool(tab) and tab > mirrored
+        if not local and not force and not mirror_due:
             if self.status in ("idle", "pending"):
                 self.status = "ok"
             return self.status
@@ -718,10 +769,11 @@ class Pusher:
         self.status = "sending"
         known = load_cache(uid)
         sent = bool(local)
-        self._result = (uid, sent, None, None)
+        self._result = (uid, sent, None, None, 0.0, 0.0)
 
         def _run():
             res = remote = None
+            tab_now = done = 0.0
             try:
                 if sent:
                     res = push(uid, local, known=known)
@@ -729,10 +781,15 @@ class Pusher:
                         remote = (res[1], res[2])
                 else:
                     remote = fetch_remote(uid, known=known)
+                # La lecture vient peut-être de découvrir la tablette.
+                tab_now = max(tab, _TABLET_SEEN.get(uid, 0.0))
+                if remote is not None and tab_now and (res is not None or tab_now > mirrored):
+                    if mirror_to_tablet():
+                        done = time.time()
             except Exception as e:
                 print(f"[CloudSync] envoi : {e}")
             finally:
-                self._result = (uid, sent, res, remote)
+                self._result = (uid, sent, res, remote, tab_now, done)
 
         self._thread = threading.Thread(target=_run, daemon=True, name="cloud-push")
         self._thread.start()

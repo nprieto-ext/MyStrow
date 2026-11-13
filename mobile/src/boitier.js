@@ -46,9 +46,11 @@
       const r = await Dmx.usbDevices().catch(() => null);
       // Rien de MyStrow branché : pas de fenêtre d'autorisation inutile.
       const devs = (r && r.devices) || [];
-      if (!devs.some((d) => d.vid === VID && d.pid === PID)) return;
+      if (!devs.some((d) => d.vid === VID && d.pid === PID)) { Account.setPluggedUsb && Account.setPluggedUsb(null); return; }
       const s = await Dmx.usbSerial().catch(() => null);
       const id = s && s.usb_id;
+      // Son boîtier branché lève la limite de jours hors-ligne (account.js).
+      if (Account.setPluggedUsb) Account.setPluggedUsb(id || null);
       if (!id || seen.has(id) || (retryAt[id] || 0) > Date.now()) return;
       // « Ne plus proposer » ne vaut que tant que le compte a une licence :
       // sans licence, l'activer est dans l'intérêt du client, la carte revient.
@@ -61,6 +63,7 @@
       if (!rep.ok) { retryAt[id] = Date.now() + RETRY_MS; return; }
       seen.add(id);
       console.log("[BOITIER] " + id + " : " + JSON.stringify(rep));
+      if (rep.known && rep.status === "yours" && Account.noteBoitier) Account.noteBoitier(id);
       if (rep.known && rep.status === "free" && +rep.months > 0 && rep.serial) showCard(id, rep.serial, +rep.months);
     } finally { busy = false; }
   }

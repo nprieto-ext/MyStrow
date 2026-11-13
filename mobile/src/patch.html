@@ -148,7 +148,16 @@
     <button class="btn small" id="ed-addch" type="button">＋ Ajouter un canal</button>
     <div id="ed-cw-box" hidden style="display:flex;flex-direction:column;gap:8px">
       <label>Roue de couleurs</label>
-      <p class="hint">Pour chaque couleur de la roue : la valeur DMX où elle commence (voir la notice) et sa teinte. Sans couleur, une roue standard est utilisée.</p>
+      <p class="hint">Pour chaque couleur de la roue : la valeur DMX où elle commence et sa teinte. Sans couleur, une roue standard est utilisée.</p>
+      <div id="ed-cwtest" style="display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid #2a3a4a;border-radius:8px">
+        <label>Tester en direct sur la lyre</label>
+        <select id="ed-cwfix"></select>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input id="ed-cwslider" type="range" min="0" max="255" value="0" style="flex:1">
+          <b id="ed-cwval" style="min-width:3ch;text-align:right">0</b>
+        </div>
+        <p class="hint" id="ed-cwhint">Glissez le curseur en regardant la lyre : quand une couleur apparaît, touchez « Ici » sur sa ligne (ou « ＋ Ajouter une couleur ») et choisissez la teinte que vous voyez.</p>
+      </div>
       <div id="ed-cw"></div>
       <button class="btn small" id="ed-addcw" type="button">＋ Ajouter une couleur</button>
     </div>
@@ -579,7 +588,7 @@
     $("editor").scrollIntoView({ behavior: "smooth", block: "start" });
     if (!src) $("ed-model").focus();
   }
-  function closeEditor() { ed = null; $("editor").hidden = true; }
+  function closeEditor() { stopCwTest(); ed = null; $("editor").hidden = true; }
 
   function iconBtn(text, title, onClick, danger) {
     const b = document.createElement("button");
@@ -606,26 +615,108 @@
     });
     const hasWheel = ed.chans.includes("ColorWheel");
     $("ed-cw-box").hidden = !hasWheel;
+    if (hasWheel) fillCwFixtures(); else stopCwTest();
     const cw = $("ed-cw");
     cw.innerHTML = "";
     if (hasWheel) ed.cw.forEach((s, i) => {
       const row = document.createElement("div"); row.className = "chrow";
+      row.dataset.cwIdx = i;
       const dmx = document.createElement("input"); dmx.className = "dmx"; dmx.inputMode = "numeric"; dmx.value = s.dmx;
-      dmx.addEventListener("change", () => { s.dmx = Math.max(0, Math.min(255, +dmx.value || 0)); dmx.value = s.dmx; });
+      dmx.addEventListener("change", () => { s.dmx = Math.max(0, Math.min(255, +dmx.value || 0)); dmx.value = s.dmx; markCwRow(); });
       const col = document.createElement("input"); col.type = "color"; col.value = s.color || "#ffffff";
       col.addEventListener("input", () => { s.color = col.value; });
       const name = document.createElement("input"); name.placeholder = "Nom (facultatif)"; name.value = s.name;
       name.addEventListener("change", () => { s.name = name.value.trim(); });
-      row.append(dmx, col, name, iconBtn("✕", "Retirer", () => { ed.cw.splice(i, 1); renderEditor(); }, true));
+      // « ▶ » : la lyre va sur cette couleur ; « Ici » : la couleur prend la
+      // valeur du curseur de test (celle qu'on est en train de regarder).
+      const go = iconBtn("▶", "Voir cette couleur sur la lyre", () => setCwTest(s.dmx));
+      const here = iconBtn("Ici", "Prendre la valeur du curseur de test", () => {
+        s.dmx = cwTestValue(); dmx.value = s.dmx; markCwRow(); });
+      row.append(dmx, col, name, go, here, iconBtn("✕", "Retirer", () => { ed.cw.splice(i, 1); renderEditor(); }, true));
       cw.appendChild(row);
     });
+    if (hasWheel) markCwRow();
     $("ed-save").textContent = "Enregistrer le projecteur (" + ed.chans.length + (ed.chans.length > 1 ? " canaux" : " canal") + ")";
   }
 
   $("ed-addch").addEventListener("click", () => { ed.chans.push("Dim"); renderEditor(); });
   $("ed-addcw").addEventListener("click", () => {
+    // Curseur de test utilisé : la nouvelle couleur part de la valeur qu'on
+    // regarde sur la lyre. Sinon : 10 après la dernière, comme avant.
     const last = ed.cw.length ? ed.cw[ed.cw.length - 1].dmx : -10;
-    ed.cw.push({ dmx: Math.min(255, last + 10), color: "#ffffff", name: "" }); renderEditor();
+    const v = cwTest.used ? cwTestValue() : Math.min(255, last + 10);
+    ed.cw.push({ dmx: v, color: "#ffffff", name: "" });
+    ed.cw.sort((a, b) => a.dmx - b.dmx);
+    renderEditor();
+  });
+
+  // ── Test en direct de la roue de couleurs ─────────────────────────────────
+  // Même geste que l'assistant du PC (color_wheel_editor) : on balaie la roue
+  // au curseur en regardant la VRAIE lyre, et on note où chaque couleur
+  // apparaît. La lyre testée est un projecteur déjà patché : on lui applique
+  // les canaux en cours d'édition (sans rien enregistrer), allumée en blanc,
+  // et seule allumée — les autres sont éteintes pendant le test.
+  const cwTest = { fix: -1, used: false };
+  const hasCwChan = (f) => { const p = Array.isArray(f.profile) ? f.profile : Engine.PROFILES[f.profile] || [];
+    return p.includes("ColorWheel"); };
+  const cwTestValue = () => +$("ed-cwslider").value || 0;
+  function fillCwFixtures() {
+    const sel = $("ed-cwfix");
+    const cand = show.fixtures.map((f, i) => [f, i]).filter(([f]) =>
+      hasCwChan(f) || (ed.id && f.custom_id === ed.id));
+    const keep = cwTest.fix;
+    sel.innerHTML = "";
+    if (!cand.length) {
+      sel.appendChild(option("-1", "Aucune lyre à roue dans le patch"));
+      sel.disabled = true; $("ed-cwslider").disabled = true;
+      $("ed-cwhint").textContent = "Pour tester en direct, ajoutez d'abord la lyre au patch (avec son adresse DMX), puis revenez la modifier ici.";
+      cwTest.fix = -1;
+      return;
+    }
+    sel.disabled = false; $("ed-cwslider").disabled = false;
+    cand.forEach(([f, i]) => sel.appendChild(option(String(i), (f.name || f.model || "Projecteur") + " · DMX " + f.address)));
+    const mine = cand.find(([f]) => ed.id && f.custom_id === ed.id);
+    const pick = cand.some(([, i]) => i === keep) ? keep : (mine ? mine[1] : cand[0][1]);
+    sel.value = String(pick);
+    cwTest.fix = pick;
+  }
+  async function sendCwTest() {
+    if (cwTest.fix < 0 || !ed) return;
+    if (!(await ensureOutput())) {
+      $("ed-cwhint").textContent = "Sortie DMX indisponible : vérifiez le boîtier USB ou le node en bas de la page.";
+      return;
+    }
+    const v = cwTestValue();
+    const fx = show.fixtures.map((f, j) => j === cwTest.fix
+      // Canaux en cours d'édition : on teste ce qu'on règle, pas l'ancien profil.
+      ? { ...f, profile: ed.chans.slice(), color: "#ffffff", level: 100, color_wheel: v }
+      : { ...f, level: 0 });
+    await Dmx.setChannels({ start: 1, values: Array.from(Engine.render(fx)) }).catch(() => {});
+  }
+  function markCwRow() {
+    // Ligne de la couleur que la lyre affiche : la plus haute valeur ≤ curseur.
+    const v = cwTestValue();
+    let best = -1, bestDmx = -1;
+    ed.cw.forEach((s, i) => { if (s.dmx <= v && s.dmx >= bestDmx) { best = i; bestDmx = s.dmx; } });
+    document.querySelectorAll("#ed-cw .chrow").forEach((r) => {
+      r.style.outline = cwTest.used && +r.dataset.cwIdx === best ? "2px solid #00d4ff" : "";
+      r.style.borderRadius = "6px";
+    });
+  }
+  function setCwTest(v) {
+    $("ed-cwslider").value = v; $("ed-cwval").textContent = v;
+    cwTest.used = true; markCwRow(); sendCwTest();
+  }
+  function stopCwTest() {
+    if (!cwTest.used) return;
+    cwTest.used = false;
+    if (outputOn) Dmx.setChannels({ start: 1, values: Array.from(Engine.render(show.fixtures.map((x) => ({ ...x, level: 0 })))) }).catch(() => {});
+  }
+  $("ed-cwslider").addEventListener("input", () => setCwTest(cwTestValue()));
+  $("ed-cwfix").addEventListener("change", () => {
+    const prev = cwTest.fix;
+    cwTest.fix = +$("ed-cwfix").value;
+    if (cwTest.used && prev !== cwTest.fix) sendCwTest();
   });
   $("ed-start").addEventListener("change", () => {
     const id = $("ed-start").value;

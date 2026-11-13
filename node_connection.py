@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QRectF, QPointF, QRect
 from PySide6.QtGui import (
     QFont, QCursor, QPainter, QPen, QBrush, QColor, QLinearGradient,
-    QPainterPath, QFontMetrics,
+    QPainterPath, QFontMetrics, QPalette,
 )
 from core import ComboSansMolette, guide_banner
 from i18n import tr
@@ -39,6 +39,48 @@ USB_NODE_ID   = "electroconcept_usb_node"
 # connaît (étiquette de la boîte), en gardant la référence ElectroConcept pour
 # ceux qui l'ont acheté nu.
 USB_NODE_NAME = "MyStrow USB-DMX (USB NODE ElectroConcept)"
+
+
+# Boîtier USB-DMX MyStrow maison (MS-DMY, logo sur le dessus) : ENTTEC Pro sur
+# USB CDC, VID/PID 1A86:5740 (artnet_dmx.BOITIER_MYSTROW_VID_PID).
+MYSTROW_USB_ID   = "mystrow_usb"
+MYSTROW_USB_NAME = "MyStrow USB-DMX (MS-DMY)"
+
+
+def port_boitier_maison(usb_id: str = "") -> str | None:
+    """Port série du boîtier MyStrow maison branché (celui de `usb_id` d'abord)."""
+    try:
+        import serial.tools.list_ports as _lp
+        from artnet_dmx import BOITIER_MYSTROW_VID_PID
+        ports = [p for p in _lp.comports()
+                 if (p.vid, p.pid) == BOITIER_MYSTROW_VID_PID]
+    except Exception:
+        return None
+    usb_id = (usb_id or "").upper()
+    for p in ports:
+        if usb_id and (p.serial_number or "").upper() == usb_id:
+            return p.device
+    return ports[0].device if ports else None
+
+
+def connecter_boitier_maison(dmx, usb_id: str = "") -> str | None:
+    """Envoie la sortie DMX sur le boîtier MyStrow maison. → port, ou None."""
+    if dmx is None:
+        return None
+    port = port_boitier_maison(usb_id)
+    if not port:
+        return None
+    try:
+        from artnet_dmx import TRANSPORT_ENTTEC_PRO as _PRO
+    except ImportError:
+        _PRO = "enttec_pro"
+    ser = getattr(dmx, "_pro_serial", None)
+    if (getattr(dmx, "transport", None) == _PRO and getattr(dmx, "com_port", None) == port
+            and ser is not None and getattr(ser, "is_open", False)):
+        return port                                     # déjà dessus
+    ok = dmx.connect(transport=_PRO, com_port=port,
+                     product_id=MYSTROW_USB_ID, product_name=MYSTROW_USB_NAME)
+    return port if ok else None
 
 
 def _est_usb_node(node: dict) -> bool:
@@ -2358,6 +2400,7 @@ except ImportError:
 # Transport None = USB NODE DMX (boîtier du Pack MyStrow), qui renvoie vers la
 # sortie Node. Il est en tête : c'est l'interface que MyStrow vend.
 _USB_IFACES = [
+    (MYSTROW_USB_ID,        MYSTROW_USB_NAME,                 TRANSPORT_ENTTEC_PRO),
     (USB_NODE_ID,           USB_NODE_NAME,                    None),
     ("eurolite_usb",        "Eurolite USB-DMX512 PRO (MK2)",  TRANSPORT_ENTTEC_PRO),
     ("enttec_pro",          "ENTTEC DMX USB Pro",             TRANSPORT_ENTTEC_PRO),
@@ -2461,9 +2504,9 @@ class DmxOutputDialog(QDialog):
         self._build_ui()
         self._refresh_ports()
         self._set_transport(self._transport, save=False)
-        self._fit_to_content()
         if usb_node:
             self._choisir_usb_node()
+        self._choisir_boitier(self._boitier_initial(dmx, usb_node), connecter=False)
 
     def _fit_to_content(self):
         """Ouvre la fenêtre à la hauteur réellement demandée par la page.
@@ -2473,13 +2516,16 @@ class DmxOutputDialog(QDialog):
         plafonnée à l'écran. Sans ça, la page Node dépassait la taille fixe et
         la carte « Aiguillage des sorties » se retrouvait rognée.
         """
-        besoin = (self.layout().minimumSize().height()
-                  - self._scroll.minimumHeight()
-                  + self._stack.sizeHint().height())
+        if self._classic.isHidden():
+            besoin = self.layout().sizeHint().height()
+        else:
+            besoin = (self.layout().minimumSize().height()
+                      - self._scroll.minimumHeight()
+                      + self._stack.sizeHint().height())
         ecran = self.screen() or QApplication.primaryScreen()
         dispo = int(ecran.availableGeometry().height() * 0.92) if ecran else 800
         self.setFixedWidth(520)
-        self.setMinimumHeight(min(430, besoin))
+        self.setMinimumHeight(min(430, besoin) if not self._classic.isHidden() else besoin)
         self.setMaximumHeight(besoin)
         self.resize(520, min(besoin, dispo))
 
@@ -2520,6 +2566,66 @@ class DmxOutputDialog(QDialog):
             return transport
         return transport if self._usb_port_available(dmx) else TRANSPORT_ARTNET
 
+    def _boitier_initial(self, dmx, usb_node=False):
+        """Carte présélectionnée à l'ouverture (None = aucune : on demande)."""
+        from boitier_picker import FRONT, TOP, OTHER
+        pid = getattr(dmx, "product_id", "") or ""
+        if usb_node or pid == USB_NODE_ID:
+            return FRONT
+        if pid == MYSTROW_USB_ID:
+            return TOP
+        if port_boitier_maison():
+            return TOP                      # branché : c'est forcément lui
+        # Jamais réglé (pas de ~/.mystrow_dmx.json) : on pose la question.
+        if not os.path.exists(os.path.join(os.path.expanduser("~"), ".mystrow_dmx.json")):
+            return None
+        return OTHER
+
+    def _choisir_boitier(self, mode, connecter=True):
+        """Clic sur une carte « Quel boîtier avez-vous ? »."""
+        from boitier_picker import FRONT, TOP, OTHER
+        self._bx_mode = mode
+        self._picker.set_selected(mode)
+        self._classic.setVisible(mode == OTHER)
+        self._bx_info.setVisible(mode in (FRONT, TOP))
+        self._maj_bx_front()
+        self._btn_apply.setVisible(mode is not None)
+        self._status_lbl.setText("")
+        if mode == FRONT:
+            # USB NODE : sortie Node, l'adresse est trouvée toute seule.
+            self._choisir_usb_node()
+            self._status_lbl.setText("")     # la carte d'info le dit déjà
+            self._bx_info.setText(tr("nc_bx_front_info"))
+        elif mode == TOP:
+            port = port_boitier_maison()
+            if port:
+                self._set_transport(TRANSPORT_ENTTEC_PRO)
+                self._proto_combo.setCurrentIndex(
+                    max(0, self._proto_combo.findData(MYSTROW_USB_ID)))
+                idx = self._port_combo.findData(port)
+                if idx >= 0:
+                    self._port_combo.setCurrentIndex(idx)
+                self._bx_info.setText(tr("nc_bx_top_info", port=port))
+            else:
+                self._bx_info.setText(tr("nc_bx_top_missing"))
+                connecter = False
+        self._fit_to_content()
+        if connecter and mode in (FRONT, TOP):
+            self._apply()
+
+    def _maj_bx_front(self):
+        """Bouton « Régler automatiquement » du mode USB NODE : seulement
+        quand quelque chose cloche (node muet ou carte réseau hors 2.x)."""
+        btn = getattr(self, "_bx_fix_btn", None)
+        if btn is None:
+            return
+        souci = (getattr(self, "_node_found", None) is False
+                 or getattr(self, "_net_todo", False))
+        voir = getattr(self, "_bx_mode", None) == "front" and souci
+        if voir != btn.isVisible():
+            btn.setVisible(voir)
+            QTimer.singleShot(0, self._fit_to_content)
+
     def _ouvrir_materiel(self, _lien=None):
         # Le Shop du site remplace la fenêtre « Matériel recommandé ».
         from core import SHOP_URLS
@@ -2540,6 +2646,42 @@ class DmxOutputDialog(QDialog):
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet("color: #f0f0f0;")
         content.addWidget(title)
+
+        # « Quel boîtier avez-vous ? » : les deux boîtiers MyStrow se
+        # reconnaissent à l'emplacement du logo et se branchent en un clic ;
+        # l'écran complet (Node / USB, IP, ports) n'apparaît que pour une
+        # autre interface.
+        from boitier_picker import BoitierPicker
+        self._picker = BoitierPicker()
+        self._picker.chosen.connect(self._choisir_boitier)
+        content.addWidget(self._picker)
+
+        self._bx_info = QLabel("")
+        self._bx_info.setWordWrap(True)
+        self._bx_info.setStyleSheet(
+            "color:#ccc; font-size:11px; background:#161616; border:1px solid #2a2a2a;"
+            " border-radius:6px; padding:10px 12px;")
+        self._bx_info.hide()
+        content.addWidget(self._bx_info)
+
+        # USB NODE pas trouvé, ou carte réseau du PC pas en 2.x : l'assistant
+        # réseau (variante USB) règle tout seul, sans adresse IP à taper.
+        self._bx_fix_btn = QPushButton(tr("nc_bx_front_fix"))
+        self._bx_fix_btn.setFixedHeight(34)
+        self._bx_fix_btn.setStyleSheet(_BTN_NET_TODO)
+        self._bx_fix_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._bx_fix_btn.clicked.connect(self._open_node_wizard)
+        self._bx_fix_btn.hide()
+        content.addWidget(self._bx_fix_btn)
+
+        self._classic = QWidget()
+        self._classic.setStyleSheet("background: transparent;")
+        classic = QVBoxLayout(self._classic)
+        classic.setContentsMargins(0, 0, 0, 0)
+        classic.setSpacing(16)
+        content.addWidget(self._classic, 1)
+        outer = content
+        content = classic
 
         # Toggle Node / USB
         toggle_row = QHBoxLayout()
@@ -2618,6 +2760,7 @@ class DmxOutputDialog(QDialog):
         self._stack.setStyleSheet("background: transparent;")
         self._scroll.setWidget(self._stack)
         content.addWidget(self._scroll, 1)
+        content = outer
 
         # Boutons bas
         btn_row = QHBoxLayout()
@@ -2981,6 +3124,8 @@ class DmxOutputDialog(QDialog):
             self._node_list_hint.setText(tr("nc_node_hint"))
 
     def _on_node_checked(self, found: bool):
+        self._node_found = bool(found)
+        self._maj_bx_front()
         if self._node_combo is not None and not getattr(self, "_node_scan_lance", False):
             self._node_scan_lance = True
             QTimer.singleShot(0, self._scan_nodes)
@@ -3023,6 +3168,8 @@ class DmxOutputDialog(QDialog):
     def _set_net_hint(self, a_configurer: bool):
         """Met le bouton de configuration reseau en avant quand la carte
         n'est pas en 2.x."""
+        self._net_todo = a_configurer
+        self._maj_bx_front()
         btn = getattr(self, '_node_cfg_btn', None)
         if btn is not None:
             btn.setStyleSheet(_BTN_NET_TODO if a_configurer else _BTN_DIAG)
@@ -3094,6 +3241,22 @@ class DmxOutputDialog(QDialog):
         self._port_combo = ComboSansMolette(fleche=True)
         self._port_combo.setMinimumWidth(200)
         self._port_combo.setCursor(Qt.PointingHandCursor)
+        # Style EXPLICITE, comme la liste d'interface : hérité seulement de la
+        # fenêtre, le menu déroulant sur macOS gardait la couleur du texte
+        # (#e0e0e0) mais pas le fond sombre → gris clair sur blanc, illisible.
+        self._port_combo.setStyleSheet(
+            "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
+            " border-radius:4px; padding:3px 8px; }"
+            "QComboBox:hover { border-color:#00d4ff; }"
+            "QComboBox::drop-down { border:none; width:24px; }"
+            "QComboBox QAbstractItemView { background:#2a2a2a; color:white;"
+            " selection-background-color:#00d4ff; selection-color:#000; }")
+        _pal = self._port_combo.view().palette()
+        for _role, _c in ((QPalette.Base, "#2a2a2a"), (QPalette.Window, "#2a2a2a"),
+                          (QPalette.Text, "#ffffff"), (QPalette.WindowText, "#ffffff"),
+                          (QPalette.Highlight, "#00d4ff"), (QPalette.HighlightedText, "#000000")):
+            _pal.setColor(_role, QColor(_c))
+        self._port_combo.view().setPalette(_pal)
         port_row.addWidget(self._port_combo, 1)
 
         refresh_btn = QPushButton("↺")
@@ -3290,9 +3453,12 @@ class DmxOutputDialog(QDialog):
         aucun = False
         try:
             import serial.tools.list_ports as _lp
-            ports = list(_lp.comports())
+            from artnet_dmx import ports_serie_dmx
+            # Pseudo-ports macOS retirés, boîtier MyStrow / FTDI en tête : le
+            # premier de la liste — présélectionné — est le bon par défaut.
+            ports = ports_serie_dmx(list(_lp.comports()))
             current_com = self._dmx.com_port if self._dmx else None
-            for p in sorted(ports, key=lambda x: x.device):
+            for p in ports:
                 desc = p.description if p.description and p.description != "n/a" else ""
                 label = f"{p.device}  —  {desc}" if desc else p.device
                 self._port_combo.addItem(label, p.device)
@@ -3375,6 +3541,13 @@ class DmxOutputDialog(QDialog):
         if not self._dmx:
             self.accept()
             return
+        if getattr(self, "_bx_mode", None) == "top":
+            # Boîtier maison : on ne se fie qu'à SON port (1A86:5740), relu à
+            # l'instant — branché après l'ouverture, ou débranché depuis.
+            self._refresh_ports()
+            self._choisir_boitier("top", connecter=False)
+            if not port_boitier_maison():
+                return
 
         if self._transport == TRANSPORT_ARTNET:
             # Aiguillage des sorties, appliqué AVANT connect() : c'est lui qui

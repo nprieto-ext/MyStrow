@@ -99,10 +99,14 @@ window.renderer = renderer;
 // ─────────────────────────────────────────────────────────────────────────────
 const scene  = new THREE.Scene();
 scene.background = new THREE.Color(0x05050f);
-// Haze atmosphérique : un peu plus dense qu'avant → l'air « accroche » la
-// lumière, les faisceaux lointains se fondent dans une ambiance enfumée
-// (l'équivalent light du brouillard volumétrique d'Unreal, en bien plus léger).
-const fog = new THREE.FogExp2(0x060612, 0.030);
+// Haze atmosphérique : DÉSACTIVÉ par défaut (densité 0) depuis le 10/11/2026.
+// À 0,030 il mélangeait ~43 % de bleu nuit sur tout le plateau vu depuis la
+// caméra par défaut (≈ 25 m) : remonté par un utilisateur comme un « léger
+// voile dérangeant » sur la visualisation — noirs délavés, fond de scène
+// grisâtre. Comparaison au rendu (shot_on / shot_off) : sans lui l'image est
+// nette et les noirs francs. La fumée DES FAISCEAUX n'en dépend pas : elle
+// est calculée dans BEAM_FRAG (uHaze / uFogAmt). setHaze() reste disponible.
+const fog = new THREE.FogExp2(0x060612, 0.0);
 scene.fog = fog;
 window.scene = scene;   // exposé pour le diagnostic depuis Qt
 // Réglable en live depuis Python si besoin (densité 0.010–0.060).

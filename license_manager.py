@@ -33,7 +33,11 @@ except ImportError:
 ACCOUNT_FILE    = os.path.join(os.path.expanduser("~"), ".maestro_account.dat")
 TRIAL_FILE      = os.path.join(os.path.expanduser("~"), ".maestro_trial.dat")
 TRIAL_DAYS      = 15
-OFFLINE_GRACE_DAYS = 7  # jours sans connexion avant blocage (licence payante uniquement)
+OFFLINE_GRACE_DAYS = 16  # jours sans connexion avant blocage (passé de 7 à 16 le 13/11/2026 :
+                         # clients en presta dans des salles sans Wi-Fi). Au-delà, seul
+                         # SON boîtier MyStrow branché garde l'app ouverte, voir
+                         # _boitier_du_compte_branche. La date de fin de licence, elle,
+                         # s'applique toujours, en ligne comme hors-ligne.
 
 # Empreinte anti-reset essai (AppData, cachee)
 if platform.system() == "Windows":
@@ -688,6 +692,9 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         account["cached_plan"] = doc.get("plan", "trial")
         account["cached_auto_renew"] = auto_renew
         account["cached_expiry_utc"] = doc.get("expiry_utc", now)
+        bx = str(doc.get("boitier_usb_id") or "").upper()
+        if bx and bx not in account.get("boitiers_usb", []):
+            account["boitiers_usb"] = (list(account.get("boitiers_usb", [])) + [bx])[-10:]
         _save_account(machine_id, account)
 
         # Recharger le doc après add_machine pour avoir le compte exact
@@ -712,7 +719,8 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
 
         # Messages de firebase_client, traduits par tr() : on compare aux deux.
         _bloquants = ("2 appareils", "désactivé", "Session expirée",
-                      tr("fbc3_044"), tr("fbc3_039"), tr("fbc3_041"))
+                      tr("fbc3_044"), tr("fbc3_039"), tr("fbc3_041"),
+                      tr("lic_too_many_swaps", date="")[:40])
         if any(s in err_msg for s in _bloquants):
             return _result_invalid(err_msg)
 
@@ -756,6 +764,50 @@ def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0,
         )
 
 
+# Boîtier USB-DMX MyStrow maison (CH32X035) : même VID/PID qu'artnet_dmx.
+_BOITIER_VID_PID = (0x1A86, 0x5740)
+
+
+def _boitier_du_compte_branche(account: dict) -> bool:
+    """Un boîtier MyStrow rattaché à CE compte est-il branché ?
+
+    Lève la limite de jours hors-ligne (pas la date de fin de licence). Un
+    boîtier ne se branche que sur un PC à la fois : impossible d'en faire
+    profiter un parc d'ordinateurs, contrairement à une licence sans limite
+    hors-ligne. Les identifiants viennent du serveur (`boitier_usb_id` du
+    document de licence, ou statut « yours » de boitier_detect), conservés dans
+    le fichier de compte chiffré."""
+    ids = {str(u).upper() for u in account.get("boitiers_usb", []) if u}
+    if not ids:
+        return False
+    try:
+        from serial.tools import list_ports
+        return any((p.vid, p.pid) == _BOITIER_VID_PID
+                   and (p.serial_number or "").upper() in ids
+                   for p in list_ports.comports())
+    except Exception:
+        return False
+
+
+def remember_boitier_usb(usb_id: str) -> None:
+    """boitier_detect a confirmé (serveur) que ce boîtier est au compte."""
+    usb_id = (usb_id or "").upper()
+    if not usb_id:
+        return
+    try:
+        machine_id = get_machine_id()
+        account = _load_account(machine_id)
+        if account is None:
+            return
+        ids = list(account.get("boitiers_usb", []))
+        if usb_id not in ids:
+            ids.append(usb_id)
+            account["boitiers_usb"] = ids[-10:]
+            _save_account(machine_id, account)
+    except Exception as e:
+        print(f"[BOITIER] identifiant non mémorisé : {e}")
+
+
 def _offline_fallback(account: dict) -> LicenseResult:
     """Retourne un resultat depuis le cache si < 7 jours offline.
     Valable pour les comptes licence ET essai (grace period identique)."""
@@ -767,8 +819,11 @@ def _offline_fallback(account: dict) -> LicenseResult:
     days_offline = int((now - last_verified) / 86400)
 
     if days_offline > OFFLINE_GRACE_DAYS:
-        print(f"Hors-ligne depuis {days_offline} jours > grace {OFFLINE_GRACE_DAYS}j")
-        return _result_not_activated()
+        if cached_plan == "license" and _boitier_du_compte_branche(account):
+            print(f"Hors-ligne depuis {days_offline} jours, mais boîtier du compte branché")
+        else:
+            print(f"Hors-ligne depuis {days_offline} jours > grace {OFFLINE_GRACE_DAYS}j")
+            return _result_not_activated()
 
     cached_expiry = account.get("cached_expiry_utc", 0)
     print(f"Mode hors-ligne ({days_offline}j) — {cached_plan}")

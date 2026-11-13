@@ -163,6 +163,8 @@ class FauxMoteur:
 class FauxWin:
     _apply_live_state_inner = mw.MainWindow._apply_live_state_inner
     _pantilt_in_limits      = staticmethod(mw.MainWindow._pantilt_in_limits)
+    _live_anchor            = mw.MainWindow._live_anchor
+    _live_set_pantilt       = mw.MainWindow._live_set_pantilt
     _IA_BASE_COLOR_GROUPS   = mw.MainWindow._IA_BASE_COLOR_GROUPS
 
     def __init__(self, reserve, bpm=120.0, section='verse'):

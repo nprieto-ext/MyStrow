@@ -685,10 +685,17 @@ class DmxSetupDialog(QDialog):
             self.lbl_port_hint.setText("pip install pyserial")
             return
 
-        ports = list(serial.tools.list_ports.comports())
+        from artnet_dmx import ports_serie_dmx, BOITIER_MYSTROW_VID_PID
+        # Pseudo-ports macOS (Bluetooth-Incoming-Port…) retirés, boîtier
+        # MyStrow puis FTDI en tête.
+        ports = ports_serie_dmx(list(serial.tools.list_ports.comports()))
+        boitiers = [p for p in ports
+                    if (getattr(p, 'vid', None), getattr(p, 'pid', None)) == BOITIER_MYSTROW_VID_PID]
         enttec = [p for p in ports if getattr(p, 'vid', None) == 0x0403]
-        others = [p for p in ports if getattr(p, 'vid', None) != 0x0403]
+        others = [p for p in ports if p not in boitiers and p not in enttec]
 
+        for p in boitiers:
+            self.port_combo.addItem(f"{p.device}  ★  {p.description}", userData=p.device)
         for p in enttec:
             self.port_combo.addItem(f"{p.device}  ★  {p.description}", userData=p.device)
         for p in others:

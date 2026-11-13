@@ -6342,6 +6342,7 @@ class MainWindow(QMainWindow):
         # ── Bloc « Mon compte » ───────────────────────────────────────
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_license"), self._open_activation_dialog)
+        about_menu.addAction(tr("bx_menu_have"), self._have_boitier)
 
         # ── Bloc « Communauté » (sous-menu regroupant réseaux/newsletter/idée) ─
         about_menu.addSeparator()
@@ -9431,14 +9432,15 @@ class MainWindow(QMainWindow):
             pass
 
     def _update_non_mem_pad_tooltips(self):
-        """En mode REC, affiche 🚫 sur les pads groupe et FX (non enregistrables en mémoire).
-        Les pads POS restent cliquables en REC (pour enregistrer une position)."""
+        """En mode REC, affiche 🚫 sur les pads groupe (non enregistrables).
+        Les pads POS et FX restent cliquables en REC (une position, ou tout
+        ce qui tourne en effets)."""
         tip = "🚫" if self._mem_rec_mode else ""
         for (row, col), pad in self.pads.items():
             if col >= len(self._fader_map):
                 continue
             slot = self._fader_map[col]
-            if slot["type"] in ("group", "fx"):
+            if slot["type"] == "group":
                 pad.setToolTip(tip)
                 pad.setToolTipDuration(800 if self._mem_rec_mode else -1)
 
@@ -11532,12 +11534,15 @@ class MainWindow(QMainWindow):
         # (l'éditeur d'effets la modifie en place), la mémoire doit en garder un
         # instantané indépendant. Le format est celui déjà posé par
         # `_set_memory_effect` (clic droit) et déjà sérialisé en JSON.
-        effect = {}
-        eff_cfg = getattr(self, 'active_effect_config', None)
-        if getattr(self, 'active_effect', None) and isinstance(eff_cfg, dict) \
-                and eff_cfg.get("layers"):
-            effect = copy.deepcopy(eff_cfg)
-            effect.setdefault("name", self.active_effect)
+        # Effets rapides du plan 2D compris (`_effect_for_rec`) : leurs lyres
+        # sont capturées à leur position de REPOS, pas à l'endroit où le
+        # mouvement les a surprises au moment du REC.
+        effect, centres = self._effect_for_rec()
+        if centres:
+            for p, ps in zip(self.projectors, snapshot):
+                c = centres.get(id(p))
+                if c:
+                    ps["pan"], ps["tilt"] = c
         return {"projectors": snapshot, "effect": effect, "duration": 0}
 
     def _note_snapshot_sans_niveau(self, cue):
@@ -13142,6 +13147,204 @@ class MainWindow(QMainWindow):
                 else:
                     self.midi_handler.set_pad_led(row, col_idx, 0, brightness_percent=0)
 
+    # ── REC des effets : effets rapides du plan 2D + effets lancés ───
+    # Demande client (12/11/2026, artifice81) : régler un mouvement de lyres
+    # avec les effets rapides du clic droit (forme, vitesse, amplitude,
+    # déphasage), poser couleur et gobo, puis REC → pad : le pad rejoue tout,
+    # tout de suite. Usage : lumières d'attente (salles des fêtes, mariages).
+    # Vaut pour un pad MÉMOIRE (`_build_snapshot`) comme pour un pad FX
+    # (`_record_fx_pad`, le REC y était refusé).
+    #
+    # L'effet rapide (`plan_de_feu._EffectState`) et le moteur à couches n'ont
+    # pas les mêmes unités ; on traduit vers une couche Pan/Tilt :
+    #   * vitesse : fréquence réelle (Hz) → VITESSE de `core.layer_frequency` ;
+    #   * amplitude : demi-course DMX → AMP (100 = ±8192) ;
+    #   * déphasage : même définition (rang/n × fraction de tour) ; le rang est
+    #     retrouvé par le décalage de chaque lyre (`phase_offset`).
+    # Sur un pad FX, couleur, roue, gobo et niveau ne sont PAS des couches : ils
+    # sont posés UNE fois au lancement (`start_look`). Le moteur n'écrit donc
+    # jamais le gobo, et un gobo changé à la main pendant le mouvement reste.
+    _QE_TO_SHAPE = {"cercle": "cercle", "figure8": "huit",
+                    "balayage_h": "balancier", "balayage_v": "pendule"}
+
+    def _quick_move_layers(self):
+        """Couches Pan/Tilt équivalentes aux effets rapides de lyres en cours.
+
+        Une couche par mouvement distinct (forme, vitesse, amplitude), ciblant
+        ses lyres dans l'ordre du déphasage. Retourne (couches, {id(proj):
+        (centre_pan, centre_tilt)}) — ([], {}) si aucun effet rapide ne tourne.
+        """
+        from effect_editor import _L
+        pdf = getattr(self, 'plan_de_feu', None)
+        effects = getattr(pdf, '_effects', None) or {}
+        if not effects:
+            return [], {}
+        phase_value = int(getattr(pdf, '_qe_phase', 0) or 0)
+        keys = projector_selection_keys(self.projectors)
+        groupes = {}
+        for p, (g, i) in zip(self.projectors, keys):
+            st = effects.get(id(p))
+            if st is None or st.effect not in self._QE_TO_SHAPE:
+                continue
+            k = (st.effect, round(float(st.speed), 3), round(float(st.amplitude)))
+            groupes.setdefault(k, []).append((float(st.phase_offset or 0.0), p, g, i, st))
+        layers, centres = [], {}
+        for (eff, _s, _a), items in groupes.items():
+            items.sort(key=lambda x: x[0])
+            _o, p0, _g, _i, st0 = items[0]
+            shape = self._QE_TO_SHAPE[eff]
+            speed = round(max(0.1, (float(st0.speed) - 0.05) / 7.0 * 100.0), 1)
+            amp = float(st0.amplitude)
+            if shape == "balancier":
+                # Pan seul : le moteur à couches réduit le pan du ratio
+                # angulaire (cercle rond), l'effet rapide non → compensé.
+                amp /= max(0.05, pan_angular_ratio(p0))
+            size = int(round(max(1.0, min(400.0, amp / 8192.0 * 100.0))))
+            dephase = any(x[0] > 1e-6 for x in items)
+            spread = phase_value if (len(items) > 1 and dephase) else 0
+            lay = _L("Pan/Tilt", "Sinus", speed=speed, size=size,
+                     spread=spread, shape=shape)
+            lay["target_preset"] = "Selection"
+            lay["target_selection"] = [[g, int(i)] for _o, _p, g, i, _st in items]
+            lay["target_groups"] = []
+            layers.append(lay)
+            for _o, p, _g, _i, st in items:
+                centres[id(p)] = (int(st.center_pan), int(st.center_tilt))
+        return layers, centres
+
+    def _effect_for_rec(self):
+        """Tout ce qui tourne, en UNE config d'effet : effet(s) lancé(s) aux
+        boutons / pads FX (superposés compris) + effets rapides du plan 2D.
+
+        Retourne (effet, centres) ; effet = {} si rien ne tourne. `centres` :
+        position de repos des lyres en effet rapide (à capturer à la place de
+        leur position du moment, prise en plein mouvement)."""
+        effect = {}
+        stack = [e for e in (getattr(self, '_stacked_effects', None) or [])
+                 if isinstance(e.get('config'), dict) and e['config'].get('layers')]
+        if len(stack) > 1:
+            effect = copy.deepcopy(stack[-1]['config'])
+            effect["layers"] = [copy.deepcopy(l) for e in stack for l in e['config']['layers']]
+            effect["name"] = " + ".join(e.get('name') or e['config'].get('name', '') for e in stack)
+        else:
+            eff_cfg = getattr(self, 'active_effect_config', None)
+            if getattr(self, 'active_effect', None) and isinstance(eff_cfg, dict) \
+                    and eff_cfg.get("layers"):
+                effect = copy.deepcopy(eff_cfg)
+                effect.setdefault("name", self.active_effect)
+        q_layers, centres = self._quick_move_layers()
+        if q_layers:
+            if not effect:
+                effect = {"name": tr("mw_qe_effect_name"), "emoji": "🎯",
+                          "category": "Mes Effets", "type": "Pan", "layers": []}
+            effect["layers"] = list(effect.get("layers") or []) + q_layers
+            # Au lancement, l'effet rapide doit céder la place (sinon deux
+            # écrivains pan/tilt) : cf. `_stop_quick_moves` dans start_effect.
+            effect["quick_move"] = True
+        return effect, centres
+
+    def _stop_quick_moves(self):
+        """Arrête les effets rapides de lyres du plan 2D, lyres rendues à leur
+        centre. Appelé avant de lancer un effet enregistré depuis eux."""
+        pdf = getattr(self, 'plan_de_feu', None)
+        effects = getattr(pdf, '_effects', None)
+        if not effects:
+            return
+        projs = [p for p in self.projectors if id(p) in effects]
+        for p in projs:
+            st = effects.get(id(p))
+            if st:
+                p.pan, p.tilt = st.center_pan, st.center_tilt
+        try:
+            pdf.stop_effect(projs)
+        except Exception as e:
+            print(f"[FX] arrêt des effets rapides ignoré: {e}")
+
+    def _apply_effect_start_look(self, cfg):
+        """Pose niveau / couleur / roue / gobo enregistrés avec l'effet
+        (`start_look`). Une seule fois, au lancement : l'effet ne les réécrit
+        plus ensuite, donc on peut changer le gobo pendant le mouvement."""
+        look = (cfg or {}).get("start_look")
+        if not look:
+            return
+        keys = projector_selection_keys(self.projectors)
+        for p, (g, i) in zip(self.projectors, keys):
+            d = look.get(f"{g}|{i}")
+            if not d:
+                continue
+            try:
+                c = QColor(d.get("color", "#ffffff"))
+                if c.isValid():
+                    p.base_color = QColor(c)
+                    p.color = QColor(c)
+                if "level" in d:
+                    p.level = int(d["level"])
+                if hasattr(p, 'color_wheel'):
+                    p.color_wheel = int(d.get("color_wheel", p.color_wheel))
+                if hasattr(p, 'gobo'):
+                    p.gobo = int(d.get("gobo", p.gobo))
+            except Exception:
+                continue
+
+    def _record_fx_pad(self, fx_col, row):
+        """REC → pad FX : enregistre tout ce qui tourne (effets + effets rapides)
+        avec le look des lyres (niveau, couleur, roue, gobo). Le pad rejoue le
+        tout d'un appui. Retourne True si c'est fait."""
+        effect, _centres = self._effect_for_rec()
+        if not effect:
+            self._show_error_toast(tr("mw_rec_fx_nothing"))
+            return False
+        look = {}
+        keys = projector_selection_keys(self.projectors)
+        for p, (g, i) in zip(self.projectors, keys):
+            if getattr(p, 'fixture_type', '') not in ("Moving Head", "Laser") or p.level <= 0:
+                continue
+            bc = getattr(p, 'base_color', None)
+            look[f"{g}|{i}"] = {
+                "level": int(p.level),
+                "color": bc.name() if isinstance(bc, QColor) else "#ffffff",
+                "color_wheel": int(getattr(p, 'color_wheel', 0) or 0),
+                "gobo": int(getattr(p, 'gobo', 0) or 0),
+            }
+        if look:
+            effect["start_look"] = look
+        # Nom unique, et copie dans « Mes Effets » : l'éditeur retrouve les
+        # effets des pads par leur nom.
+        from effect_editor import BUILTIN_EFFECTS, _load_custom_effects, _save_custom_effects
+        customs = _load_custom_effects()
+        pris = {e.get("name", "") for e in customs} | {e.get("name", "") for e in BUILTIN_EFFECTS}
+        if effect.get("name") == tr("mw_qe_effect_name"):
+            n = 1
+            while tr("mw_qe_default_name", n=n) in pris:
+                n += 1
+            effect["name"] = tr("mw_qe_default_name", n=n)
+        else:
+            base = effect.get("name") or tr("mw_qe_effect_name")
+            name, k = base, 2
+            while name in pris:
+                name = f"{base} {k}"; k += 1
+            effect["name"] = name
+        effect["category"] = "Mes Effets"
+        effect.setdefault("emoji", "🎯")
+        customs.append(copy.deepcopy(effect))
+        _save_custom_effects(customs)
+        # Pad occupé et en cours : on le coupe avant de le remplacer.
+        if self.active_fx_pads.get((fx_col, row)):
+            if any(e.get('pad') == (fx_col, row) for e in self._stacked_effects):
+                self._unstack_fx_pad((fx_col, row))
+            else:
+                self.active_fx_pads.pop((fx_col, row), None)
+        prev = self.fx_pads[fx_col][row] or {}
+        effect["trigger_mode"] = prev.get("trigger_mode", "toggle")
+        effect["trigger_duration"] = prev.get("trigger_duration", 2000)
+        self.fx_pads[fx_col][row] = effect
+        self._style_fx_pad(fx_col, row)
+        self._update_fx_pad_led(fx_col, row)
+        self._save_akai_config_auto()
+        self._log_message(tr("mw_rec_fx_saved", name=effect["name"],
+                             col=fx_col + 1, row=row + 1), "rec")
+        return True
+
     def _open_effect_editor_for_fx_pad(self, fx_col, row):
         """Ouvre l'éditeur d'effets pour un pad FX."""
         from effect_editor import EffectEditorDialog
@@ -13163,7 +13366,10 @@ class MainWindow(QMainWindow):
                 )
                 self._rec_mem_btn.setToolTip(tr("mw_rec_mem_hint"))
             self._update_non_mem_pad_tooltips()
-            self._show_error_toast(tr("mwx_066"))
+            # Le pad FX enregistre tout ce qui tourne (effets lancés + effets
+            # rapides du plan 2D + look des lyres), comme un pad mémoire.
+            if fx_col < _FX_COL_MAX:
+                self._record_fx_pad(fx_col, row)
             return
         cfg = self.fx_pads[fx_col][row] if fx_col < _FX_COL_MAX else None
         if not cfg:
@@ -13230,6 +13436,8 @@ class MainWindow(QMainWindow):
             't0': _time.monotonic(),
             'clock': 0.0, 'clock_ts': None,
         }
+        if cfg.get("quick_move"):
+            self._stop_quick_moves()
         if not self._stacked_effects:
             self._snapshot_effect_state()
             if not hasattr(self, 'effect_timer'):
@@ -13237,6 +13445,7 @@ class MainWindow(QMainWindow):
                 self.effect_timer.timeout.connect(self.update_effect)
             self.effect_timer.start(40)
         self._stacked_effects.append(eff_state)
+        self._apply_effect_start_look(cfg)
         self.active_fx_pads[key] = True
         self.active_effect = eff_name
         self.active_effect_config = cfg
@@ -13714,6 +13923,11 @@ class MainWindow(QMainWindow):
         # évite tout doublon quand l'appelant a déjà fait stop_effect (mémoire/cue).
         if getattr(self, 'effect_timer', None) is not None and self.effect_timer.isActive():
             self.stop_effect()
+        # Effet enregistré depuis des effets rapides du plan 2D : ceux-ci
+        # s'arrêtent (lyres au repos) avant la capture, sinon deux écrivains
+        # pan/tilt et un « avant-effet » pris en plein mouvement.
+        if (getattr(self, 'active_effect_config', None) or {}).get("quick_move"):
+            self._stop_quick_moves()
         self.effect_state = 0
         self._snapshot_effect_state()
 
@@ -13733,6 +13947,9 @@ class MainWindow(QMainWindow):
 
         if cfg and cfg.get("layers"):
             import time as _time
+            # Couleur/gobo d'un effet rapide enregistré : posés APRÈS la
+            # capture, pour que l'arrêt rende l'état d'avant le pad.
+            self._apply_effect_start_look(cfg)
             self.effect_t0 = _time.monotonic()
             # Horloge de phase remise à zéro, et son horodatage à None pour que
             # la 1re frame compte un dt nul : sinon l'effet démarrerait au temps
@@ -16963,7 +17180,7 @@ class MainWindow(QMainWindow):
                 self.dmx.blackout()
 
     @staticmethod
-    def _pantilt_in_limits(proj, axis, norm, amp):
+    def _pantilt_in_limits(proj, axis, norm, amp, center=None):
         """Place une oscillation `norm` (-1..+1) DANS la zone autorisée de la lyre.
 
         Les motifs des modes IA et Live étaient bâtis autour du milieu de course
@@ -16986,9 +17203,54 @@ class MainWindow(QMainWindow):
         # Avec cette forme, une lyre SANS limites retrouve au bit près l'ancien
         # calcul `32768 + int(norm * amp)` — aucune régression sur les rigs qui
         # n'utilisent pas la zone.
-        center = (lo + hi + 1) // 2
         amp    = min(abs(amp), (hi - lo) / 2.0)
+        if center is None:
+            center = (lo + hi + 1) // 2
+        else:
+            # Centre imposé (position où l'on a laissé la lyre, cf.
+            # `_live_anchor`) : ramené dans la zone, et décalé vers l'intérieur
+            # près d'une butée pour que le motif garde sa forme au lieu d'être
+            # écrasé contre le bord.
+            center = max(lo + amp, min(hi - amp, float(center)))
         return int(max(lo, min(hi, center + int(norm * amp))))
+
+    # ── LIVE / IA : mouvements autour de la position laissée ─────────
+    # Demande 13/11/2026 (client FuraxX) : on vise la piste, on lance le LIVE…
+    # et la lyre tournait autour du MILIEU de sa course (128/255), donc au
+    # plafond sur son installation. Les motifs tournent maintenant autour de la
+    # position où l'on a laissé chaque lyre (son « ancrage »), toujours bornés
+    # par sa zone (`tilt_min/max`…). Une lyre jamais touchée est à 32768 :
+    # comportement d'avant inchangé.
+    #
+    # Ancrage = position au premier passage. Ensuite, le moteur note ce qu'il
+    # écrit (`_live_written`) : si la position diffère à la frame suivante,
+    # quelqu'un d'autre l'a bougée (ciblage, pad, faisceau, pad POS) → c'est
+    # la nouvelle visée. Jamais la position du moment, prise en plein motif.
+
+    def _live_anchor(self, p):
+        """(pan, tilt) autour duquel le LIVE fait bouger cette lyre."""
+        anchors = self.__dict__.setdefault('_live_anchors', {})
+        written = self.__dict__.setdefault('_live_written', {})
+        cur = (int(getattr(p, 'pan', 32768)), int(getattr(p, 'tilt', 32768)))
+        a = anchors.get(id(p))
+        w = written.get(id(p))
+        if a is None or (w is not None and cur != w):
+            a = cur
+            anchors[id(p)] = a
+            if not getattr(self, '_live_anchor_logged', False):
+                self._live_anchor_logged = True
+                try:
+                    self._log_message(tr("mw_live_anchor_info"), "info")
+                except Exception:
+                    pass
+        return a
+
+    def _live_set_pantilt(self, p, pan_n, tilt_n, amp_pan, amp_tilt):
+        """Écrit pan/tilt d'un motif LIVE autour de l'ancrage de la lyre."""
+        a_pan, a_tilt = self._live_anchor(p)
+        p.pan  = self._pantilt_in_limits(p, 'pan',  pan_n,  amp_pan,  a_pan)
+        p.tilt = self._pantilt_in_limits(p, 'tilt', tilt_n, amp_tilt, a_tilt)
+        self.__dict__.setdefault('_live_written', {})[id(p)] = (int(p.pan), int(p.tilt))
 
     def _apply_ambiance_live(self):
         """Mode Ambiance : lumière douce + respiration lente + lyres qui tournent."""
@@ -17064,8 +17326,7 @@ class MainWindow(QMainWindow):
 
             # Motif recentré/borné sur la zone du profil de la lyre (voir
             # `_pantilt_in_limits`) au lieu du milieu de course.
-            p.pan  = self._pantilt_in_limits(p, 'pan',  _pan_n,  _amp_pan)
-            p.tilt = self._pantilt_in_limits(p, 'tilt', _tilt_n, _amp_tilt)
+            self._live_set_pantilt(p, _pan_n, _tilt_n, _amp_pan, _amp_tilt)
 
         # ── Dimmer par groupe (onglet DIMMER) ─────────────────────────────────
         _dv = self.seq.live_panel.dimmer_values
@@ -17437,10 +17698,14 @@ class MainWindow(QMainWindow):
                     # Centre de la ZONE autorisée, pas le milieu de course : une
                     # lyre bridée était renvoyée vers un point interdit et finissait
                     # plaquée sur la butée de sa zone (norm=0 → centre).
-                    _c_pan  = self._pantilt_in_limits(p, 'pan',  0.0, 0)
-                    _c_tilt = self._pantilt_in_limits(p, 'tilt', 0.0, 0)
+                    # Et depuis le 13/11/2026 : vers la position où on a laissé
+                    # la lyre (`_live_anchor`), pas vers le plafond.
+                    _a_pan, _a_tilt = self._live_anchor(p)
+                    _c_pan  = self._pantilt_in_limits(p, 'pan',  0.0, 0, _a_pan)
+                    _c_tilt = self._pantilt_in_limits(p, 'tilt', 0.0, 0, _a_tilt)
                     p.pan  = int(_cur_pan  + _pause_center_progress * (_c_pan  - _cur_pan))
                     p.tilt = int(_cur_tilt + _pause_center_progress * (_c_tilt - _cur_tilt))
+                    self.__dict__.setdefault('_live_written', {})[id(p)] = (int(p.pan), int(p.tilt))
             return
         else:
             # Réinitialiser le compteur de centrage quand la pause se termine
@@ -18238,8 +18503,7 @@ class MainWindow(QMainWindow):
 
                 # Motif recentré/borné sur la zone du profil de la lyre (voir
                 # `_pantilt_in_limits`) au lieu du milieu de course.
-                p.pan  = self._pantilt_in_limits(p, 'pan',  pan_v,  _amp_pan)
-                p.tilt = self._pantilt_in_limits(p, 'tilt', tilt_v, _amp_tilt)
+                self._live_set_pantilt(p, pan_v, tilt_v, _amp_pan, _amp_tilt)
                 if p.group not in self._IA_BASE_COLOR_GROUPS:
                     p.level = max(0, min(100, lyre_level))
 
@@ -21896,6 +22160,9 @@ class MainWindow(QMainWindow):
                 "strobe":     getattr(p, 'strobe_speed', 0),
                 "x":          dx,
                 "y":          dy,
+                # Adresse DMX : affichée sous le nom, comme sur le plan du PC.
+                "address":    getattr(p, 'start_address', None),
+                "universe":   getattr(p, 'universe', 0),
                 # Type + pan/tilt : permettent à la tablette de distinguer une lyre
                 # (dessin dédié + pad Pan/Tilt au clic) d'un PAR classique.
                 "ftype":      getattr(p, 'fixture_type', ''),
@@ -22519,6 +22786,35 @@ class MainWindow(QMainWindow):
         from core import CHANGELOG_URLS
         url = CHANGELOG_URLS.get(get_language(), CHANGELOG_URLS["en"])
         QDesktopServices.openUrl(QUrl(url))
+
+    def _have_boitier(self):
+        """À propos → « J'ai déjà un boîtier ».
+
+        Boîtier MyStrow branché : la carte d'activation, tout de suite.
+        Sinon : comment faire, selon le boîtier (USB pour le boîtier MyStrow,
+        code de la carte sur /activate pour les boîtiers livrés avec une carte).
+        Le prochain boîtier branché dans la session sera proposé même s'il avait
+        été écarté par « Ne plus me le proposer » : on vient de le demander."""
+        det = getattr(self, "_boitier_detector", None)
+        try:
+            from boitier_detect import _usb_ids
+            branche = bool(_usb_ids())
+        except Exception:
+            branche = False
+        if det is not None and branche:
+            det.check_now()
+            return
+        if det is not None:
+            det.want_any()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(tr("bx_menu_have"))
+        box.setText(tr("bx_have_howto"))
+        btn_web = box.addButton(tr("bx_have_open_activate"), QMessageBox.ActionRole)
+        box.addButton(tr("btn_close"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_web:
+            QDesktopServices.openUrl(QUrl("https://mystrow.fr/activate"))
 
     def show_about(self):
         """Ouvre le dialogue A propos / mises à jour"""

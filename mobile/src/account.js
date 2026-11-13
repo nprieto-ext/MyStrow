@@ -7,7 +7,7 @@
 //   Licence : seule une licence PAYANTE active (plan « license », pas l'essai)
 //   lève la limite de 10 minutes de DMX par lancement. La tablette ne prend
 //   PAS de place parmi les 2 machines du compte : elle ne s'y inscrit pas.
-//   Hors ligne : la dernière vérification vaut 7 jours (comme le PC).
+//   Hors ligne : la dernière vérification vaut 16 jours (comme le PC).
 //
 //   Config du PC : document Firestore user_configs/{uid}, écrit par le PC
 //   (tablet_cloud.py, menu Connexion › Contrôle › Envoyer ma config vers la
@@ -18,7 +18,11 @@
   const PROJECT = "mystrow-907be";
   const FS = "https://firestore.googleapis.com/v1/projects/" + PROJECT + "/databases/(default)/documents";
   const KEY = "mystrow.account";
-  const OFFLINE_MS = 7 * 86400 * 1000;
+  // 16 jours sans Internet (7 avant le 13/11/2026 : prestas dans des salles sans
+  // Wi-Fi). Au-delà, seul SON boîtier MyStrow branché garde le DMX sans limite
+  // (comme license_manager.py côté PC). La date de fin de licence s'applique toujours.
+  const OFFLINE_MS = 16 * 86400 * 1000;
+  let pluggedUsb = null;                              // boîtier MyStrow branché (boitier.js)
 
   const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || "null") ?? d; } catch (e) { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
@@ -55,6 +59,7 @@
     });
     token = d.idToken; tokenExp = Date.now() + (+d.expiresIn || 3600) * 1000 - 60000;
     save(KEY, { email: d.email, uid: d.localId, refresh: d.refreshToken });
+    markTablet();
     await refreshLicense();
     return status();
   }
@@ -85,6 +90,7 @@
       try { email = JSON.parse(atob(d.id_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).email || ""; } catch (e) {}
     }
     save(KEY, { email, uid: d.user_id, refresh: d.refresh_token || refresh });
+    markTablet();
     await refreshLicense();
     return status();
   }
@@ -172,21 +178,39 @@
       return Object.fromEntries(Object.entries(d.fields || {}).map(([k, v]) => [k, fsValue(v)]));
     } catch (e) { if (e.status === 404) return null; throw e; }
   }
-  // Licence : relue à chaque lancement si Internet ; sinon le cache tient 7 jours.
+  // Licence : relue à chaque lancement si Internet ; sinon le cache tient 16 jours.
   async function refreshLicense() {
     const a = load(KEY, null);
     if (!a) return status();
     const doc = await getDoc("licenses/" + a.uid);
-    save(KEY, { ...load(KEY, a), plan: doc ? doc.plan || "trial" : "none", expiry: doc ? +doc.expiry_utc || 0 : 0, checked: Date.now() });
+    const cur = load(KEY, a);
+    const bx = doc && doc.boitier_usb_id ? String(doc.boitier_usb_id).toUpperCase() : "";
+    const boitiers = (cur.boitiers || []).concat(bx && !(cur.boitiers || []).includes(bx) ? [bx] : []).slice(-10);
+    save(KEY, { ...cur, plan: doc ? doc.plan || "trial" : "none", expiry: doc ? +doc.expiry_utc || 0 : 0, checked: Date.now(), boitiers });
     changed();
     return status();
+  }
+  // boitier.js : identifiant USB du boîtier MyStrow branché (null = aucun),
+  // et boîtier confirmé « à vous » par le serveur.
+  function setPluggedUsb(id) {
+    id = id ? String(id).toUpperCase() : null;
+    if (id === pluggedUsb) return;
+    pluggedUsb = id; changed();
+  }
+  function noteBoitier(id) {
+    const a = load(KEY, null);
+    id = String(id || "").toUpperCase();
+    if (!a || !id || (a.boitiers || []).includes(id)) return;
+    save(KEY, { ...a, boitiers: (a.boitiers || []).concat([id]).slice(-10) });
+    changed();
   }
   // `paid` = DMX sans limite : licence MyStrow active OU achat intégré (iOS / Android).
   // `licensed` = la licence du compte seule (textes de « Mon compte »).
   function status() {
     const a = load(KEY, null);
     if (!a) return { loggedIn: false, paid: iapOwned, licensed: false, iap: iapOwned };
-    const fresh = a.checked && Date.now() - a.checked < OFFLINE_MS;
+    const ownBoitier = !!pluggedUsb && (a.boitiers || []).includes(pluggedUsb);
+    const fresh = (a.checked && Date.now() - a.checked < OFFLINE_MS) || ownBoitier;
     const active = a.plan === "license" && a.expiry * 1000 > Date.now();
     return { loggedIn: true, email: a.email, plan: a.plan, expiry: a.expiry, checked: a.checked,
              paid: !!(fresh && active) || iapOwned, licensed: !!(fresh && active), iap: iapOwned, stale: !fresh };
@@ -238,6 +262,18 @@
   }
   function signOut() { localStorage.removeItem(KEY); token = null; changed(); }
 
+  // Marque « ce compte utilise la tablette » (champ tablet_utc de user_sync/{uid}) :
+  // le PC ne recopie sa config au format tablette que pour ces comptes. Posée à
+  // la connexion et à chaque « Importer » ; sans attendre, un échec ne gêne rien.
+  function markTablet() {
+    const a = load(KEY, null);
+    if (!a) return;
+    idToken().then((t) => fetch(FS + "/user_sync/" + a.uid + "?updateMask.fieldPaths=tablet_utc", {
+      method: "PATCH", headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { tablet_utc: { doubleValue: Date.now() / 1000 } } }),
+    })).catch(() => {});
+  }
+
   async function fetchPcConfig() {
     const a = load(KEY, null);
     if (!a) throw new Error("Pas connecté.");
@@ -283,7 +319,7 @@
   function licenceText(s) {
     if (!s.loggedIn) return "";
     if (s.licensed) return "Licence active jusqu'au " + fmtDate(s.expiry).slice(0, 10) + " : DMX sans limite.";
-    if (s.stale) return "Licence non vérifiée depuis plus de 7 jours : connectez la tablette à Internet.";
+    if (s.stale) return "Licence non vérifiée depuis plus de 16 jours : connectez la tablette à Internet.";
     if (s.plan === "license") return "Licence expirée : la sortie DMX reste limitée à 10 minutes.";
     return "Ce compte n'a pas de licence payante (essai) : la sortie DMX reste limitée à 10 minutes par lancement.";
   }
@@ -416,11 +452,12 @@
       const get = btn("Importer depuis mon compte", "main", async () => {
         msg.className = ""; msg.textContent = "";
         busy(get, true, "Recherche…");
+        markTablet();
         try {
           const cfg = await fetchPcConfig();
           busy(get, false, "Importer depuis mon compte");
           if (!cfg) {
-            msg.textContent = "Rien dans votre compte pour l'instant. Ouvrez MyStrow sur votre PC, connecté au même compte : votre config y part toute seule.";
+            msg.textContent = "Rien dans votre compte pour l'instant. Ouvrez (ou relancez) MyStrow sur votre PC, connecté au même compte : votre config y part toute seule, puis réessayez.";
             return;
           }
           renderImport(cfg);
@@ -493,7 +530,7 @@
   // Ouvre directement l'import (la fenêtre de connexion si pas connecté).
   const openImport = (opts) => openPanel(Object.assign({}, opts, { autoImport: true }));
 
-  root.MystrowAccount = { idToken, signIn, signInWithProvider, cancelProvider, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel, openImport,
+  root.MystrowAccount = { setPluggedUsb, noteBoitier, idToken, signIn, signInWithProvider, cancelProvider, signOut, status, refreshLicense, fetchPcConfig, applyPcConfig, restoreBackup, openPanel, openImport,
     storeAvailable, storeProduct, buyTablet, restoreTablet,
     onChange: (fn) => listeners.push(fn) };
 })(window);

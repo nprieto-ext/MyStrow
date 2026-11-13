@@ -197,7 +197,7 @@ def build_local_installer(version):
         f"\"{python_win}\" -m PyInstaller "
         f"--onedir --windowed "
         f"--icon=mystrow.ico "
-        f"--add-data \"logo.png;.\" "
+        f"--add-data \"logo.png;.\" --add-data \"boitier_1an.png;.\" --add-data \"boitier_2mois.png;.\" "
         f"--add-data \"mystrow.ico;.\" "
         f"--add-data \"fixtures_qlcplus.json;.\" "
         f"--add-data \"plan_3d_web.html;.\" "

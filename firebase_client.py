@@ -455,6 +455,12 @@ def create_license_doc(uid: str, id_token: str, email: str) -> bool:
         raise Exception(tr("fbc3_043", a=_firebase_error(e)))
 
 
+# Nouveaux ordinateurs activés sur un compte : au plus 4 par fenêtre de 30 jours
+# (les 2 places + 2 changements). Même valeur dans firestore.rules.
+MACHINE_ADDS_MAX = 4
+MACHINE_ADDS_WINDOW_S = 30 * 86400
+
+
 def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bool:
     """
     Ajoute machine_id dans /licenses/{uid}/machines si count < 2.
@@ -479,6 +485,19 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
             tr("fbc3_044")
         )
 
+    # Changements d'ordinateur limités (règle Firestore identique, c'est elle
+    # qui fait foi). Sans ça, un compte pouvait faire tourner ses 2 places :
+    # couper un PC d'Internet, le retirer depuis le site, en activer un autre…
+    # — le PC retiré continue tant que dure la tolérance hors-ligne.
+    now_s = datetime.now(timezone.utc).timestamp()
+    win_start = float(doc.get("adds_window_utc", 0) or 0)
+    win_count = int(doc.get("adds_count", 0) or 0)
+    if now_s - win_start > MACHINE_ADDS_WINDOW_S:
+        win_start, win_count = now_s, 0
+    if win_count >= MACHINE_ADDS_MAX:
+        quand = datetime.fromtimestamp(win_start + MACHINE_ADDS_WINDOW_S + 86400)
+        raise Exception(tr("lic_too_many_swaps", date=quand.strftime("%d/%m/%Y")))
+
     # Ajouter la machine
     machines.append({
         "id": machine_id,
@@ -486,11 +505,15 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
         "activated_at": datetime.now(timezone.utc).timestamp(),
     })
 
-    # Mettre à jour uniquement le champ machines
-    url = f"{_FS_BASE}/licenses/{uid}?updateMask.fieldPaths=machines"
+    # Mettre à jour machines + compteur de changements (même écriture : la
+    # règle Firestore exige les deux ensemble).
+    url = (f"{_FS_BASE}/licenses/{uid}?updateMask.fieldPaths=machines"
+           "&updateMask.fieldPaths=adds_window_utc&updateMask.fieldPaths=adds_count")
     payload = {
         "fields": {
-            "machines": _to_firestore(machines)
+            "machines": _to_firestore(machines),
+            "adds_window_utc": _to_firestore(float(win_start)),
+            "adds_count": _to_firestore(win_count + 1),
         }
     }
     try:

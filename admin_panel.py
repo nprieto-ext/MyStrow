@@ -4041,6 +4041,13 @@ class AdminPanel(QMainWindow):
         self._btn_nav_release.clicked.connect(lambda: self._switch_view(3))
         nav_lay.addWidget(self._btn_nav_release)
 
+        # Builds de l'app tablette (Android + iOS) via l'API Codemagic.
+        self._btn_nav_cm = QPushButton("Apps tablette")
+        self._btn_nav_cm.setFixedHeight(38)
+        self._btn_nav_cm.setStyleSheet(_nav_idle)
+        self._btn_nav_cm.clicked.connect(lambda: self._switch_view(10))
+        nav_lay.addWidget(self._btn_nav_cm)
+
         self._btn_nav_dl = QPushButton("Téléchargements")
         self._btn_nav_dl.setFixedHeight(38)
         self._btn_nav_dl.setStyleSheet(_nav_idle)
@@ -4298,6 +4305,11 @@ class AdminPanel(QMainWindow):
 
         # ── Page 9 : Assistant (phrases et erreurs remontées) ─────────────────
         self._build_assistant_panel()
+
+        # ── Page 10 : Apps tablette (builds Codemagic) ────────────────────────
+        from codemagic_panel import CodemagicPanel
+        self._cm_panel = CodemagicPanel()
+        self._content_stack.addWidget(self._cm_panel)
 
     # ------------------------------------------------------------------
 
@@ -5052,6 +5064,7 @@ class AdminPanel(QMainWindow):
         self._btn_nav_cmd.setStyleSheet(_active if idx == 7 else _idle)
         self._btn_nav_bx.setStyleSheet(_active if idx == 8 else _idle)
         self._btn_nav_asst.setStyleSheet(_active if idx == 9 else _idle)
+        self._btn_nav_cm.setStyleSheet(_active if idx == 10 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
@@ -5073,6 +5086,8 @@ class AdminPanel(QMainWindow):
             self._load_boitiers()
         if idx == 9 and not getattr(self, "_asst_loaded", False):
             self._load_assistant_reports()
+        if idx == 10:
+            self._cm_panel.on_show()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -7966,6 +7981,20 @@ class AdminPanel(QMainWindow):
             return
 
         try:
+            # 0. Abonne Stripe dont les prelevements avaient ete repousses a
+            #    la fin de l'annee boitier : on lui rend son echeance d'avant.
+            #    Sans ca, il ne paierait plus rien jusqu'a cette date.
+            if client.get("boitier_stripe_sub"):
+                import urllib.request, json as _json
+                req = urllib.request.Request(
+                    "https://us-central1-mystrow-907be.cloudfunctions.net/admin_boitier_retablir_abo",
+                    data=_json.dumps({"uid": uid}).encode(), method="POST",
+                    headers={"Authorization": f"Bearer {self._token()}",
+                             "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    if not _json.loads(resp.read().decode()).get("ok"):
+                        raise RuntimeError("Abonnement Stripe non rétabli : retour annulé.")
+
             # 1. La licence revient a son etat d'avant. Les champs boitier_*
             #    sont listes dans le masque mais absents du corps : Firestore
             #    les supprime, la ligne ne portera donc plus le marqueur 📦.
@@ -7976,7 +8005,9 @@ class AdminPanel(QMainWindow):
             mask = ["expiry_utc", "plan",
                     "boitier_until_utc", "boitier_serial", "boitier_code",
                     "boitier_utc", "boitier_prev_expiry_utc",
-                    "boitier_prev_plan", "boitier_prev_plan_type"]
+                    "boitier_prev_plan", "boitier_prev_plan_type",
+                    "boitier_stripe_sub", "boitier_stripe_prev_end",
+                    "boitier_stripe_until"]
             if prev_type:
                 fields["plan_type"] = {"stringValue": prev_type}
                 mask.append("plan_type")

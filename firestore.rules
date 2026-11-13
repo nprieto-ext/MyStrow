@@ -2,6 +2,29 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Changements d'ordinateur limites : 4 ajouts de machine par fenetre de
+    // 30 jours (firebase_client.MACHINE_ADDS_MAX). Sans ca, un compte faisait
+    // tourner ses 2 places a l'infini : PC coupe d'Internet, retire depuis le
+    // site, place reprise par un autre — le PC retire tourne encore pendant la
+    // tolerance hors-ligne. Un RETRAIT seul reste libre ; toute ecriture qui
+    // ajoute ou remplace une machine doit incrementer le compteur.
+    function machineAddsOk() {
+      let now = request.time.toMillis() / 1000;
+      let oldM = resource.data.get('machines', []);
+      let newM = request.resource.data.machines;
+      let start = resource.data.get('adds_window_utc', 0);
+      let count = resource.data.get('adds_count', 0);
+      let nStart = request.resource.data.get('adds_window_utc', 0);
+      let nCount = request.resource.data.get('adds_count', 0);
+      // hasAll : un retrait pur ne garde que des entrees deja presentes ([A,B] → [C]
+      // n'en est pas un, il ajoute C).
+      return oldM.hasAll(newM)
+        ? (nStart == start && nCount == count)
+        : (now - start > 30 * 86400
+            ? (nStart > now - 300 && nStart <= now + 300 && nCount == 1)
+            : (nStart == start && nCount == count + 1 && nCount <= 4));
+    }
+
     match /licenses/{uid} {
       // Utilisateur : lecture de SON document uniquement
       allow read: if request.auth != null && request.auth.uid == uid;
@@ -49,11 +72,13 @@ service cloud.firestore {
       allow update: if request.auth != null
                     && request.auth.uid == uid
                     && request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['machines', 'newsletter_consent', 'lang'])
+                         .hasOnly(['machines', 'newsletter_consent', 'lang',
+                                   'adds_window_utc', 'adds_count'])
                     // Limite de postes appliquee cote SERVEUR : le client la
                     // verifiait seul, donc elle ne tenait pas.
                     && request.resource.data.machines.size()
-                         <= resource.data.get('max_machines', 2);
+                         <= resource.data.get('max_machines', 2)
+                    && machineAddsOk();
 
       // Suppression jamais autorisee au client : les revocations passent par
       // les Cloud Functions (SDK Admin, non soumis a ces regles).
@@ -199,13 +224,18 @@ service cloud.firestore {
 
     // Patch + effets synchronisés avec le compte, façon iCloud (cloud_sync.py,
     // 13/10/2026). Même règle que user_configs : le propriétaire seul.
+    // `tablet_utc` : marque posée par l'app tablette (le PC ne copie la config
+    // vers user_configs que pour les comptes qui l'utilisent).
     match /user_sync/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create, update: if request.auth != null
                     && request.auth.uid == uid
-                    && request.resource.data.keys().hasOnly(['payload', 'updated_utc'])
-                    && request.resource.data.payload is string
-                    && request.resource.data.payload.size() < 950000;
+                    && request.resource.data.keys().hasOnly(['payload', 'updated_utc', 'tablet_utc'])
+                    && (!('payload' in request.resource.data)
+                        || (request.resource.data.payload is string
+                            && request.resource.data.payload.size() < 950000))
+                    && (!('tablet_utc' in request.resource.data)
+                        || request.resource.data.tablet_utc is number);
       allow delete: if request.auth != null && request.auth.uid == uid;
     }
 

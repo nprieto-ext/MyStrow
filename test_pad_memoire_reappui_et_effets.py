@@ -36,6 +36,8 @@ class Win(base.FauxWin):
     toggle_effect        = mw.MainWindow.toggle_effect
     stop_effect          = mw.MainWindow.stop_effect
     start_effect         = mw.MainWindow.start_effect
+    _apply_effect_start_look = mw.MainWindow._apply_effect_start_look
+    _stop_quick_moves    = mw.MainWindow._stop_quick_moves
     _stop_button_effects = mw.MainWindow._stop_button_effects
     _mem_drive_effect    = mw.MainWindow._mem_drive_effect
     trigger_memory       = mw.MainWindow.trigger_memory

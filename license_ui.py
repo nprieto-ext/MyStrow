@@ -888,6 +888,34 @@ class ActivationDialog(QDialog):
         self._acct_logout_status.setWordWrap(True)
         layout.addWidget(self._acct_logout_status)
 
+        # Boîtier MyStrow branché : reproposer son activation à la demande
+        # (après « Ne plus me le proposer », c'est le seul chemin : les
+        # boîtiers DMY n'ont pas de numéro gravé à taper sur /activate).
+        try:
+            from boitier_detect import _usb_ids
+            boitier_branche = bool(_usb_ids())
+        except Exception:
+            boitier_branche = False
+        win = self.parent()
+        if boitier_branche and getattr(win, "_boitier_detector", None):
+            btn_bx = QPushButton(tr("bx_btn_check"))
+            btn_bx.setFixedHeight(34)
+            btn_bx.setCursor(QCursor(Qt.PointingHandCursor))
+            btn_bx.setStyleSheet("""
+                QPushButton {
+                    background: #2a2610; color: #FFD60A;
+                    border: 1px solid #FFD60A55; border-radius: 6px;
+                    font-size: 11px; font-weight: bold;
+                }
+                QPushButton:hover { background: #3a3414; border-color: #FFD60Aaa; }
+            """)
+
+            def _check_boitier():
+                self.accept()   # la carte ne s'ouvre jamais par-dessus une modale
+                QTimer.singleShot(300, win._boitier_detector.check_now)
+            btn_bx.clicked.connect(_check_boitier)
+            layout.addWidget(btn_bx)
+
         self._btn_renew = QPushButton(tr("btn_renew_plan"))
         self._btn_renew.setFixedHeight(34)
         self._btn_renew.setCursor(QCursor(Qt.PointingHandCursor))

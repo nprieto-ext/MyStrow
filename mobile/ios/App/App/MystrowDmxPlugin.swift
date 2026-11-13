@@ -256,7 +256,6 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
     /// du firmware ; test croisé : Medias/Boitier/firmware/midi_sysex_test.py.
     /// 518 octets ENTTEC → 597 octets MIDI, environ 32 Ko/s à 40 trames/s.
     final class MidiOutput: DmxOutput {
-        private static let setupLock = NSLock()
         private static var client = MIDIClientRef()
         private static var port = MIDIPortRef()
 
@@ -296,19 +295,30 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
             return list
         }
 
-        /// Client et port MIDI de l'app, créés une fois.
+        /// Client et port MIDI de l'app, créés une fois — SUR LE FIL PRINCIPAL.
+        /// CoreMIDI ne tient à jour la liste des appareils d'un processus que par
+        /// des notifications livrées sur la boucle d'événements du fil qui a créé
+        /// le client. Créé sur un fil de Capacitor ou de la boucle DMX (sans
+        /// boucle d'événements), il gardait la liste du premier appel : boîtier
+        /// branché après l'ouverture de l'app jamais vu, il fallait la tuer
+        /// (constaté sur iPad le 10/11/2026).
         static func setup() throws {
-            setupLock.lock()
-            defer { setupLock.unlock() }
-            if client != 0 { return }
-            var c = MIDIClientRef()
-            let st = MIDIClientCreateWithBlock("MyStrow" as CFString, &c, nil)
-            guard st == noErr else { throw DmxError.message("MIDI indisponible (erreur \(st)).") }
-            var p = MIDIPortRef()
-            let st2 = MIDIOutputPortCreate(c, "MyStrow DMX" as CFString, &p)
-            guard st2 == noErr else { throw DmxError.message("Port MIDI impossible (erreur \(st2)).") }
-            client = c
-            port = p
+            var err: DmxError?
+            let make = {
+                if client != 0 { return }
+                var c = MIDIClientRef()
+                let st = MIDIClientCreateWithBlock("MyStrow" as CFString, &c, { _ in })
+                guard st == noErr else { err = DmxError.message("MIDI indisponible (erreur \(st))."); return }
+                var p = MIDIPortRef()
+                let st2 = MIDIOutputPortCreate(c, "MyStrow DMX" as CFString, &p)
+                guard st2 == noErr else { err = DmxError.message("Port MIDI impossible (erreur \(st2))."); return }
+                client = c
+                port = p
+            }
+            // Le fil principal est série : pas de verrou nécessaire, et pas
+            // d'interblocage (aucun appelant ne tient de verrou en attendant).
+            if Thread.isMainThread { make() } else { DispatchQueue.main.sync(execute: make) }
+            if let e = err { throw e }
         }
 
         init() throws {

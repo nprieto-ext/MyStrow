@@ -252,6 +252,40 @@ TRANSPORT_ENTTEC_D2XX = "enttec_d2xx"  # ENTTEC Open DMX USB via driver FTDI D2X
 TRANSPORT_ENTTEC_PRO  = "enttec_pro"   # ENTTEC DMX USB Pro (paquet 7E/E7, DMXKing, etc.)
 TRANSPORT_ARTNET      = "artnet"       # Boitier reseau Art-Net (ElectroConcept...)
 
+# Boîtier USB-DMX MyStrow maison (CH32X035, protocole ENTTEC Pro sur USB CDC).
+BOITIER_MYSTROW_VID_PID = (0x1A86, 0x5740)
+
+# Pseudo-ports que macOS publie toujours dans `comports()`. Aucun n'est un
+# boîtier DMX, et personne ne lit ce qu'on y écrit : l'écriture (et surtout
+# `flush()` = tcdrain) y reste bloquée indéfiniment. Triée par nom, la liste
+# mettait `/dev/cu.Bluetooth-Incoming-Port` AVANT `/dev/cu.usbmodem…` : c'était
+# le port présélectionné, et « Connecter » faisait mouliner l'appli (10/11/2026).
+_MAC_PSEUDO_PORTS = ("bluetooth-incoming-port", "debug-console", "wlan-debug")
+
+
+def est_pseudo_port_mac(device):
+    d = (device or "").lower()
+    return any(nom in d for nom in _MAC_PSEUDO_PORTS)
+
+
+def ports_serie_dmx(ports):
+    """Filtre et ordonne les ports série pour un choix de boîtier DMX.
+
+    Retire les pseudo-ports macOS, puis met en tête le boîtier MyStrow, les
+    puces FTDI (ENTTEC, DMXKing…), les autres ports USB, et enfin le reste —
+    le premier élément est donc le bon choix par défaut."""
+    def rang(p):
+        vid, pid = getattr(p, "vid", None), getattr(p, "pid", None)
+        if (vid, pid) == BOITIER_MYSTROW_VID_PID:
+            return 0
+        if vid == 0x0403:
+            return 1
+        if vid is not None:
+            return 2
+        return 3
+    garde = [p for p in ports if not est_pseudo_port_mac(getattr(p, "device", ""))]
+    return sorted(garde, key=lambda p: (rang(p), getattr(p, "device", "")))
+
 # Valeur d'`ArtNetDMX.output_map` marquant une sortie du Node desactivee.
 # On EMET quand meme, avec 512 zeros : cesser d'emettre laisserait la plupart
 # des nodes rejouer la derniere trame recue — projecteurs figes allumes.
@@ -563,6 +597,13 @@ class ArtNetDMX:
         if mirror_output is not None:
             self.mirror_output = bool(mirror_output)
 
+        if (self.transport != TRANSPORT_ARTNET and self.transport != TRANSPORT_ENTTEC_D2XX
+                and est_pseudo_port_mac(self.com_port)):
+            # Port Bluetooth/console de macOS mémorisé (ancienne présélection) :
+            # ce n'est jamais un boîtier, et l'ouvrir bloque la sortie.
+            print(f"Port {self.com_port} ignoré : pseudo-port macOS, pas un boîtier DMX")
+            self.com_port = None
+
         self._save_config()
 
         # Changement de transport à chaud : arrêter proprement les AUTRES
@@ -709,17 +750,39 @@ class ArtNetDMX:
         `_pro_stop` à False, donc sans join l'ancien thread survit."""
         self._pro_stop = True
         t = self._pro_thread
+        bloque = False
         if t is not None and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=1.5)
+            bloque = t.is_alive()
         self._pro_thread = None
         self._pro_pause = False
         self._pro_paused = False
-        if self._pro_serial is not None:
-            try:
-                self._pro_serial.close()
-            except Exception:
-                pass
+        ser = self._pro_serial
         self._pro_serial = None
+        if ser is not None:
+            if bloque:
+                # Thread coincé dans une écriture que personne ne lit : sur
+                # macOS, close() attend la vidange du tampon de sortie et gèle
+                # alors le fil qui l'appelle — ici, l'interface (« Connecter »
+                # qui mouline). On jette le tampon et on ferme à l'écart.
+                print(f"ENTTEC Pro: thread bloqué sur {getattr(ser, 'port', '?')}, "
+                      "fermeture du port en arrière-plan")
+                def _fermer(s=ser):
+                    try:
+                        s.reset_output_buffer()
+                    except Exception:
+                        pass
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                threading.Thread(target=_fermer, daemon=True,
+                                 name="EnttecProClose").start()
+            else:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
 
     def _start_enttec_thread(self):
         self._enttec_stop = False
@@ -1101,6 +1164,9 @@ class ArtNetDMX:
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 timeout=0.1,
+                # Sans délai, un port qui ne lit pas (pseudo-port macOS, boîtier
+                # figé) bloquait l'écriture pour toujours.
+                write_timeout=0.5,
             )
             self.connected = True
             print(f"ENTTEC Pro connecté sur {self.com_port} @ {getattr(self, 'pro_baud', 250000)} bauds")
@@ -1144,7 +1210,12 @@ class ArtNetDMX:
                     with self._dmx_lock:
                         pkt = self._build_pro_packet(self.dmx_data[0])
                     ser.write(pkt)
-                    ser.flush()
+                    # flush() = tcdrain sur macOS/Linux, SANS délai : il attend
+                    # indéfiniment un port qui ne lit pas. Un paquet Pro n'a pas
+                    # besoin d'être vidangé (pas de break à générer côté PC) ;
+                    # Windows garde son comportement d'origine.
+                    if sys.platform == 'win32':
+                        ser.flush()
                 except Exception as e:
                     print(f"ENTTEC Pro thread: {e}")
                     try:
@@ -1158,6 +1229,7 @@ class ArtNetDMX:
                         port=self.com_port, baudrate=getattr(self, "pro_baud", 250000),
                         bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
                         stopbits=serial.STOPBITS_ONE, timeout=0.1,
+                        write_timeout=0.5,
                     )
                     print(f"ENTTEC Pro: reconnexion sur {self.com_port}")
                 except Exception:

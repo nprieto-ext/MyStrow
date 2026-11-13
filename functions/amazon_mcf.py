@@ -198,6 +198,46 @@ def get_orders(created_after: str) -> list[dict]:
     return (rep.get("payload") or {}).get("Orders") or []
 
 
+def get_orders_expediees(created_after: str) -> list[dict]:
+    """Commandes Amazon.fr expédiées créées après `created_after`, toutes pages."""
+    params = {"MarketplaceIds": MARKETPLACE_FR, "CreatedAfter": created_after,
+              "OrderStatuses": "Shipped"}
+    out = []
+    while True:
+        rep = _call("GET", f"/orders/v0/orders?{urllib.parse.urlencode(params)}")
+        payload = rep.get("payload") or {}
+        out += payload.get("Orders") or []
+        token = payload.get("NextToken")
+        if not token:
+            return out
+        # Les pages suivantes ne prennent QUE le jeton (+ la marketplace).
+        params = {"MarketplaceIds": MARKETPLACE_FR, "NextToken": token}
+        time.sleep(2)
+
+
+# --- Demande d'avis (API Solicitations) -------------------------------------
+# Même mail officiel que le bouton « Demander un avis » de Seller Central.
+# Rôle SP-API requis : « Communication avec l'acheteur » (Buyer Communication).
+# Amazon ne propose l'action qu'entre 5 et 30 jours après la livraison, et une
+# seule fois par commande : c'est elle qui fait foi, pas un calcul de dates.
+_SOLICIT = "/solicitations/v1/orders"
+_REVIEW = "productReviewAndSellerFeedback"
+
+
+def avis_possible(amazon_order_id: str) -> bool:
+    q = urllib.parse.urlencode({"marketplaceIds": MARKETPLACE_FR})
+    rep = _call("GET", f"{_SOLICIT}/{urllib.parse.quote(amazon_order_id)}?{q}")
+    actions = (rep.get("_links") or {}).get("actions") or []
+    return any(_REVIEW in (a.get("href") or "") or a.get("name") == _REVIEW
+               for a in actions)
+
+
+def demander_avis(amazon_order_id: str) -> None:
+    q = urllib.parse.urlencode({"marketplaceIds": MARKETPLACE_FR})
+    _call("POST", f"{_SOLICIT}/{urllib.parse.quote(amazon_order_id)}"
+                  f"/solicitations/{_REVIEW}?{q}")
+
+
 def get_order_items(amazon_order_id: str) -> list[dict]:
     rep = _call("GET", f"/orders/v0/orders/{urllib.parse.quote(amazon_order_id)}/orderItems")
     return (rep.get("payload") or {}).get("OrderItems") or []
