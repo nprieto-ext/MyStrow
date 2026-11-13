@@ -88,6 +88,18 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
     # Patch. `pc_to_tab` : rang PC → rang tablette (les fixtures hors univers 0
     # sautent, les mémoires et positions doivent suivre).
     fixtures, pc_to_tab = [], {}
+    # Place par défaut du PC (projecteur jamais déplacé : canvas_x vide). Même
+    # calcul que le plan de feu (`_get_norm_pos`) : sans ça la tablette
+    # appliquait SES règles par défaut, différentes (lyre/barre/strobe, lat…)
+    # → « les projos ne sont pas placés pareil » (client, 13/11).
+    try:
+        from plan_de_feu import _DEFAULT_POSITIONS
+    except Exception:
+        _DEFAULT_POSITIONS = {}
+    group_lists = {}
+    for i, f in enumerate(pc_fixtures):
+        group_lists.setdefault(f.get("group"), []).append(i)
+
     for i, f in enumerate(pc_fixtures):
         if int(f.get("universe", 0) or 0) != 0:
             warnings.append(f"{f.get('name', '?')} : univers {f.get('universe')} (la tablette ne sort que l'univers 1)")
@@ -106,6 +118,10 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
         # (standalone.js lit plan_x/plan_y, ceux du mode DÉPLACER).
         if f.get("canvas_x") is not None and f.get("canvas_y") is not None:
             t["plan_x"], t["plan_y"] = float(f["canvas_x"]), float(f["canvas_y"])
+        elif _DEFAULT_POSITIONS:
+            g_list = group_lists[f.get("group")]
+            pos_fn = _DEFAULT_POSITIONS.get(f.get("group"), lambda li, n: (0.5, 0.5))
+            t["plan_x"], t["plan_y"] = (float(v) for v in pos_fn(g_list.index(i), len(g_list)))
         if t.get("fixture_type") is None and "Pan" in profile:
             t["fixture_type"] = "Moving Head"
         # Débattement RÉSOLU (défaut par type : un laser n'est pas une lyre

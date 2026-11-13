@@ -57,6 +57,12 @@
     .lim-row input[type=range] { height: 36px; padding: 0; accent-color: var(--accent); background: transparent; border: 0; }
     @media (max-width: 560px) { .lim-row { grid-template-columns: auto 1fr; } .lim-row .lim-name { grid-column: 1 / -1; } }
     #msg { min-height: 1.5em; color: #cfcabd; }
+    #msg .undo { margin-left: 10px; height: 34px; padding: 0 12px; font-size: 14px; vertical-align: middle; }
+    .wipe { align-self: flex-end; background: none; border: 0; padding: 8px 4px; color: var(--muted); font: 600 14px/1 var(--f-label);
+      letter-spacing: 1px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+    .wipe[hidden] { display: none; }
+    /* Recherche avec le clavier ouvert (paysage) : le champ remonte en haut, la liste tient au-dessus du clavier. */
+    #search-box { scroll-margin-top: 8px; }
     /* Bibliothèque de fixtures */
     #results { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
     .res { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg3);
@@ -100,7 +106,7 @@
       <button class="btn small" id="add-close" type="button">Fermer</button>
     </div>
     <div class="row">
-      <div style="flex:1;min-width:220px"><label for="search">Rechercher un projecteur</label>
+      <div id="search-box" style="flex:1;min-width:220px"><label for="search">Rechercher un projecteur</label>
         <input id="search" type="search" placeholder="Marque ou modèle : izy, cameo, par 64…" autocomplete="off"></div>
     </div>
     <div id="results"></div>
@@ -169,11 +175,12 @@
   <section class="panel" id="list-section">
     <div class="row" style="align-items:center">
       <div class="eyebrow" style="flex:1">Mon patch</div>
-      <button class="btn small" id="import-acct" type="button" hidden>⬇ Importer depuis mon compte</button>
-      <button class="btn small danger" id="wipe" type="button">Tout effacer</button>
+      <button class="btn small" id="import-acct" type="button">⬇ Importer depuis mon compte</button>
     </div>
     <div id="list"></div>
     <p class="hint">« Tester » allume le projecteur en blanc : vérifiez que c'est bien lui qui s'allume.</p>
+    <!-- Effacer tout : discret, en bas de la liste (plus à côté des boutons utiles). -->
+    <button class="wipe" id="wipe" type="button">Effacer tout le patch</button>
   </section>
 
   <section class="panel" id="out-section">
@@ -219,14 +226,12 @@
   show.output = show.output || { transport: "usb" };
   const save = () => { try { localStorage.setItem("mystrow.solo.show", JSON.stringify(show)); } catch (e) {} };
 
-  // « Importer depuis mon compte » : seulement si connecté ; l'import remplace
-  // le patch (la sortie DMX reste) puis la page se recharge.
+  // « Importer depuis mon compte » : toujours affiché ; pas connecté, la
+  // fenêtre « Mon compte » demande d'abord la connexion puis lance l'import.
+  // L'import remplace le patch (la sortie DMX reste) puis la page se recharge.
   if (window.MystrowAccount) {
-    const ib = $("import-acct");
-    const sync = () => { ib.hidden = !MystrowAccount.status().loggedIn; };
-    MystrowAccount.onChange(sync); sync();
-    ib.addEventListener("click", () => MystrowAccount.openImport({ onImported: () => location.reload() }));
-  }
+    $("import-acct").addEventListener("click", () => MystrowAccount.openImport({ onImported: () => location.reload() }));
+  } else $("import-acct").hidden = true;
 
   // ── Bibliothèque de fixtures ───────────────────────────────────────────────
   // Embarquée (library.js, générée depuis le PC) + fixtures de l'admin relues
@@ -360,7 +365,27 @@
     const list = Array.isArray(prof) ? prof : Engine.PROFILES[prof] || [];
     $("chans").textContent = list.map((c, i) => (i + 1) + " " + c).join(" · ");
   }
-  $("search").addEventListener("input", search);
+  $("search").addEventListener("input", () => { search(); fitResults(); });
+
+  // Clavier ouvert (surtout en paysage) : il mange la moitié de l'écran et
+  // cachait les résultats. Le champ remonte en haut de l'écran et la liste
+  // prend juste la hauteur visible au-dessus du clavier.
+  function fitResults() {
+    if (document.activeElement !== $("search")) { $("results").style.maxHeight = ""; return; }
+    const vv = window.visualViewport;
+    const visible = vv ? vv.height : window.innerHeight;
+    const top = $("results").getBoundingClientRect().top - (vv ? vv.offsetTop : 0);
+    $("results").style.maxHeight = Math.max(120, Math.min(320, visible - top - 8)) + "px";
+  }
+  function liftSearch() {
+    if (document.activeElement !== $("search")) return;
+    $("search-box").scrollIntoView({ block: "start" });
+    fitResults();
+  }
+  $("search").addEventListener("focus", () => { liftSearch(); setTimeout(liftSearch, 350); });
+  $("search").addEventListener("blur", () => { $("results").style.maxHeight = ""; });
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", liftSearch);
+  else window.addEventListener("resize", liftSearch);
   $("mode").addEventListener("change", showChannels);
 
   const end = (f) => f.address + Engine.channelCount(f.profile) - 1;
@@ -448,6 +473,7 @@
   function render() {
     const list = $("list");
     list.innerHTML = "";
+    $("wipe").hidden = !show.fixtures.length;
     if (!show.fixtures.length) { list.innerHTML = '<p class="hint">Aucun projecteur pour l\'instant : touchez « ＋ Ajouter » en haut.</p>'; }
     // Chevauchements d'adresses : deux projecteurs sur les mêmes canaux.
     const clash = new Set();
@@ -781,8 +807,17 @@
     if (!show.fixtures.length) return;
     const ask = "Voulez-vous vraiment tout effacer ? Les projecteurs du patch seront supprimés.";
     if (!confirm(window.T ? window.T(ask) : ask)) return;
-    show.fixtures = []; testing = null; save(); render(); $("addr").value = nextAddress();
+    const before = show.fixtures;
+    show.fixtures = []; testing = null; limitsFor = null; save(); render(); $("addr").value = nextAddress();
+    // Filet de sécurité : « Annuler » remet le patch tel quel.
     msg("Patch effacé.");
+    const u = document.createElement("button");
+    u.type = "button"; u.className = "btn small undo"; u.textContent = "↶ Annuler";
+    u.addEventListener("click", () => {
+      show.fixtures = before; save(); render(); $("addr").value = nextAddress();
+      msg("Patch remis comme avant.");
+    });
+    $("msg").appendChild(u);
   });
 
   // ── Sortie ─────────────────────────────────────────────────────────────────

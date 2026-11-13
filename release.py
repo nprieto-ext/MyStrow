@@ -38,6 +38,41 @@ def run(cmd, allow_fail=False):
         print("Erreur detectee. Arret.")
         sys.exit(1)
 
+# Vieux brouillons de patch jamais exécutés par l'appli (cassés exprès, à ignorer)
+_SYNTAX_IGNORE_FILES = {"_build_repl.py", "_replacement.py"}
+_SYNTAX_IGNORE_DIRS = {".git", ".claude", "venv", ".venv", "node_modules",
+                       "build", "dist", "__pycache__", "mobile"}
+
+
+def check_python_syntax():
+    """Compile tous les .py du projet : une seule erreur de syntaxe = release
+    bloquée (la 3.2.15 est partie avec un fichier cassé → appli impossible à
+    ouvrir, même pas le splash)."""
+    import os
+    errors = []
+    count = 0
+    for root, dirs, files in os.walk(BASE_DIR):
+        dirs[:] = [d for d in dirs if d not in _SYNTAX_IGNORE_DIRS]
+        for name in files:
+            if not name.endswith(".py") or name in _SYNTAX_IGNORE_FILES:
+                continue
+            path = Path(root) / name
+            count += 1
+            try:
+                src = path.read_text(encoding="utf-8")
+                compile(src, str(path), "exec")
+            except SyntaxError as e:
+                errors.append(f"{path.relative_to(BASE_DIR)}:{e.lineno} : {e.msg}")
+            except (UnicodeDecodeError, ValueError) as e:
+                errors.append(f"{path.relative_to(BASE_DIR)} : {e}")
+    if errors:
+        print("\n!!! ERREUR DE SYNTAXE - RELEASE BLOQUEE !!!")
+        for err in errors:
+            print("  " + err)
+        sys.exit(1)
+    print(f"Syntaxe OK ({count} fichiers .py)")
+
+
 def get_current_version():
     content = CONFIG_FILE.read_text(encoding="utf-8")
     match = re.search(r'VERSION\s*=\s*"(.*?)"', content)
@@ -698,6 +733,7 @@ def _notify_discord(version):
 
 def main():
     print("========== RELEASE MYSTROW ==========")
+    check_python_syntax()
 
     current_version = get_current_version()
     print(f"Version actuelle : {current_version}")

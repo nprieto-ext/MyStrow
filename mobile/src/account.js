@@ -380,7 +380,11 @@
         e.preventDefault();
         msg.className = ""; msg.textContent = "";
         busy(go, true, "Connexion…");
-        try { await signIn(form.querySelector("#acct-mail").value, form.querySelector("#acct-pw").value); render(); }
+        try {
+          await signIn(form.querySelector("#acct-mail").value, form.querySelector("#acct-pw").value); render();
+          // Venu de « Importer depuis mon compte » : l'import part dès la connexion.
+          if (opts.autoImport) { const g = panel.querySelector("#acct-import"); if (g) g.click(); }
+        }
         catch (err) { msg.className = "err"; msg.textContent = err.message; busy(go, false, "Se connecter"); }
       });
       // Même Cloud Function que le site et le PC : renvoie e-mail + mot de
