@@ -50,6 +50,26 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # ------------------------------------------------------------------
+# CHROMIUM (plan 3D) : ne jamais tuer MyStrow quand le GPU flanche
+# Quand son processus GPU plante plusieurs fois (pilote graphique instable),
+# Chromium décide que « le GPU n'est plus utilisable » et arrête VOLONTAIREMENT
+# le processus principal (int3 = 0x80000003 dans Qt6WebEngineCore.dll) — donc
+# tout MyStrow, sans la moindre trace dans faulthandler. Vu chez un client
+# Windows le 13/11/2026 (3.2.16, plan 3D chargé). Sans limite, le processus GPU
+# est simplement relancé ; au pire la page 3D se recharge
+# (renderProcessTerminated, plan_3d_webwindow.py), l'appli reste ouverte.
+# Doit être posé AVANT le premier import de QtWebEngine.
+# ------------------------------------------------------------------
+def _chromium_flags():
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--disable-gpu-process-crash-limit" not in flags:
+        flags = (flags + " --disable-gpu-process-crash-limit").strip()
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = flags
+
+
+_chromium_flags()
+
+# ------------------------------------------------------------------
 # BACKEND VIDÉO — diagnostic uniquement (on NE force PAS le backend).
 # But : savoir quels plugins multimedia sont réellement embarqués. Forcer FFmpeg
 # via QT_MEDIA_BACKEND blanchissait la vidéo dans le visualisateur sur certaines

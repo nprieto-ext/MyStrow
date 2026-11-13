@@ -44,6 +44,17 @@ _HTML     = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) 
 _DOSSIER_SCENES = Path(getattr(__import__('sys'), '_MEIPASS', Path(__file__).parent)) / 'scenes3d'
 
 
+def _url_page_3d() -> QUrl:
+    """URL de la scène 3D. Les sondes de diagnostic d'image (readPixels à
+    chaque image + captures `plan3d_*.jpg`) ne tournent que si
+    MYSTROW_DIAG3D=1 : en usage normal elles chargeaient le GPU pour rien et
+    se déclenchaient sur chaque noir d'un show (600+ captures chez un client)."""
+    url = QUrl.fromLocalFile(str(_HTML))
+    if os.environ.get("MYSTROW_DIAG3D") == "1":
+        url.setQuery("diag=1")
+    return url
+
+
 def _pos3d_from_canvas(cx, cy):
     """Position 3D (x, z) déduite d'une position du plan de feu 2D.
 
@@ -1488,7 +1499,7 @@ class Plan3DWebWindow(QMainWindow):
         # (la page locale peut charger avant que la ligne suivante soit atteinte)
         self._view.loadFinished.connect(self._on_load_finished)
         self._view.page().renderProcessTerminated.connect(self._on_render_crashed)
-        self._view.load(QUrl.fromLocalFile(str(_HTML)))
+        self._view.load(_url_page_3d())
         self._view.installEventFilter(self)
 
         # État interne AVANT _build_right_panel() : l'onglet Cam. lit
@@ -3733,7 +3744,7 @@ class Plan3DWebWindow(QMainWindow):
             _diag_note("Plantages répétés : pilote graphique probablement en cause. "
                        "Baisser la qualité de rendu (onglet Cam.) réduit la charge GPU.")
         # Recharger la page après un court délai pour laisser le crash se nettoyer
-        QTimer.singleShot(800, lambda: self._view.load(QUrl.fromLocalFile(str(_HTML))))
+        QTimer.singleShot(800, lambda: self._view.load(_url_page_3d()))
 
     def _on_load_finished(self, ok: bool):
         self._ready = ok

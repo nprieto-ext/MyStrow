@@ -12,6 +12,9 @@ python-rtmidi
 miniaudio
 mutagen
 pyserial
+# Vérification TLS par Windows lui-même (core.make_ssl_context) : antivirus à
+# scan HTTPS, racines téléchargées à la demande. Pur Python.
+truststore>=0.10; sys_platform == "win32"
 ftd2xx; sys_platform == "win32"
 flask
 qrcode

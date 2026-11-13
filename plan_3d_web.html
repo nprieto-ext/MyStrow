@@ -3623,7 +3623,8 @@ document.addEventListener('visibilitychange', () => {
 // `readPixels` force une synchronisation GPU, donc jamais à 60 Hz : ~10 Hz
 // suffit largement à attraper un glitch d'un quart de seconde (~15 images).
 // Mettre `window.diagBlack = false` pour le couper.
-window.diagBlack = true;
+// Coupée par défaut : ne tourne qu'avec ?diag=1 (MYSTROW_DIAG3D=1 côté Python).
+window.diagBlack = new URLSearchParams(location.search).has('diag');
 let _dbLast = 0, _dbMoy = -1, _dbHits = 0;
 let _dbInst = -1, _dbSamples = 0, _dbTrace = 0, _dbMin = 1e9;
 let _dbBuf = null, _dbBufW = 0, _dbLum = null;
@@ -3667,7 +3668,7 @@ function _capturerGlitch(raison) {
 // dans le volume mais dans la synchronisation GPU qu'impose `readPixels`.
 // Mesuré à ~60 fps maintenus sur la scène de test. `window.diagFast = false`
 // la coupe si la cadence en souffre.
-window.diagFast = true;
+window.diagFast = window.diagBlack;
 let _fastBuf = new Uint8Array(4 * 32 * 4), _fastMoy = -1, _fastHits = 0;
 let _fastCout = 0, _fastN = 0;
 

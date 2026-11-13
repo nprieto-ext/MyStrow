@@ -24078,9 +24078,8 @@ class MainWindow(QMainWindow):
             self._plan3d.init_scene(self.projectors)
             # Si la page n'a jamais chargé (race condition ou crash précédent), forcer un rechargement
             if not self._plan3d._ready:
-                from plan_3d_webwindow import _HTML
-                from PySide6.QtCore import QUrl
-                self._plan3d._view.load(QUrl.fromLocalFile(str(_HTML)))
+                from plan_3d_webwindow import _url_page_3d
+                self._plan3d._view.load(_url_page_3d())
             # Synchroniser les boutons de scène avec le preset chargé
             code = getattr(self._plan3d, '_scene_preset_code', 'festival_plein_air')
             for k, btn in getattr(self._plan3d, '_scene_btns', {}).items():

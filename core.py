@@ -2138,6 +2138,25 @@ def make_ssl_context():
         return _SSL_CTX_CACHE
     import ssl
     ctx = None
+    # Windows : on fait vérifier la chaîne par Windows LUI-MÊME (CryptoAPI,
+    # comme Chrome/Edge) via `truststore`. Lire le magasin système depuis
+    # Python ne suffit pas toujours : Windows télécharge certaines racines à la
+    # demande, et un antivirus/réseau filtrant peut présenter une chaîne que
+    # seul CryptoAPI sait valider. Symptôme : « CERTIFICATE_VERIFY_FAILED —
+    # unable to get local issuer certificate » à la mise à jour ET au
+    # téléchargement du modèle de l'assistant, alors que le navigateur passe
+    # (client FuraxX, 3.2.16, 13/11/2026). En cas d'absence ou d'échec, on
+    # retombe sur l'union magasin système + certifi ci-dessous.
+    import sys as _sys
+    if _sys.platform == "win32":
+        try:
+            import truststore
+            ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            _SSL_CTX_CACHE = ctx
+            return ctx
+        except Exception as e:
+            print(f"[SSL] truststore indisponible ({e}) : magasin système + certifi")
+            ctx = None
     try:
         ctx = ssl.create_default_context()        # racines système
     except Exception:
