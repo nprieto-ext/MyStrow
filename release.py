@@ -757,6 +757,17 @@ def main():
         build_admin_panel_exe()
         return
 
+    # Regles Firestore en ligne = firestore.rules local, puis activation reelle
+    # d'un poste de test. La 3.2.15 ecrivait des champs que les regles en ligne
+    # refusaient : plus aucun nouveau client ne pouvait s'activer (13/11/2026).
+    try:
+        import firestore_rules_check
+        firestore_rules_check.check(deploy=True)
+    except Exception as e:
+        print(f"\n[ERREUR] Regles Firestore / activation : {e}")
+        print("Release annulee. (Test seul : python firestore_rules_check.py --test)")
+        sys.exit(1)
+
     print(f"\nMise a jour vers {new_version}...")
     update_version(new_version)
 

@@ -21,7 +21,9 @@ service cloud.firestore {
       return oldM.hasAll(newM)
         ? (nStart == start && nCount == count)
         : (now - start > 30 * 86400
-            ? (nStart > now - 300 && nStart <= now + 300 && nCount == 1)
+            // ±1 jour (et non ±5 min) : nStart vient de l'horloge du PC client ;
+            // un PC dereglé de quelques minutes ne pouvait plus s'activer.
+            ? (nStart > now - 86400 && nStart <= now + 86400 && nCount == 1)
             : (nStart == start && nCount == count + 1 && nCount <= 4));
     }
 
