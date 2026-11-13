@@ -275,9 +275,7 @@ class BoitierDetector(QObject):
                 # plus besoin de passer par la fenêtre Sortie DMX.
                 port = self._connecter_dmx(rep["usb_id"])
                 if ok and port:
-                    msg += "
-
-" + tr("bx_dmx_connected")
+                    msg += "\n\n" + tr("bx_dmx_connected")
             if ok:
                 card.show_success(msg)
             elif msg is None:          # already_yours : rien à refaire
