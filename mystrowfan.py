@@ -29,17 +29,19 @@ from pathlib import Path
 import serial
 from PySide6.QtCore import QObject, Qt, QTimer, Signal, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QFrame, QHBoxLayout, QHeaderView, QInputDialog,
                                QLabel, QLineEdit, QMainWindow, QMessageBox,
-                               QPushButton, QTableWidget, QTableWidgetItem,
+                               QPushButton, QScrollArea, QTableWidget,
+                               QTableWidgetItem, QTabWidget,
                                QVBoxLayout, QWidget, QAbstractItemView)
 
 import boitier_init as bi
 
-VERSION = "1.0.0"
+VERSION = "1.1.2"
 PROJECT_ID = "mystrow-907be"
 API_URL = f"https://us-central1-{PROJECT_ID}.cloudfunctions.net/boitier_enregistrer"
+EXPE_URL = f"https://us-central1-{PROJECT_ID}.cloudfunctions.net/boitier_expeditions"
 
 # --------------------------------------------------------------- chemins
 if getattr(sys, "frozen", False):
@@ -117,7 +119,7 @@ def jouer_test(port: str, on_couleur, stop: threading.Event) -> None:
 
 # --------------------------------------------------------------- pilote
 def bootloader_present() -> bool:
-    """Puce WCH en bootloader (4348:55E0) branchee, pilote ou pas."""
+    """Puce WCH en bootloader (1A86:55E0 ou 4348:55E0) branchee, pilote ou pas."""
     try:
         cfg = ctypes.windll.cfgmgr32
         flags = 0x1 | 0x100      # FILTER_ENUMERATOR | FILTER_PRESENT
@@ -127,7 +129,8 @@ def bootloader_present() -> bool:
         buf = ctypes.create_unicode_buffer(n.value)
         if cfg.CM_Get_Device_ID_List_W("USB", buf, n, flags):
             return False
-        return "VID_4348&PID_55E0" in ctypes.wstring_at(buf, n.value).upper()
+        ids = ctypes.wstring_at(buf, n.value).upper()
+        return "VID_1A86&PID_55E0" in ids or "VID_4348&PID_55E0" in ids
     except Exception:
         return False
 
@@ -137,9 +140,9 @@ class Api:
     def __init__(self, cle: str):
         self.cle = cle
 
-    def appel(self, action: str, **champs) -> dict:
+    def appel(self, action: str, url: str = API_URL, **champs) -> dict:
         req = urllib.request.Request(
-            API_URL, method="POST",
+            url, method="POST",
             data=json.dumps({"action": action, **champs}).encode(),
             headers={"Content-Type": "application/json",
                      "X-Poste-Key": self.cle})
@@ -151,6 +154,8 @@ class Api:
                 return json.loads(e.read().decode())
             except Exception:
                 return {"ok": False, "error": f"http_{e.code}"}
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            return {"ok": False, "error": "reseau", "detail": str(e)}
 
 
 # --------------------------------------------------------------- moteur
@@ -370,6 +375,8 @@ class Pont(QObject):
     ligne = Signal(str, str, str, str)
     log = Signal(str)
     fini = Signal(str)
+    expe = Signal(str, dict)          # (action, réponse du serveur)
+    maj = Signal(str)                 # progression / fin de la mise à jour
 
 
 # --------------------------------------------------------------- interface
@@ -388,6 +395,16 @@ QPushButton#jaune {{ background:{JAUNE}; color:{NOIR}; border:none; font-size:16
 QTableWidget {{ background:{CARTE}; border:none; border-radius:10px; gridline-color:#2c2c2a; }}
 QHeaderView::section {{ background:{CARTE}; color:{GRIS}; border:none; padding:6px; }}
 QCheckBox {{ color:{GRIS}; }}
+QTabWidget::pane {{ border:none; }}
+QTabBar::tab {{ background:transparent; color:{GRIS}; padding:8px 18px; font-size:15px;
+               font-weight:700; border-bottom:3px solid transparent; }}
+QTabBar::tab:selected {{ color:white; border-bottom-color:{JAUNE}; }}
+QComboBox, QLineEdit {{ background:#1a1a19; border:1px solid #3a3a37; border-radius:8px;
+                        padding:8px 10px; font-size:15px; }}
+QLineEdit:focus, QComboBox:focus {{ border-color:{JAUNE}; }}
+QScrollArea {{ border:none; }}
+QFrame#cmd {{ background:{CARTE}; border-radius:14px; }}
+QFrame#cmd_ok {{ background:{CARTE}; border-radius:10px; }}
 """
 
 
@@ -434,6 +451,25 @@ class Fenetre(QMainWindow):
         self.lbl_compteur.setStyleSheet(f"color:{JAUNE}; font-size:16px; font-weight:700;")
         hd.addWidget(self.lbl_compteur)
         root.addLayout(hd)
+
+        # Bandeau de mise à jour (caché tant que le serveur n'annonce rien de plus récent).
+        self.b_maj = QPushButton("")
+        self.b_maj.setCursor(Qt.PointingHandCursor)
+        self.b_maj.setStyleSheet(
+            f"background:{JAUNE}; color:{NOIR}; font-weight:700; font-size:14px;"
+            " padding:10px; border-radius:8px;")
+        self.b_maj.clicked.connect(self._maj_installer)
+        self.b_maj.setVisible(False)
+        self._maj = None
+        root.addWidget(self.b_maj)
+
+        # Onglets : l'écran de préparation (inchangé) et les expéditions.
+        entete = root
+        self.tabs = QTabWidget()
+        page_prep = QWidget()
+        root = QVBoxLayout(page_prep)
+        root.setContentsMargins(0, 14, 0, 0)
+        root.setSpacing(16)
 
         # 1. Offre
         root.addWidget(self._titre("1 · Quelle offre pour les boîtiers ?"))
@@ -528,6 +564,17 @@ class Fenetre(QMainWindow):
         bas.addWidget(b_k)
         root.addLayout(bas)
 
+        self.tabs.addTab(page_prep, "Préparation")
+        self.tabs.addTab(self._page_expeditions(), "Expéditions")
+        self.tabs.currentChanged.connect(
+            lambda i: self._expe_charger() if i == 1 else None)
+        entete.addWidget(self.tabs, 1)
+        self.pont.expe.connect(self._expe_reponse)
+        self.pont.maj.connect(self._maj_etape)
+        self._expe_timer = QTimer(self)
+        self._expe_timer.timeout.connect(self._expe_charger)
+        self._expe_timer.start(5 * 60 * 1000)     # badge à jour même sur l'autre onglet
+
         self.setStyleSheet(STYLE)
         self._boutons(set())
         QTimer.singleShot(200, self._demarrage)
@@ -567,8 +614,15 @@ class Fenetre(QMainWindow):
 
     # ---------------------------------------------------------------- démarrage
     def _demarrage(self):
+        if getattr(sys, "frozen", False):          # reste d'une mise à jour
+            try:
+                Path(sys.executable).with_name(
+                    Path(sys.executable).stem + ".ancien.exe").unlink(missing_ok=True)
+            except OSError:
+                pass
         if not self.cfg.get("cle"):
             self._demander_cle()
+        self._expe_charger()                   # badge « Expéditions (n) » dès l'ouverture
         if "offre" in self.cfg:
             b = self.grp.button(int(self.cfg["offre"]))
             if b:
@@ -585,6 +639,8 @@ class Fenetre(QMainWindow):
             self._ecrire_cfg()
             if self.moteur:
                 self.moteur.api.cle = self.cfg["cle"]
+            if hasattr(self, "tabs"):
+                self._expe_charger()
 
     def _sur_flash(self, on):
         self.cfg["flash"] = on
@@ -618,6 +674,497 @@ class Fenetre(QMainWindow):
 
         threading.Thread(target=_run, daemon=True).start()
 
+    # ---------------------------------------------------------------- expéditions
+    def _page_expeditions(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 14, 0, 0)
+        lay.setSpacing(12)
+        haut = QHBoxLayout()
+        self.lbl_expe = QLabel("…")
+        self.lbl_expe.setStyleSheet("font-size:17px; font-weight:700;")
+        haut.addWidget(self.lbl_expe)
+        haut.addStretch()
+        self.lbl_stock = QLabel("")
+        self.lbl_stock.setStyleSheet(f"color:{GRIS};")
+        haut.addWidget(self.lbl_stock)
+        self._stocks = None
+        self._remu = None
+        self.b_actu = QPushButton("↻  Actualiser")
+        self.b_actu.setCursor(Qt.PointingHandCursor)
+        self.b_actu.clicked.connect(self._expe_charger)
+        haut.addWidget(self.b_actu)
+        lay.addLayout(haut)
+        self.cartes_stock = QHBoxLayout()
+        self.cartes_stock.setSpacing(10)
+        lay.addLayout(self.cartes_stock)
+
+        zone = QScrollArea()
+        zone.setWidgetResizable(True)
+        self.expe_contenu = QWidget()
+        self.expe_liste = QVBoxLayout(self.expe_contenu)
+        self.expe_liste.setContentsMargins(0, 0, 6, 0)
+        self.expe_liste.setSpacing(12)
+        self.expe_liste.addStretch()
+        zone.setWidget(self.expe_contenu)
+        lay.addWidget(zone, 1)
+        self.transporteurs = [["colissimo", "Colissimo"]]
+        self._expe_en_cours = False
+        return page
+
+    def _expe_appel(self, action: str, **champs):
+        """Appel serveur dans un thread ; la réponse revient par self.pont.expe."""
+        cle = self.cfg.get("cle", "")
+
+        def _run():
+            try:
+                rep = Api(cle).appel(action, url=EXPE_URL, **champs)
+            except Exception as e:
+                rep = {"ok": False, "error": "reseau", "detail": str(e)}
+            self.pont.expe.emit(action, rep)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _expe_charger(self):
+        if not self.cfg.get("cle"):
+            self.lbl_expe.setText("Il manque la clé du poste")
+            return
+        if self._expe_en_cours:
+            return
+        self._expe_en_cours = True
+        self.b_actu.setEnabled(False)
+        self.b_actu.setText("Chargement…")
+        self._expe_appel("liste")
+
+    def _expe_erreur(self, rep) -> str:
+        return {"bad_key": "Clé du poste refusée : demande une nouvelle clé à Nicolas.",
+                "bad_tracking": "Numéro de suivi invalide (lettres et chiffres, 6 minimum).",
+                "already_shipped": "Cette commande est déjà marquée expédiée.",
+                "not_found": "Commande introuvable.",
+                "reseau": "Pas de connexion au serveur. Vérifie Internet.",
+                }.get(rep.get("error"), f"Erreur du serveur ({rep.get('error')}).")
+
+    def _expe_reponse(self, action, rep):
+        if action == "liste":
+            self._expe_en_cours = False
+            self.b_actu.setEnabled(True)
+            self.b_actu.setText("↻  Actualiser")
+            if not rep.get("ok"):
+                self.lbl_expe.setText(self._expe_erreur(rep))
+                self.lbl_expe.setStyleSheet(f"color:{ROUGE}; font-size:15px; font-weight:700;")
+                return
+            self.transporteurs = rep.get("transporteurs") or self.transporteurs
+            self._expe_afficher(rep.get("commandes") or [], rep.get("stock"))
+            self._remu_afficher(rep.get("remu"))
+            self._stock_afficher(rep.get("stocks"))
+            self._maj_verifier(rep.get("maj"))
+        elif action == "stock":
+            if rep.get("ok"):
+                self._stock_afficher(rep.get("stocks"))
+            else:
+                QMessageBox.warning(self, "Stock", self._expe_erreur(rep))
+        elif action == "expedier":
+            if rep.get("ok") or rep.get("error") == "already_shipped":
+                if not rep.get("ok"):
+                    QMessageBox.information(self, "Expédition", self._expe_erreur(rep))
+                self._expe_charger()
+            else:
+                QMessageBox.warning(self, "Expédition", self._expe_erreur(rep))
+                for b in self.findChildren(QPushButton, "envoyer"):
+                    b.setEnabled(True)
+                    b.setText("✔  Expédié → envoyer le suivi")
+
+    # ---------------------------------------------------------------- cartes
+    _STYLE_STOCK = {  # clé → (icône, couleur d'accent)
+        "boitier_2":  ("📦", "#4da3ff"),
+        "boitier_12": ("📦", JAUNE),
+        "boitier":    ("🔌", VERT),
+        "cartes":     ("🛠", "#c08cff"),
+    }
+
+    @staticmethod
+    def _eur(x) -> str:
+        return f"{float(x or 0):.2f}".replace(".00", "").replace(".", ",") + " €"
+
+    def _carte_stat(self, titre, valeur, acc, sous="", sous_coul=None, clic=None, aide=""):
+        """Une carte cliquable : petit titre, gros chiffre, ligne d'info."""
+        carte = QFrame()
+        carte.setObjectName("stat")
+        carte.setStyleSheet(
+            f"QFrame#stat {{ background:{CARTE}; border-radius:12px; border-top:4px solid {acc}; }}"
+            f"QFrame#stat:hover {{ background:#2c2c29; }}")
+        carte.setCursor(Qt.PointingHandCursor)
+        carte.setToolTip(aide)
+        if clic:
+            carte.mousePressEvent = lambda _e: clic()
+        v = QVBoxLayout(carte)
+        v.setContentsMargins(14, 10, 14, 12)
+        v.setSpacing(2)
+        t = QLabel(titre)
+        t.setWordWrap(True)
+        t.setStyleSheet(f"color:{GRIS}; font-size:12px; font-weight:700; background:transparent;")
+        nb = QLabel(str(valeur))
+        nb.setStyleSheet(f"color:{acc}; font-size:32px; font-weight:800; background:transparent;")
+        v.addWidget(t)
+        v.addWidget(nb)
+        a = QLabel(sous)
+        a.setWordWrap(True)
+        a.setStyleSheet(f"color:{sous_coul or GRIS}; font-size:11px; background:transparent;")
+        v.addWidget(a)
+        v.addStretch()
+        return carte
+
+    def _cartes_afficher(self):
+        """5 cartes : les 4 piles du stock (clic = corriger) + le montant dû (clic = historique)."""
+        while self.cartes_stock.count():
+            it = self.cartes_stock.takeAt(0)
+            if it.widget():
+                it.widget().hide()          # sinon elle reste peinte jusqu'à sa destruction
+                it.widget().deleteLater()
+        for s in self._stocks or []:
+            icone, acc = self._STYLE_STOCK.get(s["cle"], ("•", GRIS))
+            n = int(s["n"])
+            bas = s["cle"] != "cartes" and n <= 3
+            self.cartes_stock.addWidget(self._carte_stat(
+                f"{icone}  {s['nom']}", n, ROUGE if bas else acc,
+                "stock bas · clic pour corriger" if bas else "clic pour corriger",
+                ROUGE if bas else None,
+                clic=lambda s=s: self._stock_modifier(s),
+                aide="Clique pour corriger ce nombre"), 1)
+        r = self._remu
+        if r:
+            du = float(r.get("du") or 0)
+            self.cartes_stock.addWidget(self._carte_stat(
+                "💶  Montant dû", self._eur(du), JAUNE if du > 0 else VERT,
+                f"{r.get('nb_colis', 0)} colis × {self._eur(r.get('tarif', 15))} · clic = historique",
+                clic=self._remu_historique,
+                aide="Ce que Nicolas te doit (15 € par colis expédié)"), 1)
+
+    def _stock_afficher(self, stocks):
+        self._stocks = stocks
+        if stocks:
+            self.lbl_stock.setVisible(False)          # remplacé par les cartes
+        self._cartes_afficher()
+
+    def _stock_modifier(self, s):
+        from PySide6.QtWidgets import QDialog, QSpinBox, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle(s["nom"])
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(f"Combien de « {s['nom']} » as-tu chez toi ?"))
+        sp = QSpinBox()
+        sp.setRange(0, 9999)
+        sp.setValue(int(s["n"]))
+        sp.setStyleSheet("font-size:22px; padding:6px;")
+        lay.addWidget(sp)
+        info = QLabel("Ça bouge aussi tout seul :\n"
+                      "• carte flashée → −1 carte à monter, +1 dans la pile de l'offre choisie ;\n"
+                      "• interface vierge préparée en 1 an / 2 mois → −1 interface, +1 boîtier ;\n"
+                      "• interface vierge expédiée à un client → −1 interface.")
+        info.setStyleSheet(f"color:{GRIS}; font-size:12px;")
+        lay.addWidget(info)
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Save).setText("Enregistrer")
+        bb.button(QDialogButtonBox.Cancel).setText("Annuler")
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        sp.setFocus()
+        sp.selectAll()
+        if dlg.exec() != QDialog.Accepted or sp.value() == int(s["n"]):
+            return
+        self._expe_appel("stock", stocks={s["cle"]: sp.value()})
+
+    def _remu_historique(self):
+        r = self._remu or {}
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Mes colis et paiements")
+        dlg.resize(620, 480)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(
+            f"<b>{r.get('nb_colis', 0)} colis</b> × {self._eur(r.get('tarif', 15))} = "
+            f"{self._eur(r.get('gagne'))}   ·   déjà payé : {self._eur(r.get('paye'))}   ·   "
+            f"<b style='color:{JAUNE}'>reste : {self._eur(r.get('du'))}</b>"))
+        lignes = [(c.get("utc"), "📦 Colis", f"{c.get('ref', '')}  {c.get('nom', '')}",
+                   "+" + self._eur(c.get("montant"))) for c in r.get("colis") or []]
+        lignes += [(v.get("utc"), "💶 Paiement reçu", "", "−" + self._eur(v.get("montant")))
+                   for v in r.get("versements") or []]
+        lignes.sort(key=lambda l: -float(l[0] or 0))
+        tab = QTableWidget(len(lignes), 4)
+        tab.setHorizontalHeaderLabels(["Date", "Quoi", "Détail", "Montant"])
+        tab.verticalHeader().setVisible(False)
+        tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tab.setSelectionMode(QAbstractItemView.NoSelection)
+        for i, (utc, quoi, detail, montant) in enumerate(lignes):
+            date = time.strftime("%d/%m/%Y", time.localtime(float(utc))) if utc else "—"
+            for j, txt in enumerate((date, quoi, detail, montant)):
+                it = QTableWidgetItem(txt)
+                if j == 3:
+                    it.setForeground(QColor(VERT if txt.startswith("+") else JAUNE))
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                tab.setItem(i, j, it)
+        hh = tab.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        lay.addWidget(tab, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.button(QDialogButtonBox.Close).setText("Fermer")
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        dlg.exec()
+
+    # ---------------------------------------------------------------- mise à jour
+    @staticmethod
+    def _v(txt) -> tuple:
+        try:
+            return tuple(int(x) for x in str(txt).split("."))
+        except ValueError:
+            return (0,)
+
+    def _maj_verifier(self, maj):
+        if (not maj or not maj.get("url") or not getattr(sys, "frozen", False)
+                or self._v(maj.get("version")) <= self._v(VERSION)):
+            self.b_maj.setVisible(False)
+            return
+        self._maj = maj
+        if self.b_maj.isEnabled():
+            self.b_maj.setText(f"⬇  Nouvelle version {maj['version']} disponible — "
+                               "clique ici pour l'installer")
+        self.b_maj.setVisible(True)
+
+    def _maj_installer(self):
+        maj = self._maj
+        if not maj or self.moteur:
+            if self.moteur:
+                QMessageBox.information(self, "Mise à jour",
+                                        "Arrête d'abord la préparation en cours.")
+            return
+        notes = f"\n\nNouveautés :\n{maj['notes']}" if maj.get("notes") else ""
+        if QMessageBox.question(
+                self, "Mise à jour",
+                f"Installer MyStrowFan {maj['version']} ?\n"
+                f"MyStrowFan va se fermer et se rouvrir tout seul.{notes}") != QMessageBox.Yes:
+            return
+        self.b_maj.setEnabled(False)
+        self.b_maj.setText("Téléchargement… 0 %")
+        exe = Path(sys.executable)
+        neuf = exe.with_name(exe.stem + ".nouveau.exe")
+
+        def _run():
+            import hashlib
+            try:
+                h = hashlib.sha256()
+                req = urllib.request.Request(maj["url"], headers={"User-Agent": "MyStrowFan"})
+                with urllib.request.urlopen(req, timeout=60) as r, open(neuf, "wb") as f:
+                    total = int(maj.get("taille") or r.headers.get("Content-Length") or 0)
+                    lu = 0
+                    while True:
+                        bloc = r.read(256 * 1024)
+                        if not bloc:
+                            break
+                        f.write(bloc)
+                        h.update(bloc)
+                        lu += len(bloc)
+                        if total:
+                            self.pont.maj.emit(f"Téléchargement… {lu * 100 // total} %")
+                if maj.get("sha256") and h.hexdigest() != maj["sha256"]:
+                    raise ValueError("fichier abîmé (empreinte différente), réessaie")
+                self.pont.maj.emit("OK")
+            except Exception as e:
+                try:
+                    neuf.unlink()
+                except OSError:
+                    pass
+                self.pont.maj.emit(f"ERREUR {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _maj_etape(self, msg: str):
+        if msg.startswith("ERREUR"):
+            self.b_maj.setEnabled(True)
+            self.b_maj.setText("⬇  Mise à jour ratée — clique pour réessayer")
+            QMessageBox.warning(self, "Mise à jour", msg[7:])
+            return
+        if msg != "OK":
+            self.b_maj.setText(msg)
+            return
+        # Windows laisse RENOMMER un exe en cours d'exécution (pas l'effacer) :
+        # l'actuel devient .ancien.exe (effacé au prochain démarrage), le neuf
+        # prend sa place, on le lance et on ferme.
+        exe = Path(sys.executable)
+        neuf = exe.with_name(exe.stem + ".nouveau.exe")
+        ancien = exe.with_name(exe.stem + ".ancien.exe")
+        try:
+            if ancien.exists():
+                ancien.unlink()
+            exe.rename(ancien)
+            neuf.rename(exe)
+        except OSError as e:
+            if not exe.exists() and ancien.exists():
+                ancien.rename(exe)
+            self.b_maj.setEnabled(True)
+            self.b_maj.setText("⬇  Mise à jour ratée — clique pour réessayer")
+            QMessageBox.warning(self, "Mise à jour",
+                                f"Impossible de remplacer le programme : {e}\n"
+                                "Demande à Nicolas de te renvoyer le fichier.")
+            return
+        import subprocess
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        env.pop("_MEIPASS2", None)
+        subprocess.Popen([str(exe)], env=env, cwd=str(exe.parent),
+                         creationflags=0x00000008 | 0x00000200)  # DETACHED | NEW_GROUP
+        QApplication.quit()
+
+    def _remu_afficher(self, r):
+        """Montant dû par Nicolas (15 € par colis) : 5e carte."""
+        self._remu = r
+        self._cartes_afficher()
+
+    def _expe_afficher(self, commandes, stock):
+        while self.expe_liste.count() > 1:           # garde le stretch final
+            it = self.expe_liste.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        a_faire = [c for c in commandes if c["status"] != "shipped"]
+        faites = sorted((c for c in commandes if c["status"] == "shipped"),
+                        key=lambda c: -c["shipped_utc"])
+        n = len(a_faire)
+        self.lbl_expe.setText(f"{n} colis à expédier" if n else "Rien à expédier 👍")
+        self.lbl_expe.setStyleSheet(
+            f"color:{JAUNE if n else VERT}; font-size:17px; font-weight:700;")
+        self.tabs.setTabText(1, f"Expéditions ({n})" if n else "Expéditions")
+        self.lbl_stock.setText(f"Stock : {stock} boîtiers" if stock is not None else "")
+        self.lbl_stock.setStyleSheet(
+            f"color:{ROUGE}; font-weight:700;" if stock is not None and stock <= 5
+            else f"color:{GRIS};")
+
+        pos = 0
+        for c in a_faire:
+            self.expe_liste.insertWidget(pos, self._carte_commande(c))
+            pos += 1
+        if faites:
+            self.expe_liste.insertWidget(pos, self._titre("EXPÉDIÉES — 30 DERNIERS JOURS"))
+            pos += 1
+            for c in faites:
+                self.expe_liste.insertWidget(pos, self._ligne_expediee(c))
+                pos += 1
+
+    @staticmethod
+    def _adresse_txt(a: dict) -> str:
+        lignes = [a.get("name"), a.get("line1"), a.get("line2"),
+                  f"{a.get('postal_code', '')} {a.get('city', '')}".strip(),
+                  a.get("country") if a.get("country") not in ("", "FR") else ""]
+        return "\n".join(l for l in lignes if l)
+
+    def _carte_commande(self, c):
+        f = QFrame()
+        f.setObjectName("cmd")
+        l = QVBoxLayout(f)
+        l.setContentsMargins(20, 16, 20, 16)
+        l.setSpacing(10)
+        t = QHBoxLayout()
+        titre = QLabel(f"📦  {c['quantity']} × interface USB-DMX")
+        titre.setStyleSheet("font-size:17px; font-weight:800;")
+        t.addWidget(titre)
+        t.addStretch()
+        quand = time.strftime("%d/%m à %H:%M", time.localtime(c["created_utc"]))
+        info = QLabel(f"Réf. {c['ref']} · commandé le {quand}")
+        info.setStyleSheet(f"color:{GRIS};")
+        t.addWidget(info)
+        l.addLayout(t)
+
+        a = c["address"]
+        txt = self._adresse_txt(a)
+        esc = lambda x: (x.replace("&", "&amp;").replace("<", "&lt;")
+                         .replace(">", "&gt;"))
+        adr = QLabel(esc(txt).replace("\n", "<br>") +
+                     (f"<br><span style='color:{GRIS}'>Tél. {esc(a['phone'])}</span>"
+                      if a.get("phone") else ""))
+        adr.setTextFormat(Qt.RichText)
+        adr.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        adr.setStyleSheet("font-size:16px; background:#1a1a19; border-radius:8px; padding:10px;")
+        l.addWidget(adr)
+        b_copie = QPushButton("Copier l'adresse")
+        b_copie.setCursor(Qt.PointingHandCursor)
+
+        def _copier():
+            QApplication.clipboard().setText(
+                txt + (f"\nTél. {a['phone']}" if a.get("phone") else ""))
+            b_copie.setText("✔ Copiée")
+            QTimer.singleShot(1500, lambda: b_copie.setText("Copier l'adresse"))
+        b_copie.clicked.connect(_copier)
+        rc = QHBoxLayout()
+        rc.addWidget(b_copie)
+        rc.addStretch()
+        l.addLayout(rc)
+
+        l.addWidget(self._titre("UNE FOIS LE COLIS DÉPOSÉ"))
+        r = QHBoxLayout()
+        cb = QComboBox()
+        for k, nom in self.transporteurs:
+            cb.addItem(nom, k)
+        cb.setCurrentIndex(max(0, cb.findData(self.cfg.get("transporteur", "colissimo"))))
+        r.addWidget(cb)
+        num = QLineEdit()
+        num.setPlaceholderText("N° de suivi")
+        r.addWidget(num, 1)
+        l.addLayout(r)
+        b = QPushButton("✔  Expédié → envoyer le suivi")
+        b.setObjectName("envoyer")
+        b.setStyleSheet(f"background:{VERT}; color:{NOIR}; border:none; font-size:16px;")
+        b.setCursor(Qt.PointingHandCursor)
+        b.setMinimumHeight(46)
+        l.addWidget(b)
+
+        def _envoyer():
+            if not b.isEnabled():
+                return
+            code = "".join(num.text().split()).upper()
+            if not code.isalnum() or not 6 <= len(code) <= 40:
+                QMessageBox.warning(self, "Expédition",
+                                    "Vérifie le numéro de suivi (lettres et chiffres).")
+                return
+            dest = a.get("name") or "le client"
+            if QMessageBox.question(
+                    self, "Envoyer le suivi ?",
+                    f"{cb.currentText()} : {code}\n\nLe client ({dest}) va recevoir "
+                    "ce numéro par mail. On envoie ?") != QMessageBox.Yes:
+                return
+            self.cfg["transporteur"] = cb.currentData()
+            self._ecrire_cfg()
+            b.setEnabled(False)
+            b.setText("Envoi…")
+            self._expe_appel("expedier", order_id=c["id"],
+                             transporteur=cb.currentData(), suivi=code)
+        b.clicked.connect(_envoyer)
+        num.returnPressed.connect(_envoyer)
+        return f
+
+    def _ligne_expediee(self, c):
+        f = QFrame()
+        f.setObjectName("cmd_ok")
+        l = QHBoxLayout(f)
+        l.setContentsMargins(14, 8, 14, 8)
+        quand = time.strftime("%d/%m", time.localtime(c["shipped_utc"] or c["created_utc"]))
+        a = c["address"]
+        g = QLabel(f"✔  {quand} · {a.get('name', '')} — "
+                   f"{a.get('postal_code', '')} {a.get('city', '')}")
+        g.setTextFormat(Qt.PlainText)
+        l.addWidget(g, 1)
+        p = (c.get("packages") or [{}])[0]
+        if p.get("tracking"):
+            if p.get("url"):
+                lien = QLabel(f"{p.get('carrier', '')} : <a href='{p['url']}' "
+                              f"style='color:{JAUNE}'>{p['tracking']}</a>")
+                lien.setOpenExternalLinks(True)
+                lien.setTextInteractionFlags(Qt.TextBrowserInteraction)
+            else:
+                lien = QLabel(f"{p.get('carrier', '')} : {p['tracking']}")
+            l.addWidget(lien)
+        return f
+
     def _sur_fini(self, err):
         self.moteur = None
         if err:
@@ -630,12 +1177,15 @@ class Fenetre(QMainWindow):
         QMessageBox.information(
             self, "Installer le pilote (une seule fois)",
             "Une fenêtre « Zadig » va s'ouvrir (accepte la demande de Windows) :\n\n"
-            "1. Laisse le boîtier branché.\n"
-            "2. Dans la liste, choisis l'appareil « USB Module » (ID 4348 55E0).\n"
-            "   S'il n'apparaît pas : menu Options → List All Devices.\n"
-            "3. À droite de la flèche, garde « WinUSB ».\n"
-            "4. Clique « Install Driver » (ou « Replace Driver »), attends la fin.\n"
-            "5. Ferme Zadig, débranche et rebranche le boîtier.")
+            "Pas besoin de brancher le boîtier : il ne reste visible que\n"
+            "quelques secondes, on déclare donc l'appareil à la main.\n\n"
+            "1. Menu Device → Create New Device.\n"
+            "2. Dans le champ du nom, tape : WCH ISP\n"
+            "3. Dans les cases USB ID, tape 1A86 puis 55E0\n"
+            "   (laisse la 3e case vide).\n"
+            "4. À droite de la flèche, garde « WinUSB ».\n"
+            "5. Clique « Install Driver », attends la fin (1 à 2 min).\n"
+            "6. Ferme Zadig, relance la préparation, puis branche le boîtier.")
         try:
             os.startfile(str(ZADIG))
         except OSError as e:

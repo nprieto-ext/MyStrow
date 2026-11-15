@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.17"
+VERSION = "3.2.18"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -892,6 +892,30 @@ def block_index(i, n, block):
     if b <= 1:
         return int(i), n
     return int(i) // b, max(1, (n + b - 1) // b)
+
+
+FX_FADER_KNEE = 80        # position du fader FX au-delà de laquelle on accélère
+FX_FADER_MAX_MULT = 2.5   # multiplicateur au sommet du fader
+
+
+def fx_fader_mult(value):
+    """Multiplicateur de vitesse des effets à couches depuis le fader FX (0-100).
+
+    Le fader ne faisait que RALENTIR : à fond il valait ×1, et un effet de la
+    bibliothèque ne pouvait jamais aller plus vite que sa vitesse d'origine
+    (« même à fond l'effet reste lent », FuraxX, 15/11/2026).
+
+    Jusqu'au coude (80, la valeur par défaut) rien ne change : ×(valeur/100).
+    Au-delà, la courbe monte linéairement de ×0,8 à ×2,5. Un show réglé sur la
+    valeur par défaut garde exactement sa vitesse.
+
+    ⚠️ Même courbe côté tablette : `fxFaderMult` dans mobile/src/engine.js.
+    """
+    v = max(0.0, min(100.0, float(value or 0.0)))
+    if v <= FX_FADER_KNEE:
+        return max(0.01, v / 100.0)
+    lo = FX_FADER_KNEE / 100.0
+    return lo + (v - FX_FADER_KNEE) / (100.0 - FX_FADER_KNEE) * (FX_FADER_MAX_MULT - lo)
 
 
 def layer_frequency(speed, mult=1.0, fader_mult=1.0):

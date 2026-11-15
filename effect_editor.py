@@ -4697,7 +4697,8 @@ class EffectEditorDialog(QDialog):
             # Aperçu seul : même horloge déformée, entretenue ici. Bouger la
             # VITESSE ne doit pas faire sauter l'aperçu non plus.
             _now  = _time.monotonic()
-            _mult = max(0.01, getattr(mw, 'effect_speed', 80) / 100.0) if mw else 0.8
+            from core import fx_fader_mult
+            _mult = fx_fader_mult(getattr(mw, 'effect_speed', 80)) if mw else 0.8
             _last = self._preview_clock_ts
             _dt   = 0.0 if _last is None else min(0.25, max(0.0, _now - _last))
             self._preview_clock_ts = _now
@@ -5046,7 +5047,13 @@ class EffectEditorDialog(QDialog):
                 # Aucune couche ne cible ce projecteur → ne pas forcer de couleur
                 continue
 
-            result[id(proj)] = (level, color, pan_v, tilt_v)
+            # 5e élément : niveau de la couche Dimmer (0..1), None sans couche
+            # Dimmer. La sortie live (`MainWindow._apply_editor_live_overrides`)
+            # en a besoin pour piloter le VRAI canal Dim. Sans lui, une couche
+            # Dimmer seule pulsait à l'écran mais restait à fond sur les lampes
+            # (FuraxX, 15/11/2026).
+            result[id(proj)] = (level, color, pan_v, tilt_v,
+                                level if has_dim else None)
 
         return result
 

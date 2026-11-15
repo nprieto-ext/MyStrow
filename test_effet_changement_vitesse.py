@@ -28,7 +28,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
-from core import layer_frequency
+from core import layer_frequency, fx_fader_mult
 import main_window as mw
 
 _app = QApplication.instance() or QApplication(sys.argv)
@@ -90,7 +90,9 @@ class TestHorlogeDePhase(unittest.TestCase):
             horloge = [i * 0.04 for i in range(1, 251)]   # 10 s a 25 fps
             _frames(w, horloge)
             t_reel = horloge[-1] - horloge[0]             # 1re frame : dt = 0
-            ancienne = layer_frequency(50, fader_mult=fader / 100.0) * t_reel
+            # fader_mult = courbe du fader FX (×1 a 100 avant le 15/11/2026,
+            # ×2,5 depuis : cf. core.fx_fader_mult)
+            ancienne = layer_frequency(50, fader_mult=fx_fader_mult(fader)) * t_reel
             nouvelle = layer_frequency(50) * w._effect_clock
             self.assertAlmostEqual(nouvelle, ancienne, places=6,
                                    msg=f"vitesse {fader} : la cadence a change")
@@ -130,7 +132,8 @@ class TestHorlogeDePhase(unittest.TestCase):
         """dt plafonne : un freeze de 3 s ne doit pas avancer l'effet de 3 s."""
         w = FauxWin(speed=100)
         _frames(w, [0.04, 3.5])       # 3,46 s d'ecart entre deux frames
-        self.assertLessEqual(w._effect_clock, 0.25)
+        # dt plafonne a 0,25 s, multiplie par le fader (×2,5 a fond)
+        self.assertLessEqual(w._effect_clock, 0.25 * fx_fader_mult(100) + 1e-9)
 
     def test_l_horloge_repart_de_zero_a_chaque_effet(self):
         w = FauxWin(speed=100)
@@ -138,7 +141,7 @@ class TestHorlogeDePhase(unittest.TestCase):
         self.assertGreater(w._effect_clock, 0)
         w._effect_clock, w._effect_clock_ts = 0.0, None   # ce que fait start_effect
         _frames(w, [100.0, 100.04])
-        self.assertAlmostEqual(w._effect_clock, 0.04, places=6)
+        self.assertAlmostEqual(w._effect_clock, 0.04 * fx_fader_mult(100), places=6)
 
 
 class TestPariteApercu(unittest.TestCase):

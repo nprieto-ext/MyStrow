@@ -427,6 +427,15 @@
   }
 
   // Ports de core.py (points uniques côté PC : même formule ici).
+  /** core.fx_fader_mult : fader VITESSE 0-100 → multiplicateur. Inchangé
+   *  jusqu'à 80 (défaut), puis ×0,8 → ×2,5 au sommet : à fond, un effet de la
+   *  bibliothèque peut enfin aller plus vite que sa vitesse d'origine. */
+  function fxFaderMult(value) {
+    const v = Math.max(0, Math.min(100, Number(value) || 0));
+    if (v <= 80) return Math.max(0.01, v / 100);
+    return 0.8 + (v - 80) / 20 * (2.5 - 0.8);
+  }
+
   function layerFrequency(speed, mult = 1.0) {
     const s = Math.max(0.0, Number(speed || 0)) * mult;
     return s <= 0 ? 0.0 : 0.05 + s / 100.0 * 7.0;
@@ -631,7 +640,7 @@
     });
   }
 
-  const api = { PROFILES, PROFILE_LABELS, render, channelCount, hexToRgb, effectFrame, pyRandom, symMirror, isLyre,
+  const api = { fxFaderMult, PROFILES, PROFILE_LABELS, render, channelCount, hexToRgb, effectFrame, pyRandom, symMirror, isLyre,
                 profileOf, isFxMachine, updateColorWheel, cwSlotAt, CW_DEFAULT_SLOTS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.MystrowEngine = api;

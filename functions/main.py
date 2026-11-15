@@ -1748,6 +1748,38 @@ _PACKS = {"pack_2m": "MS-DMX-2M", "pack_1a": "MS-DMX-1A", "pack_vie": "MS-DMX-1A
 # et saisit le n° de suivi via `boitier_expedie`. Stock : meta/stock_fanny.
 _PAYMENTLINK_BOITIER = "plink_1UTsof1gGkNcl6caYrEYn3oY"   # buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d
 _STOCK_FANNY = ("meta", "stock_fanny")
+# Stock PHYSIQUE chez Fanny (ce qu'elle a sur l'étagère). « boitier » = interfaces
+# seules (nom historique, lu par le site) ; elles baissent à l'EXPÉDITION, pas à
+# la vente. Les boîtiers avec licence montent quand elle en prépare un dans
+# MyStrowFan (1 interface seule → 1 boîtier 1 an / 2 mois). Elle corrige le
+# reste à la main depuis MyStrowFan.
+# « cartes » = cartes à monter / flasher : une carte flashée par MyStrowFan
+# quitte cette pile pour celle de son offre (0 = interface vierge).
+_STOCK_FANNY_CLES = (("boitier_2", "Boîtiers 2 mois"),
+                     ("boitier_12", "Boîtiers 1 an"),
+                     ("boitier", "Interfaces vierges"),
+                     ("cartes", "Cartes à monter / flasher"))
+_STOCK_PILE_OFFRE = {0: "boitier", 2: "boitier_2", 12: "boitier_12"}
+
+
+def _interfaces_reservees(db) -> int:
+    """Interfaces seules vendues pas encore expédiées (encore sur l'étagère)."""
+    n = 0
+    for snap in db.collection("boitier_commandes").where("plan", "==", "boitier").stream():
+        d = snap.to_dict() or {}
+        if d.get("status") in ("a_expedier", "paid"):
+            n += int(d.get("quantity") or 1)
+    return n
+
+
+def _stock_fanny_bouger(db, **deltas) -> None:
+    """Ajoute des deltas au stock physique (rien si le stock n'est pas tenu)."""
+    ref = db.collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1])
+    try:
+        if ref.get().exists:
+            ref.update({k: firestore.Increment(v) for k, v in deltas.items()})
+    except Exception as ex:
+        print(f"[Stock Fanny] non mis à jour {deltas} : {ex}")
 
 
 def _pack_from_session(session: dict) -> dict | None:
@@ -1885,14 +1917,16 @@ Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
             erreurs.append(f"{dest} : {ex}")
     order_ref.update({"status": "a_expedier", "expediteur": "fanny"})
 
+    # Le stock physique baisse à l'expédition ; ici on calcule ce qui reste
+    # VENDABLE (étagère − commandes pas encore parties, celle-ci comprise).
     reste = None
     try:
-        stock_ref = _get_db().collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1])
-        if stock_ref.get().exists:
-            stock_ref.update({"boitier": firestore.Increment(-quantity)})
-            reste = int((stock_ref.get().to_dict() or {}).get("boitier", 0))
+        db = _get_db()
+        s = db.collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1]).get()
+        if s.exists:
+            reste = int((s.to_dict() or {}).get("boitier", 0)) - _interfaces_reservees(db)
     except Exception as ex:
-        print(f"[Boîtier] Stock Fanny non décompté : {ex}")
+        print(f"[Boîtier] Stock Fanny non lu : {ex}")
 
     alerte = ("<p>⚠️ Le mail à Fanny n'est PAS parti : " + html_escape("; ".join(erreurs))
               + "<br>Lui transmettre cette commande à la main.</p>") if erreurs else \
@@ -2172,8 +2206,12 @@ _HORS_ZONE = {"FR": ("97", "98"), "ES": ("35", "38", "51", "52")}
 def _stock_fanny_affiche() -> dict:
     """{"boitier": n} si le stock chez Fanny est tenu (meta/stock_fanny), sinon {}."""
     def lire():
-        d = _get_db().collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1]).get()
-        return {"boitier": max(0, int((d.to_dict() or {}).get("boitier", 0)))} if d.exists else {}
+        db = _get_db()
+        d = db.collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1]).get()
+        if not d.exists:
+            return {}
+        physique = int((d.to_dict() or {}).get("boitier", 0))
+        return {"boitier": max(0, physique - _interfaces_reservees(db))}
     try:
         return _estim_cached(("stock_fanny",), 300, lire)
     except Exception as e:
@@ -2217,6 +2255,80 @@ def livraison_estimation(req: https_fn.Request) -> https_fn.Response:
 
 # --- Interface seule : Fanny saisit le n° de suivi -------------------------
 
+# Rémunération de Fanny : 15 € par colis qu'ELLE expédie (lien du mail ou
+# MyStrowFan ; pas l'admin panel). Chaque commande porte `remu_fanny` (montant
+# figé à l'expédition) ; les paiements de Nicolas s'empilent dans
+# meta/remuneration_fanny.versements. Dû = somme des colis − somme des versements.
+_REMU_FANNY = ("meta", "remuneration_fanny")
+_REMU_FANNY_TARIF = 15
+
+
+def _par_fanny(par: str) -> bool:
+    return par == "Fanny" or par.startswith("MyStrowFan")
+
+
+def _remu_fanny_etat(db, detail: bool = False) -> dict:
+    colis = []
+    for snap in db.collection("boitier_commandes").where("plan", "==", "boitier").stream():
+        d = snap.to_dict() or {}
+        if d.get("remu_fanny"):
+            colis.append({"ref": snap.id.replace("MS-", "")[:8],
+                          "montant": float(d["remu_fanny"]),
+                          "utc": float(d.get("shipped_utc") or 0),
+                          "nom": str((d.get("address") or {}).get("name") or "")})
+    colis.sort(key=lambda c: c["utc"])
+    meta = db.collection(_REMU_FANNY[0]).document(_REMU_FANNY[1]).get()
+    versements = sorted(((meta.to_dict() or {}).get("versements") or []) if meta.exists else [],
+                        key=lambda v: float(v.get("utc") or 0))
+    gagne = round(sum(c["montant"] for c in colis), 2)
+    paye = round(sum(float(v.get("montant") or 0) for v in versements), 2)
+    etat = {"tarif": _REMU_FANNY_TARIF, "nb_colis": len(colis), "gagne": gagne,
+            "paye": paye, "du": round(gagne - paye, 2),
+            "dernier_versement": versements[-1] if versements else None}
+    if detail:
+        etat["colis"] = colis
+        etat["versements"] = versements
+    return etat
+
+
+@https_fn.on_request(max_instances=3)
+def admin_remu_fanny(req: https_fn.Request) -> https_fn.Response:
+    """Rémunération de Fanny depuis l'admin panel.
+    POST — Authorization: Bearer <firebase_id_token> (ADMIN_EMAILS)
+    {"action": "etat"} → état détaillé
+    {"action": "payer", "montant": 45} → ajoute un versement, renvoie l'état"""
+    if req.method == "OPTIONS":
+        return _cors_preflight()
+    admin = _verify_admin(req)
+    h = {**_CORS_HEADERS, "Content-Type": "application/json"}
+    if not admin:
+        return https_fn.Response(json.dumps({"error": "Accès réservé aux administrateurs"}),
+                                 status=403, headers=h)
+    try:
+        body = json.loads(req.data or b"{}")
+    except Exception:
+        body = {}
+    db = _get_db()
+    try:
+        if body.get("action") == "payer":
+            try:
+                montant = round(float(body.get("montant")), 2)
+            except (TypeError, ValueError):
+                montant = 0
+            if not 0 < montant <= 10000:
+                return https_fn.Response(json.dumps({"error": "Montant invalide"}),
+                                         status=400, headers=h)
+            db.collection(_REMU_FANNY[0]).document(_REMU_FANNY[1]).set(
+                {"versements": firestore.ArrayUnion([{
+                    "utc": time.time(), "montant": montant, "par": admin}])}, merge=True)
+            print(f"[admin_remu_fanny] versement {montant} € par {admin}")
+        return https_fn.Response(json.dumps({"ok": True, **_remu_fanny_etat(db, detail=True)}),
+                                 headers=h)
+    except Exception as e:
+        traceback.print_exc()
+        return https_fn.Response(json.dumps({"error": str(e)}), status=500, headers=h)
+
+
 _TRANSPORTEURS = {
     "colissimo":     ("Colissimo", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
     "lettre_suivie": ("La Poste — Lettre suivie", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
@@ -2245,6 +2357,12 @@ def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
         maj["corrected_utc"] = time.time()
     else:
         maj["shipped_utc"] = time.time()
+        # L'interface quitte l'étagère de Fanny (quel que soit le chemin de saisie).
+        _stock_fanny_bouger(_get_db(), boitier=-int(cmd.get("quantity") or 1))
+        if _par_fanny(par):
+            # Montant figé sur la commande : un changement de tarif ne touche
+            # pas les colis déjà expédiés. Une correction ne le repose pas.
+            maj["remu_fanny"] = _REMU_FANNY_TARIF
     ref.update(maj)
     ref_client = order_id.replace("MS-", "")[:8]
     _email_pack_expedie(cmd.get("email", ""), [colis], ref_client,
@@ -5801,11 +5919,167 @@ def boitier_enregistrer(req: https_fn.Request) -> https_fn.Response:
         boitiers.document(serial).set(doc)
         poste_ref.set({"jours": {jour: firestore.Increment(1)},
                        "dernier_utc": now, "total": firestore.Increment(1)}, merge=True)
+        cible = _STOCK_PILE_OFFRE[months]
+        if flashed:
+            # Carte neuve flashée : elle quitte « à monter / flasher ».
+            _stock_fanny_bouger(db, cartes=-1, **{cible: 1})
+        elif months in (2, 12):
+            # Interface vierge déjà prête qui reçoit une licence.
+            _stock_fanny_bouger(db, boitier=-1, **{cible: 1})
         print(f"[boitier_enregistrer] {nom_poste} : {serial} {libelle} carte {usb_id}")
         return _rep({"ok": True, "created": True, **_fan_vue(serial, doc)})
     except Exception as e:
         traceback.print_exc()
         print(f"[boitier_enregistrer] erreur : {e}")
+        return _rep({"ok": False, "error": "server"}, 500)
+
+
+# --- MyStrowFan : onglet Expéditions (interfaces seules) --------------------
+#
+# Même clé de poste que l'enregistrement. Elle donne en plus accès aux
+# adresses des acheteurs, d'où un périmètre volontairement étroit : seulement
+# les interfaces seules (plan « boitier », celles que le poste expédie), et
+# seulement celles à expédier ou expédiées depuis moins de 30 jours. Jamais
+# l'e-mail, le montant ni la session Stripe. Une commande déjà expédiée ne se
+# corrige pas d'ici (même règle que la page du mail) : correction = admin.
+
+_FAN_EXPE_JOURS = 30
+# Dernière version de MyStrowFan (écrite par publier_mystrowfan.py) :
+# {version, url (Firebase Storage + jeton), sha256, taille, notes}.
+_FAN_MAJ = ("meta", "mystrowfan")
+
+
+def _fan_vue_commande(order_id: str, d: dict) -> dict:
+    a = d.get("address") or {}
+    return {
+        "id":          order_id,
+        "ref":         order_id.replace("MS-", "")[:8],
+        "status":      "shipped" if d.get("status") == "shipped" else "a_expedier",
+        "quantity":    int(d.get("quantity") or 1),
+        "created_utc": float(d.get("created_utc") or 0),
+        "shipped_utc": float(d.get("shipped_utc") or 0),
+        "shipped_by":  str(d.get("shipped_by") or ""),
+        "remu_fanny":  float(d.get("remu_fanny") or 0),
+        "address":     {k: str(a.get(k) or "") for k in
+                        ("name", "line1", "line2", "postal_code", "city", "country", "phone")},
+        "packages":    [{"carrier": p.get("carrier", ""), "tracking": p.get("tracking", ""),
+                         "url": p.get("url", "")} for p in (d.get("packages") or [])],
+    }
+
+
+@https_fn.on_request(max_instances=3)
+def boitier_expeditions(req: https_fn.Request) -> https_fn.Response:
+    """POST, en-tête X-Poste-Key.
+    {"action": "liste"} → {"ok", "commandes": [...], "stock", "transporteurs"}
+    {"action": "expedier", "order_id", "transporteur", "suivi"} → mail de
+        suivi au client (même chemin que le lien du mail, `_enregistrer_suivi`).
+    """
+    _H = {"Content-Type": "application/json"}
+
+    def _rep(payload: dict, status: int = 200) -> https_fn.Response:
+        return https_fn.Response(json.dumps(payload), status=status, headers=_H)
+
+    if req.method != "POST":
+        return _rep({"ok": False, "error": "method"}, 405)
+    ip = (req.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+    poste_ref, poste = _fan_poste(req.headers.get("X-Poste-Key", ""))
+    if poste_ref is None:
+        _act_throttle_ok(ip)
+        return _rep({"ok": False, "error": "bad_key"}, 401)
+    try:
+        body = json.loads(req.get_data() or b"{}")
+    except Exception:
+        return _rep({"ok": False, "error": "bad_json"}, 400)
+    nom_poste = str(poste.get("nom") or "poste")[:40]
+    action = body.get("action") or ""
+
+    try:
+        db = _get_db()
+        if action == "liste":
+            limite = time.time() - _FAN_EXPE_JOURS * 86400
+            commandes = []
+            for snap in db.collection("boitier_commandes").where(
+                    "plan", "==", "boitier").stream():
+                d = snap.to_dict() or {}
+                if d.get("status") == "shipped":
+                    if float(d.get("shipped_utc") or d.get("corrected_utc") or 0) < limite:
+                        continue
+                elif d.get("status") not in ("a_expedier", "paid"):
+                    continue
+                commandes.append(_fan_vue_commande(snap.id, d))
+            commandes.sort(key=lambda c: c["created_utc"])
+            stock, stocks = None, None
+            s = db.collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1]).get()
+            if s.exists:
+                sd = s.to_dict() or {}
+                stock = int(sd.get("boitier", 0))
+                stocks = [{"cle": k, "nom": nom, "n": int(sd.get(k, 0))}
+                          for k, nom in _STOCK_FANNY_CLES]
+            maj = None
+            m = db.collection(_FAN_MAJ[0]).document(_FAN_MAJ[1]).get()
+            if m.exists:
+                md = m.to_dict() or {}
+                maj = {k: md.get(k) for k in ("version", "url", "sha256", "taille", "notes")}
+            try:
+                remu = _remu_fanny_etat(db, detail=True)
+                remu["versements"] = [{"utc": v.get("utc"), "montant": v.get("montant")}
+                                      for v in remu.get("versements") or []]
+            except Exception as e:
+                print(f"[boitier_expeditions] rémunération : {e}")
+                remu = None
+            return _rep({"ok": True, "commandes": commandes, "stock": stock, "remu": remu,
+                         "stocks": stocks, "maj": maj,
+                         "transporteurs": [[k, v[0]] for k, v in _TRANSPORTEURS.items()]})
+
+        if action == "stock":
+            # Correction à la main par Fanny : valeurs absolues de son étagère.
+            valeurs = body.get("stocks") or {}
+            maj_stock = {}
+            for k, _nom in _STOCK_FANNY_CLES:
+                if k in valeurs:
+                    try:
+                        n = int(valeurs[k])
+                    except (TypeError, ValueError):
+                        return _rep({"ok": False, "error": "bad_stock"}, 400)
+                    if not 0 <= n <= 9999:
+                        return _rep({"ok": False, "error": "bad_stock"}, 400)
+                    maj_stock[k] = n
+            if not maj_stock:
+                return _rep({"ok": False, "error": "bad_stock"}, 400)
+            ref = db.collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1])
+            ref.set({**maj_stock, "modifie_utc": time.time(),
+                     "modifie_par": f"MyStrowFan · {nom_poste}"}, merge=True)
+            print(f"[boitier_expeditions] {nom_poste} : stock corrigé {maj_stock}")
+            sd = ref.get().to_dict() or {}
+            return _rep({"ok": True, "stock": int(sd.get("boitier", 0)),
+                         "stocks": [{"cle": k, "nom": nom, "n": int(sd.get(k, 0))}
+                                    for k, nom in _STOCK_FANNY_CLES]})
+
+        if action == "expedier":
+            order_id = str(body.get("order_id") or "").strip()
+            if not re.fullmatch(r"MS-[A-Za-z0-9]{4,40}", order_id):
+                return _rep({"ok": False, "error": "bad_order"}, 400)
+            ref = db.collection("boitier_commandes").document(order_id)
+            cmd = ref.get().to_dict() or {}
+            if cmd.get("plan") != "boitier":
+                return _rep({"ok": False, "error": "not_found"}, 404)
+            if cmd.get("status") == "shipped":
+                return _rep({"ok": False, "error": "already_shipped",
+                             "commande": _fan_vue_commande(order_id, cmd)}, 409)
+            colis = _enregistrer_suivi(ref, cmd, order_id,
+                                       str(body.get("transporteur") or ""),
+                                       str(body.get("suivi") or ""),
+                                       f"MyStrowFan · {nom_poste}")
+            if not colis:
+                return _rep({"ok": False, "error": "bad_tracking"}, 400)
+            print(f"[boitier_expeditions] {nom_poste} : {order_id} → {colis['tracking']}")
+            return _rep({"ok": True, "commande":
+                         _fan_vue_commande(order_id, ref.get().to_dict() or {})})
+
+        return _rep({"ok": False, "error": "bad_action"}, 400)
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[boitier_expeditions] erreur : {e}")
         return _rep({"ok": False, "error": "server"}, 500)
 
 

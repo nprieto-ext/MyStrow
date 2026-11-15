@@ -14895,7 +14895,8 @@ class MainWindow(QMainWindow):
         # Vitesse générale : le fader FX de l'AKAI, ou l'override de vitesse du
         # clip en restitution. Constante sur toute la frame.
         _eff_speed  = cfg.get("speed_override", self.effect_speed)
-        _fader_mult = max(0.01, _eff_speed / 100.0)
+        from core import fx_fader_mult
+        _fader_mult = fx_fader_mult(_eff_speed)   # ×2,5 au sommet, cf. core
 
         _now   = _time.monotonic()
         t_reel = _now - getattr(self, 'effect_t0', 0)
@@ -17847,8 +17848,19 @@ class MainWindow(QMainWindow):
         # on coupe le dimmer pour éviter une lumière figée sans musique.
         if ia_mode == 'musical' and section == 'quiet':
             _silence_raw = getattr(self.live_engine, '_rms_history', None)
+            # Volume ABSOLU bas ET plus aucun temps détecté. Le volume seul ne
+            # suffit pas : un micro de portable loin de l'enceinte reste sous
+            # 0.008 alors que les beats (détection relative) tombent en
+            # rythme — on faisait le noir en pleine musique (client César,
+            # 14/11/2026 : BEAT qui clignote, projecteur éteint).
+            _beats_alive = False
+            try:
+                _beats_alive = bool(self.live_engine.beats_recent())
+            except Exception:
+                pass
             _is_silence  = (
-                _silence_raw is not None
+                not _beats_alive
+                and _silence_raw is not None
                 and len(_silence_raw) >= 10
                 and sum(list(_silence_raw)[-10:]) / 10 < 0.008
             )
@@ -32515,10 +32527,28 @@ class MainWindow(QMainWindow):
                           QColor(proj.base_color), proj.pan, proj.tilt,
                           getattr(proj, 'color_wheel', 0)))
             level, color = entry[0], entry[1]
-            proj.level = level
-            proj.color = QColor(color)
-            proj.base_color = QColor(color)
-            self._update_color_wheel(proj, proj.color)
+            dim = entry[4] if len(entry) > 4 else None
+            if dim is not None:
+                # Couche Dimmer : même encodage que le moteur du show (branche
+                # « Dimmer seul » de `_update_effect_from_layers`). Le niveau en
+                # 0..100 et une couleur égale à base × niveau, pour qu'artnet_dmx
+                # sorte la teinte pure sur R/G/B et le niveau sur le canal Dim.
+                # Avant, `level` (0..1) était posé tel quel : artnet_dmx croyait
+                # à un effet couleur et sortait le Dim à 255 en permanence. Une
+                # lyre à roue, qui n'a que ce canal pour sa luminosité, ne
+                # pulsait donc pas du tout.
+                bv = max(0.0, min(1.0, dim))
+                pure = QColor(color)
+                proj.level = bv * 100
+                proj.base_color = pure
+                proj.color = QColor(int(pure.red() * bv), int(pure.green() * bv),
+                                    int(pure.blue() * bv))
+                self._update_color_wheel(proj, pure)
+            else:
+                proj.level = level
+                proj.color = QColor(color)
+                proj.base_color = QColor(color)
+                self._update_color_wheel(proj, proj.color)
             if len(entry) > 3:
                 if entry[2] is not None:
                     proj.pan = entry[2]

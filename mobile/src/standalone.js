@@ -323,7 +323,7 @@
     const now = performance.now() / 1000;
     const dt = clock.last === null ? 0 : Math.min(0.25, Math.max(0, now - clock.last));
     clock.last = now;
-    clock.t += dt * Math.max(0.01, play.faders[SPEED] / 100);
+    clock.t += dt * Engine.fxFaderMult(play.faders[SPEED]);   // cf. core.fx_fader_mult
   }
 
   // TAILLE : agrandit les couches de mouvement (Pan, Tilt, Pan/Tilt) de

@@ -6372,6 +6372,14 @@ class AdminPanel(QMainWindow):
         self._cmd_stats_lbl = QLabel("…")
         self._cmd_stats_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
         hdr_lay.addWidget(self._cmd_stats_lbl)
+        self._remu_btn = QPushButton("💶  Fanny : …")
+        self._remu_btn.setFixedHeight(28)
+        self._remu_btn.setStyleSheet(_BTN_SECONDARY)
+        self._remu_btn.setToolTip("Rémunération de Fanny : 15 € par colis qu'elle expédie.\n"
+                                  "Clic : détail et enregistrer un paiement")
+        self._remu_btn.clicked.connect(self._payer_fanny)
+        self._remu_etat = None
+        hdr_lay.addWidget(self._remu_btn)
         btn_ref = QPushButton("↺  Actualiser")
         btn_ref.setFixedHeight(28)
         btn_ref.setStyleSheet(_BTN_SECONDARY)
@@ -6810,6 +6818,93 @@ class AdminPanel(QMainWindow):
             self._cmd_stats_lbl.setText(f"⚠ {msg}")
 
         _run_async(self, _fetch, on_success=_on_data, on_error=_on_err)
+        self._load_remu_fanny()
+
+    # ------------------------------------------------ rémunération de Fanny
+    def _remu_appel(self, **body):
+        import urllib.error
+        req = urllib.request.Request(
+            "https://us-central1-mystrow-907be.cloudfunctions.net/admin_remu_fanny",
+            method="POST", data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {self._token()}",
+                     "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read().decode()).get("error", str(e))
+            except Exception:
+                msg = str(e)
+            raise RuntimeError(f"{e.code} — {msg}")
+
+    @staticmethod
+    def _eur(x) -> str:
+        return f"{float(x or 0):.2f}".replace(".00", "").replace(".", ",") + " €"
+
+    def _afficher_remu(self, etat: dict):
+        self._remu_etat = etat
+        du = float(etat.get("du") or 0)
+        self._remu_btn.setText(f"💶  À payer à Fanny : {self._eur(du)}")
+        self._remu_btn.setStyleSheet(_BTN_GREEN if du > 0 else _BTN_SECONDARY)
+
+    def _load_remu_fanny(self):
+        def _err(e):
+            self._remu_btn.setText("💶  Fanny : ?")
+            self._remu_btn.setToolTip(f"Rémunération indisponible : {e}")
+        _run_async(self, lambda: self._remu_appel(action="etat"),
+                   on_success=self._afficher_remu, on_error=_err)
+
+    def _payer_fanny(self):
+        e = self._remu_etat
+        if not e:
+            self._load_remu_fanny()
+            return
+        lignes = [f"{_fmt_date(c['utc']) if c.get('utc') else '?'}  —  {c['ref']}  "
+                  f"{c.get('nom', '')}  :  {self._eur(c['montant'])}" for c in e.get("colis") or []]
+        vers = [f"{_fmt_date(v['utc'])}  —  {self._eur(v.get('montant'))}"
+                for v in e.get("versements") or [] if v.get("utc")]
+        du = float(e.get("du") or 0)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Rémunération de Fanny")
+        dlg.setMinimumWidth(460)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(
+            f"<b>{e.get('nb_colis', 0)} colis</b> expédiés × {self._eur(e.get('tarif'))} = "
+            f"{self._eur(e.get('gagne'))}<br>Déjà payé : {self._eur(e.get('paye'))}"
+            f"<br><b>Reste à payer : {self._eur(du)}</b>"))
+        det = QPlainTextEdit("COLIS\n" + ("\n".join(lignes) or "aucun")
+                             + "\n\nPAIEMENTS\n" + ("\n".join(vers) or "aucun"))
+        det.setReadOnly(True)
+        det.setMinimumHeight(180)
+        lay.addWidget(det)
+        lay.addWidget(QLabel("Montant que tu viens de lui verser (€)"))
+        ed = QLineEdit(f"{du:g}" if du > 0 else "")
+        lay.addWidget(ed)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        b_annul = QPushButton("Fermer")
+        b_annul.setStyleSheet(_BTN_SECONDARY)
+        b_annul.clicked.connect(dlg.reject)
+        b_ok = QPushButton("Enregistrer le paiement")
+        b_ok.clicked.connect(dlg.accept)
+        btns.addWidget(b_annul)
+        btns.addWidget(b_ok)
+        lay.addLayout(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            montant = round(float(ed.text().replace(",", ".").replace("€", "").strip()), 2)
+        except ValueError:
+            QMessageBox.warning(self, "Paiement", "Montant invalide.")
+            return
+        if montant <= 0 or QMessageBox.question(
+                self, "Confirmer", f"Enregistrer un paiement de {self._eur(montant)} à Fanny ?",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        _run_async(self, lambda: self._remu_appel(action="payer", montant=montant),
+                   on_success=self._afficher_remu,
+                   on_error=lambda err: QMessageBox.critical(self, "Paiement non enregistré", str(err)))
 
     def _fill_commandes(self):
         seules = self._cmd_filter.currentIndex() == 0

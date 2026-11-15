@@ -1450,6 +1450,15 @@ class LiveAudioEngine(QObject):
                     self._beat_pending = True
                     self._update_bpm()
 
+    # Fenêtre au-delà de laquelle l'absence de temps compte comme un silence.
+    # 2,5 s = 5 temps à 120 BPM : couvre un break court sans éteindre la salle.
+    _BEAT_ALIVE_S = 2.5
+
+    def beats_recent(self) -> bool:
+        """True si un temps a été détecté il y a moins de `_BEAT_ALIVE_S`."""
+        ts = self._last_beat_ts or 0.0
+        return ts > 0.0 and (time.monotonic() - ts) < self._BEAT_ALIVE_S
+
     def _detect_section_live(self) -> str:
         """Détecte la section musicale depuis l'historique d'énergie normalisée."""
         h = self._norm_history
@@ -1457,8 +1466,13 @@ class LiveAudioEngine(QObject):
         if n < 10:
             return 'quiet'
 
-        # Gate de silence absolu : si le signal brut moyen est quasi nul → silence
-        if self._rms_history:
+        # Gate de silence absolu : si le signal brut moyen est quasi nul → silence.
+        # SAUF si des temps arrivent encore : un micro de portable posé loin de
+        # l'enceinte reste sous 0.01 en absolu alors que la détection de beat
+        # (relative) bat parfaitement la mesure. Sans cette garde, Musical IA
+        # passait en « quiet » et éteignait tout en pleine musique (client
+        # César, MacBook + micro intégré, 14/11/2026).
+        if self._rms_history and not self.beats_recent():
             recent_raw = list(self._rms_history)[-20:]
             if sum(recent_raw) / len(recent_raw) < 0.01:
                 return 'quiet'
