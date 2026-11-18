@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.18"
+VERSION = "3.2.19"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -1196,7 +1196,19 @@ def gradient_layer_spec(layer):
     from pixel_map import GradientSpec
     g = _layer_get(layer, 'grad', None)
     if isinstance(g, dict) and g:
-        return GradientSpec.from_dict(g)
+        spec = GradientSpec.from_dict(g)
+        # La colonne VITESSE de la couche était IGNORÉE dès qu'un `grad`
+        # existait : la pousser à fond dans l'éditeur ne changeait rien, et
+        # l'effet plafonnait à grad.speed × 2,5 (fader FX) — 0,4 → 1 tour/s,
+        # dix fois moins qu'un effet classique (« Enrouge&noir », 18/11/26).
+        # Elle sert désormais de MULTIPLICATEUR : 50 (défaut, tous les effets
+        # déjà enregistrés) = ×1, 100 = ×4, 0 = figé.
+        try:
+            v = max(0.0, min(100.0, float(_layer_get(layer, 'speed', 50))))
+        except (TypeError, ValueError):
+            v = 50.0
+        spec.speed = float(spec.speed or 0.0) * (v / 50.0) ** 2
+        return spec
     return GradientSpec(
         stops=[_layer_get(layer, 'color1', '#ff0000') or '#ff0000',
                _layer_get(layer, 'color2', '#0000ff') or '#0000ff'],
@@ -1779,6 +1791,24 @@ FX_MACHINE_TYPES = frozenset({
 # Canal de SORTIE de chaque machine : celui que pilote `proj.level`. Ils sont
 # mutuellement exclusifs — une machine a un débit, pas trois.
 FX_MACHINE_OUTPUT_CHANNELS = ("Smoke", "Spark", "Flame")
+
+
+def fixture_motor_only(proj) -> bool:
+    """Appareil À MOTEUR qui n'est pas une lyre : barre LED à Tilt motorisé…
+
+    Le LIVE ne faisait bouger que les types « Moving Head »/« Laser ». Une barre
+    patchée en « Barre LED » (Tilt + Speed puis cellules RGBW, retour client
+    18/11/2026) restait donc immobile alors que son canal Tilt existe. Sur une
+    barre à pixels, c'est le MASTER (canaux globaux) qui porte le Tilt.
+    Ces appareils reçoivent le MOUVEMENT seulement : leur couleur reste celle
+    du wash (pas la couleur/le gobo des lyres).
+    """
+    if getattr(proj, 'fixture_type', '') in ("Moving Head", "Laser"):
+        return False
+    if fixture_is_fx_machine(proj):
+        return False
+    prof = getattr(proj, 'dmx_profile', None) or []
+    return "Pan" in prof or "Tilt" in prof
 
 
 def fixture_is_fx_machine(proj) -> bool:

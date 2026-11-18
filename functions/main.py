@@ -2337,6 +2337,12 @@ _TRANSPORTEURS = {
 }
 
 
+def _suivi_enregistre(cmd: dict) -> bool:
+    """Expédiée AVEC un n° de suivi. Une commande passée en « shipped » à la main
+    sans numéro (12/11/2026 : César, Eliot) n'a jamais prévenu le client."""
+    return cmd.get("status") == "shipped" and bool(cmd.get("packages"))
+
+
 def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
                        par: str) -> dict | None:
     """Pose le suivi d'une interface seule et prévient le client.
@@ -2350,11 +2356,16 @@ def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
         return None
     nom, url = _TRANSPORTEURS[transp]
     colis = {"carrier": nom, "tracking": code, "url": url.format(code)}
-    correction = cmd.get("status") == "shipped"
+    correction = _suivi_enregistre(cmd)
     maj = {"status": "shipped", "packages": [colis], "shipped_by": par}
     if correction:
         maj["previous_packages"] = cmd.get("packages") or []
         maj["corrected_utc"] = time.time()
+    elif cmd.get("status") == "shipped":
+        # Passée en « expédiée » à la main sans numéro : le colis est parti
+        # depuis longtemps, le stock a déjà été recompté. Seuls le numéro et le
+        # mail au client manquent.
+        maj["shipped_utc"] = float(cmd.get("shipped_utc") or time.time())
     else:
         maj["shipped_utc"] = time.time()
         # L'interface quitte l'étagère de Fanny (quel que soit le chemin de saisie).
@@ -2403,7 +2414,7 @@ def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
     a = cmd.get("address") or {}
     dest = html_escape(f"{a.get('name', '')} — {a.get('postal_code', '')} {a.get('city', '')}")
 
-    if cmd.get("status") == "shipped":
+    if _suivi_enregistre(cmd):
         p = (cmd.get("packages") or [{}])[0]
         return _page_expedition("Déjà expédiée", f"<h1 class='ok'>✓ Déjà expédiée</h1><div class='box'>"
                                 f"Réf. {ref_client} → {dest}<br>{html_escape(p.get('carrier', ''))} : "
@@ -2583,12 +2594,8 @@ def _run_avis_amazon() -> list[str]:
             continue
         ref.set({"demande_utc": time.time(), "achat": cmd.get("PurchaseDate", "")})
         faites.append(oid)
-    if faites:
-        liste = "<br>".join(
-            f'<a href="https://sellercentral.amazon.fr/orders-v3/order/{o}">{o}</a>'
-            for o in faites)
-        _alert_admin(f"⭐ MyStrow — {len(faites)} demande(s) d'avis Amazon envoyée(s)",
-                     f"<h2>Demandes d'avis envoyées</h2><div class='box'>{liste}</div>")
+    # Pas de mail récapitulatif : Nicolas n'en veut pas (16/11/2026). La trace
+    # reste dans `avis_amazon/{id}` et dans les logs de la fonction.
     return faites
 
 
@@ -5954,7 +5961,12 @@ def _fan_vue_commande(order_id: str, d: dict) -> dict:
     return {
         "id":          order_id,
         "ref":         order_id.replace("MS-", "")[:8],
-        "status":      "shipped" if d.get("status") == "shipped" else "a_expedier",
+        # Expédiée SANS n° de suivi (passée à la main) = encore à traiter :
+        # Fanny doit pouvoir saisir le numéro.
+        "status":      "shipped" if _suivi_enregistre(d) else "a_expedier",
+        # Pour le champ e-mail du destinataire sur l'étiquette Colissimo : sans
+        # lui, les avis « disponible en point relais » partent chez l'expéditeur.
+        "email":       str(d.get("email") or ""),
         "quantity":    int(d.get("quantity") or 1),
         "created_utc": float(d.get("created_utc") or 0),
         "shipped_utc": float(d.get("shipped_utc") or 0),
@@ -6001,10 +6013,10 @@ def boitier_expeditions(req: https_fn.Request) -> https_fn.Response:
             for snap in db.collection("boitier_commandes").where(
                     "plan", "==", "boitier").stream():
                 d = snap.to_dict() or {}
-                if d.get("status") == "shipped":
+                if _suivi_enregistre(d):
                     if float(d.get("shipped_utc") or d.get("corrected_utc") or 0) < limite:
                         continue
-                elif d.get("status") not in ("a_expedier", "paid"):
+                elif d.get("status") not in ("a_expedier", "paid", "shipped"):
                     continue
                 commandes.append(_fan_vue_commande(snap.id, d))
             commandes.sort(key=lambda c: c["created_utc"])
@@ -6063,7 +6075,7 @@ def boitier_expeditions(req: https_fn.Request) -> https_fn.Response:
             cmd = ref.get().to_dict() or {}
             if cmd.get("plan") != "boitier":
                 return _rep({"ok": False, "error": "not_found"}, 404)
-            if cmd.get("status") == "shipped":
+            if _suivi_enregistre(cmd):
                 return _rep({"ok": False, "error": "already_shipped",
                              "commande": _fan_vue_commande(order_id, cmd)}, 409)
             colis = _enregistrer_suivi(ref, cmd, order_id,

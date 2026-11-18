@@ -10340,6 +10340,14 @@ class _PatchCanvasProxy:
             if (proj.group, li) in self.selected_lamps:
                 to_update.append(i)
             g_cnt[proj.group] = li + 1
+        # Barre/matrice : un appareil = un seul groupe. Un pixel sélectionné
+        # seul (Ctrl+Maj+clic) entraîne toute sa barre, comme dans le Patch.
+        _mids = {getattr(self.projectors[i], 'matrix_id', None) for i in to_update}
+        _mids.discard(None)
+        if _mids:
+            to_update = sorted(set(to_update) | {
+                i for i, p in enumerate(self.projectors)
+                if getattr(p, 'matrix_id', None) in _mids})
         for i in to_update:
             self.projectors[i].group = new_group
         self.selected_lamps.clear()

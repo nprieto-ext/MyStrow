@@ -100,6 +100,8 @@ class FauxWin:
     _on_memory_pad_pressed = mw.MainWindow._on_memory_pad_pressed
     _on_memory_pad_released = mw.MainWindow._on_memory_pad_released
     _activate_memory_pad   = mw.MainWindow._activate_memory_pad
+    _mem_turn_off          = mw.MainWindow._mem_turn_off
+    MEM_LONG_PRESS_OFF     = mw.MainWindow.MEM_LONG_PRESS_OFF
 
     _recompute_memory_mix  = mw.MainWindow._recompute_memory_mix
     _mem_drive_effect      = mw.MainWindow._mem_drive_effect
@@ -636,6 +638,11 @@ class MenuContextuel(unittest.TestCase):
                 self._button_effect_configs = {}
                 self._effect_library_configs = {}
                 self.poses = []
+                self.active_memory_pads = {}
+                self._fader_map = [{"type": "memory", "mem_col": 0}]
+
+            def _mem_col_to_faders(self, mem_col):
+                return [0]
 
             def _set_mem_pad_mode(self, mem_col, row, mode):
                 self.poses.append((mem_col, row, mode))
@@ -701,6 +708,36 @@ class MenuContextuel(unittest.TestCase):
         w, btn = self._fenetre()
         self._ouvrir(w, btn, choisir=mw.tr("mw_mem_beh_flash"))
         self.assertEqual(w.poses, [(0, 0, "flash")])
+
+
+class AppuiLongMultiCue(unittest.TestCase):
+    """Mémoire multi-cue allumée : appui court = cue suivant, appui long = éteinte."""
+
+    def _w(self):
+        w = FauxWin()
+        w.memories[0][0] = {"cues": [_cue(3, {0: 100}), _cue(3, {1: 100}),
+                                     _cue(3, {2: 100})], "loop": True}
+        w.poser(0)
+        return w
+
+    def test_appui_court_avance(self):
+        w = self._w()
+        w.poser(0)
+        self.assertEqual(w._mem_cue_idx[(0, 0)], 1)
+        self.assertEqual(w.active_memory_pads.get(w._mem_col_to_fader(0)), 0)
+
+    def test_appui_long_eteint(self):
+        w = self._w()
+        w.appuyer(0)
+        k, t = w._mem_long_press
+        w._mem_long_press = (k, t - 1.0)   # tenu 1 s
+        w.relacher(0)
+        self.assertIsNone(w.active_memory_pads.get(w._mem_col_to_fader(0)))
+
+    def test_declencheur_externe_neteint_pas(self):
+        w = self._w()
+        w._activate_memory_pad(None, 0, 0)   # Stream Deck / GO : pas de toggle_off
+        self.assertIsNone(getattr(w, "_mem_long_press", None))
 
 
 if __name__ == "__main__":

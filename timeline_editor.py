@@ -1667,6 +1667,9 @@ class LightTimelineEditor(QDialog):
         ai_action = tools_menu.addAction(tr("te_menu_ai_gen"))
         ai_action.triggered.connect(self.generate_ai_sequence)
 
+        ai_prompt_action = tools_menu.addAction(tr("rai_menu"))
+        ai_prompt_action.triggered.connect(self.open_ai_prompt_dialog)
+
         return menubar
 
     def _create_header(self):
@@ -1846,6 +1849,21 @@ class LightTimelineEditor(QDialog):
         )
         self._rec_clear_btn.clicked.connect(self._rec_clear)
         header_layout.addWidget(self._rec_clear_btn)
+
+        # ── Bouton 🤖 IA : prompt à copier dans ChatGPT/Gemini/Claude ─────────
+        self._ai_prompt_btn = QPushButton(tr("rai_btn"))
+        self._ai_prompt_btn.setToolTip(tr("rai_btn_tip"))
+        self._ai_prompt_btn.setFixedHeight(_BTN)
+        self._ai_prompt_btn.setCursor(Qt.PointingHandCursor)
+        self._ai_prompt_btn.setFocusPolicy(Qt.NoFocus)
+        self._ai_prompt_btn.setStyleSheet(
+            "QPushButton { background:#1e1e1e; color:#c58cff; border:1px solid #3a3a3a;"
+            " border-radius:6px; font-size:12px; font-weight:bold; padding:0 12px; }"
+            "QPushButton:hover { background:#24163a; color:#e0b8ff; border-color:#6a3aa0; }"
+            "QPushButton:pressed { background:#2e1a4a; color:#ffffff; }"
+        )
+        self._ai_prompt_btn.clicked.connect(self.open_ai_prompt_dialog)
+        header_layout.addWidget(self._ai_prompt_btn)
 
         def _upd_dur_lbl(v):
             txt = (f"{v:.0f}" if float(v).is_integer() else f"{v:.1f}") + " s"
@@ -3655,6 +3673,103 @@ class LightTimelineEditor(QDialog):
                         or getattr(t, 'is_effect_track', False)
                         or getattr(t, 'is_projector_track', False)
                         or not self._editable(t))]
+
+    # ── Créer avec l'IA (prompt à copier / réponse à coller) ──────────────
+
+    def _ai_prompt_context(self):
+        """Ce que l'IA a le droit d'écrire : pistes de groupe non verrouillées,
+        piste Effet (catalogue d'effets), piste Position (presets).
+        Cf. rec_ai_prompt.build_prompt / parse_ai_response."""
+        from core import fixture_is_fx_machine
+        gd = getattr(self, '_group_display', {}) or {}
+        projs = list(getattr(self.main_window, 'projectors', []) or [])
+        groups = []
+        for t in self._ai_generable_tracks():
+            members = [p for p in projs
+                       if gd.get(p.group, str(p.group).capitalize()) == t.name
+                       and not fixture_is_fx_machine(p)]
+            internal = sorted({p.group for p in members})
+            counts = {}
+            colour = moving = False
+            for p in members:
+                label = getattr(p, 'fixture_type', '') or 'PAR'
+                fx_name = getattr(p, 'fixture_name', '') or getattr(p, 'model', '') or ''
+                if fx_name and fx_name not in label:
+                    label = f"{label} {fx_name}"
+                counts[label] = counts.get(label, 0) + 1
+                prof = getattr(p, 'dmx_profile', None) or []
+                if not prof or any(c in prof for c in ('R', 'G', 'B', 'ColorWheel', 'C')):
+                    colour = True
+                if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser'):
+                    moving = True
+            fixtures = ", ".join(f"{n} × {k}" for k, n in counts.items()) or "—"
+            groups.append({
+                'key': t.name,
+                'label': t.display_name() if hasattr(t, 'display_name') else t.name,
+                'fixtures': fixtures,
+                'colour': colour or not members,
+                'moving': moving,
+                # Groupe « face » : celui qui éclaire le chanteur (cf. règle 4b du prompt)
+                'front': 'face' in internal,
+                'aliases': internal + [t.display_name() if hasattr(t, 'display_name') else t.name],
+            })
+
+        effects = []
+        eff_track = self.track_map.get("Effet")
+        if eff_track is not None and self._editable(eff_track):
+            from light_timeline import LightTrack as _LT
+            seen = set()
+            for e in _LT._load_all_effects():
+                name = e.get('name')
+                if name and name not in seen:
+                    seen.add(name)
+                    effects.append({'name': name, 'type': e.get('type', ''),
+                                    'layers': e.get('layers', [])})
+
+        positions = None
+        pos_track = self.track_map.get("Position")
+        if pos_track is not None and self._editable(pos_track):
+            positions = [p.get('name', f"Preset {i + 1}") for i, p in
+                         enumerate(getattr(self.main_window, 'position_presets', []) or [])]
+        return {'groups': groups, 'effects': effects, 'positions': positions}
+
+    def open_ai_prompt_dialog(self):
+        """🤖 Créer avec l'IA : MyStrow analyse le morceau, fournit le prompt,
+        puis charge la réponse de l'IA sur la timeline (modifiable ensuite)."""
+        if not self.media_path or not getattr(self, '_has_audio_track', True):
+            QMessageBox.information(self, tr("rai_title"), tr("te_reanalyze_no_audio"))
+            return
+        from rec_ai_prompt import RecAIDialog
+        dlg = RecAIDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            self._apply_ai_clips(dlg.result_clips())
+
+    def _apply_ai_clips(self, clips):
+        """Remplace le contenu des pistes que la réponse remplit (et elles
+        seules) par les blocs de l'IA. Annulable d'un Ctrl+Z."""
+        self.save_state()
+        touched = []
+        for name in {c['track'] for c in clips}:
+            t = self.track_map.get(name)
+            if t is not None and self._editable(t):
+                t.clips.clear()
+                touched.append(t)
+        n = 0
+        for d in sorted(clips, key=lambda c: c['start']):
+            t = self.track_map.get(d['track'])
+            if t is None or t not in touched:
+                continue
+            clip = t.add_clip(d['start'], d['duration'], QColor(d.get('color', '#ffffff')),
+                              d.get('intensity', 100))
+            self._apply_clip_dict(clip, d)
+            if d.get('effect_name'):
+                clip.effect_name = d['effect_name']
+            n += 1
+        for t in self.tracks:
+            t.update()
+        self.save_state()
+        self._save_sequence_no_close()
+        print(f"🤖 REC IA : {n} blocs chargés sur {len(touched)} piste(s)")
 
     def generate_ai_sequence(self, preset=None):
         """Genere une sequence avec IA. `preset` : code couleur présélectionné

@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
 
 import boitier_init as bi
 
-VERSION = "1.1.2"
+VERSION = "1.1.4"
 PROJECT_ID = "mystrow-907be"
 API_URL = f"https://us-central1-{PROJECT_ID}.cloudfunctions.net/boitier_enregistrer"
 EXPE_URL = f"https://us-central1-{PROJECT_ID}.cloudfunctions.net/boitier_expeditions"
@@ -936,10 +936,13 @@ class Fenetre(QMainWindow):
 
     def _maj_installer(self):
         maj = self._maj
-        if not maj or self.moteur:
-            if self.moteur:
-                QMessageBox.information(self, "Mise à jour",
-                                        "Arrête d'abord la préparation en cours.")
+        if not maj:
+            return
+        # Le moteur tourne dès qu'une offre est choisie (même en simple attente) :
+        # on ne bloque que si un boîtier est réellement branché.
+        if self.moteur and (bi.ports_mystrow() or bootloader_present()):
+            QMessageBox.information(self, "Mise à jour",
+                                    "Débranche d'abord le boîtier en cours, puis reclique.")
             return
         notes = f"\n\nNouveautés :\n{maj['notes']}" if maj.get("notes") else ""
         if QMessageBox.question(
@@ -1079,9 +1082,12 @@ class Fenetre(QMainWindow):
         txt = self._adresse_txt(a)
         esc = lambda x: (x.replace("&", "&amp;").replace("<", "&lt;")
                          .replace(">", "&gt;"))
+        mail = c.get("email") or ""
         adr = QLabel(esc(txt).replace("\n", "<br>") +
                      (f"<br><span style='color:{GRIS}'>Tél. {esc(a['phone'])}</span>"
-                      if a.get("phone") else ""))
+                      if a.get("phone") else "") +
+                     (f"<br><span style='color:{GRIS}'>E-mail : {esc(mail)}</span>"
+                      if mail else ""))
         adr.setTextFormat(Qt.RichText)
         adr.setTextInteractionFlags(Qt.TextSelectableByMouse)
         adr.setStyleSheet("font-size:16px; background:#1a1a19; border-radius:8px; padding:10px;")
@@ -1097,8 +1103,27 @@ class Fenetre(QMainWindow):
         b_copie.clicked.connect(_copier)
         rc = QHBoxLayout()
         rc.addWidget(b_copie)
+        if mail:
+            # Champ « e-mail du destinataire » de l'étiquette Colissimo : c'est
+            # là que partent les avis « disponible en point relais ».
+            b_mail = QPushButton("Copier l'e-mail")
+            b_mail.setCursor(Qt.PointingHandCursor)
+
+            def _copier_mail():
+                QApplication.clipboard().setText(mail)
+                b_mail.setText("✔ Copié")
+                QTimer.singleShot(1500, lambda: b_mail.setText("Copier l'e-mail"))
+            b_mail.clicked.connect(_copier_mail)
+            rc.addWidget(b_mail)
         rc.addStretch()
         l.addLayout(rc)
+        if mail:
+            aide = QLabel("👉 Sur l'étiquette Colissimo, colle cet e-mail dans le champ "
+                          "« e-mail du destinataire » : sinon le client n'est pas prévenu "
+                          "quand le colis arrive en point relais.")
+            aide.setWordWrap(True)
+            aide.setStyleSheet(f"color:{GRIS}; font-size:12px;")
+            l.addWidget(aide)
 
         l.addWidget(self._titre("UNE FOIS LE COLIS DÉPOSÉ"))
         r = QHBoxLayout()

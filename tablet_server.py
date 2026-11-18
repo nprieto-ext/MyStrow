@@ -552,15 +552,53 @@ def push_cart(idx: int, title: str, state: int):
 
 
 # ── Utilitaires ───────────────────────────────────────────────────────────────
+def _ip_hors_wifi(ip: str) -> bool:
+    """2.x.x.x = plage Art-Net (USB NODE, nodes) ; 169.254 = carte sans DHCP.
+    Aucune tablette ne joint le PC par là."""
+    return ip.startswith(("2.", "169.254.", "127."))
+
+
+def _rang_lan(ip: str) -> int:
+    if ip.startswith("192.168."):
+        return 0
+    parts = ip.split(".")
+    if parts[0] == "172" and len(parts) > 1 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+        return 1
+    if ip.startswith("10."):
+        return 2
+    return 3
+
+
 def get_local_ip() -> str:
+    """IP du PC à donner à la tablette (QR code, adresse affichée).
+
+    La route par défaut ne suffit pas : le USB NODE se présente comme une
+    carte réseau en 2.x.x.x et Windows la prend parfois pour la route vers
+    Internet. On affichait alors 2.0.0.x, injoignable depuis le Wi-Fi
+    (« quand je rentre l'adresse IP, il me dit que ce n'est pas possible »).
+    """
+    ip = ""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
-        return ip
     except Exception:
-        return "127.0.0.1"
+        pass
+    if ip and not _ip_hors_wifi(ip):
+        return ip
+    autres = []
+    try:
+        import ifaddr
+        for adapter in ifaddr.get_adapters():
+            for a in adapter.ips:
+                if isinstance(a.ip, str) and not _ip_hors_wifi(a.ip):
+                    autres.append(a.ip)
+    except Exception:
+        pass
+    if autres:
+        return min(autres, key=_rang_lan)
+    return ip or "127.0.0.1"
 
 
 def make_qr_png_path(url: str) -> str | None:

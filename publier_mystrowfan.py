@@ -60,7 +60,7 @@ def main():
     db.collection("meta").document("mystrowfan").set({
         "version": version, "url": url, "sha256": sha, "taille": len(data),
         "notes": notes, "publie_utc": time.time()})
-    print(f"✅ MyStrowFan {version} publiée (avant : {actuelle or 'rien'}).")
+    print(f"OK : MyStrowFan {version} publiée (avant : {actuelle or 'rien'}).")
     print("   Fanny verra le bandeau jaune à l'ouverture (ou dans les 5 min).")
 
 

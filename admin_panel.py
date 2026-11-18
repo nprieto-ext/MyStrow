@@ -6969,7 +6969,7 @@ class AdminPanel(QMainWindow):
             return  # packs MCF : le suivi vient d'Amazon tout seul
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
-        deja = r.get("status") == "shipped"
+        deja = r.get("status") == "shipped" and bool(r.get("packages"))
         act = menu.addAction("✏  Corriger le n° de suivi…" if deja else "📦  Saisir le n° de suivi…")
         if menu.exec(self._cmd_table.viewport().mapToGlobal(pos)) == act:
             self._saisir_suivi_commande(r)
@@ -6979,7 +6979,7 @@ class AdminPanel(QMainWindow):
         quand Fanny passe par le bouton de son mail."""
         ref = r.get("_id", "").replace("MS-", "")[:8]
         a = r.get("address") or {}
-        deja = r.get("status") == "shipped"
+        deja = r.get("status") == "shipped" and bool(r.get("packages"))
         colis = (r.get("packages") or [{}])[0]
 
         dlg = QDialog(self)

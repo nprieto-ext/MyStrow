@@ -1489,6 +1489,10 @@ class _NumCell(QWidget):
         # valeur (en-tête de colonne). On affiche un tiret plutôt qu'un chiffre
         # qui ne correspondrait à aucune ligne.
         self._mixed  = False
+        # Échelle d'AFFICHAGE : la valeur stockée reste intacte, seul le chiffre
+        # montré (et celui qu'on tape) est divisé. Sert à l'AMP des lyres :
+        # stockée 0-400, affichée en % de la course max (400 → 100).
+        self._disp   = 1.0
         # `height` : le tableau du plan 3D veut des lignes plus compactes que
         # l'éditeur d'effets, où la cellule voisine des aperçus de courbe.
         self.setFixedSize(width, LAYER_CELL_H if height is None else int(height))
@@ -1502,6 +1506,19 @@ class _NumCell(QWidget):
 
     def maximum(self):
         return self._max
+
+    def set_display_scale(self, scale):
+        """Chiffre affiché = valeur / `scale` (1 = tel quel). Sans signal."""
+        scale = float(scale or 1.0)
+        if scale != self._disp:
+            self._disp = scale
+            self.update()
+
+    def _shown(self, v):
+        """Valeur telle qu'affichée / saisie."""
+        if self._disp == 1.0:
+            return v
+        return int(round(float(v) / self._disp))
 
     def set_maximum(self, maximum):
         """Change la borne haute à chaud, sans émettre.
@@ -1641,7 +1658,7 @@ class _NumCell(QWidget):
     def _start_edit(self):
         if self._edit is not None:
             return
-        ed = QLineEdit(self._fmt(self._value), self)
+        ed = QLineEdit(self._fmt(self._shown(self._value)), self)
         ed.setGeometry(0, 0, self.width(), self.height())
         ed.setAlignment(Qt.AlignCenter)
         ed.setStyleSheet(
@@ -1666,7 +1683,7 @@ class _NumCell(QWidget):
             # une virgule, la refuser rendrait la saisie décimale inutilisable.
             # `_clamp` ramène ensuite sur la grille — une cellule entière à qui
             # on tape « 29,8 » retient 30 plutôt que de rejeter la saisie.
-            self._user_set(float(ed.text().strip().replace(",", ".")))
+            self._user_set(float(ed.text().strip().replace(",", ".")) * self._disp)
         except ValueError:
             pass            # saisie non numérique : on garde la valeur en place
         ed.deleteLater()
@@ -1701,14 +1718,14 @@ class _NumCell(QWidget):
         p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 4, 4)
 
         if not live:
-            col, txt = QColor("#2b2b2b"), self._fmt(self._value)
+            col, txt = QColor("#2b2b2b"), self._fmt(self._shown(self._value))
         elif self._mixed:
             # Valeurs différentes d'une ligne à l'autre : aucun chiffre ne serait
             # vrai, on affiche un tiret jusqu'au premier geste.
             col, txt = QColor("#555555"), "—"
         else:
             col = QColor("#dddddd") if self._value else QColor("#4a4a4a")
-            txt = self._fmt(self._value)
+            txt = self._fmt(self._shown(self._value))
         p.setPen(col)
         # « 29,8 » ne tient pas au corps 12 dans une colonne resserrée à 32 px :
         # on descend d'un cran plutôt que de laisser le chiffre déborder de sa
@@ -2407,6 +2424,10 @@ class LayerRow(QFrame):
         _pt      = self.layer.attribute in self._PT_ATTRS
         plafond  = self._AMP_MAX_PT if _pt else self._AMP_MAX
         cell.set_maximum(plafond)
+        # AMP des lyres affichée en % de la course max (400 stocké → « 100 ») :
+        # « 100 » sur une échelle qui monte à 400 laissait croire au maximum.
+        # Stockage inchangé (0-400) : aucun show ni effet n'est touché.
+        cell.set_display_scale(plafond / 100.0)
         if getattr(self.layer, 'size', 0) > plafond:
             self.layer.size = plafond
         # Remettre la cellule d'accord avec le modèle : en montant le plafond on
@@ -3249,6 +3270,20 @@ class SimpleEffectPanel(QWidget):
             if not hasattr(row.layer, attr):
                 continue
             valeur = getattr(row.layer, attr)
+            # AMP : recopier le POURCENTAGE affiché, pas la valeur brute. Une
+            # couche de lyre stocke 0-400 (affichée 0-100 %), les autres 0-100 :
+            # « 100 » posé sur un Dimmer doit donner 100 % sur un Pan (400),
+            # pas 25 %, et inversement.
+            if cle == "amp" and attr == "size":
+                def _ech(c):
+                    return (LayerRow._AMP_MAX_PT
+                            if getattr(c, 'attribute', '') in LayerRow._PT_ATTRS
+                            else LayerRow._AMP_MAX) / 100.0
+                pct = float(valeur or 0) / _ech(row.layer)
+                for couche in self._layers:
+                    if couche is not row.layer:
+                        couche.size = int(round(pct * _ech(couche)))
+                continue
             for couche in self._layers:
                 if couche is row.layer:
                     continue
@@ -4007,6 +4042,14 @@ class EffectEditorDialog(QDialog):
         menu.setStyleSheet(_MENU_STYLE)
         act_dup = menu.addAction(tr("fx_duplicate"))
         act_exp = menu.addAction(tr("fx_export"))
+        # Effet d'usine : revenir à la version d'origine (retour client
+        # FuraxX 16/11/2026 : « j'ai touché à tous les réglages, est-ce qu'on
+        # peut tout remettre à zéro ? »).
+        act_rst = act_rst_all = None
+        if any(e.get("name") == eff.get("name") for e in BUILTIN_EFFECTS):
+            menu.addSeparator()
+            act_rst     = menu.addAction(tr("fx_reset_builtin"))
+            act_rst_all = menu.addAction(tr("fx_reset_all_builtin"))
         if deletable:
             menu.addSeparator()
             act_del = menu.addAction(tr("fx_delete"))
@@ -4019,6 +4062,79 @@ class EffectEditorDialog(QDialog):
             self._export_custom_effect(eff)
         elif act_del and chosen == act_del:
             self._delete_custom_effect(eff)
+        elif act_rst and chosen == act_rst:
+            self._reset_builtin_effects([eff.get("name", "")])
+        elif act_rst_all and chosen == act_rst_all:
+            self._reset_builtin_effects([e.get("name", "") for e in BUILTIN_EFFECTS])
+
+    def _reset_builtin_effects(self, names, confirm=True):
+        """Remet des effets d'usine dans leur version d'origine, sur confirmation.
+
+        Un effet d'usine modifié vit en COPIES : bibliothèque
+        (`_effect_library_configs`), boutons E1-E9, pads FX, mémoires et leurs
+        cues. On remplace les couches partout (affectations, mode de lecture et
+        durée gardés) ; les effets de « Mes Effets » ne sont pas touchés.
+        """
+        import copy as _copy
+        from PySide6.QtWidgets import QMessageBox
+        builtins = {e.get("name"): e for e in BUILTIN_EFFECTS}
+        names = [n for n in names if n in builtins]
+        if not names:
+            return
+        if confirm:
+            if len(names) == 1:
+                msg = tr("fx_f_reset_builtin_confirm", name=names[0])
+            else:
+                msg = tr("fx_reset_all_builtin_confirm")
+            if QMessageBox.question(self, tr("fx_reset_builtin_title"), msg,
+                                    QMessageBox.Yes | QMessageBox.No,
+                                    QMessageBox.No) != QMessageBox.Yes:
+                return
+        mw = self._main_window
+        cible = set(names)
+
+        def _remettre(cfg):
+            if isinstance(cfg, dict) and cfg.get("name") in cible:
+                cfg["layers"] = _copy.deepcopy(builtins[cfg["name"]].get("layers", []))
+                return True
+            return False
+
+        if mw is not None:
+            lib = getattr(mw, '_effect_library_configs', None)
+            if isinstance(lib, dict):
+                for n in names:
+                    lib.pop(n, None)
+            touche_akai = False
+            for cfg in (getattr(mw, '_button_effect_configs', {}) or {}).values():
+                touche_akai |= _remettre(cfg)
+            for col in getattr(mw, 'fx_pads', None) or []:
+                for cfg in col or []:
+                    touche_akai |= _remettre(cfg)
+            for mem_col in getattr(mw, 'memories', None) or []:
+                for mem in mem_col or []:
+                    if not isinstance(mem, dict):
+                        continue
+                    touche_akai |= _remettre(mem.get("effect"))
+                    for c in mem.get("cues") or []:
+                        if isinstance(c, dict):
+                            touche_akai |= _remettre(c.get("effect"))
+            # Effet en train de tourner : il repart sur la version d'usine
+            # tout de suite (sinon `_apply_preset` relirait ses couches vivantes).
+            _remettre(getattr(mw, 'active_effect_config', None))
+            try:
+                if hasattr(mw, '_save_effect_library'):
+                    mw._save_effect_library()
+                if hasattr(mw, '_save_effect_assignments'):
+                    mw._save_effect_assignments()
+                if touche_akai and hasattr(mw, '_save_akai_config_auto'):
+                    mw._save_akai_config_auto()
+            except Exception as e:
+                print(f"[FX] remise d'usine : sauvegarde impossible : {e}")
+        if self._selected_card in cible:
+            # Pas de _switch_to_effect : son autosave réécrirait les couches
+            # modifiées par-dessus la version d'usine.
+            self._layers.clear()
+            self._apply_preset(builtins[self._selected_card])
 
     def _duplicate_custom_effect(self, eff: dict):
         existing_names = {e.get("name", "") for e in self._custom_effects} | \

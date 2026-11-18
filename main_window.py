@@ -233,6 +233,7 @@ from core import (
     message_erreur_reseau,
     canonical_manufacturer, build_fixture_library,
     fixture_is_fx_machine, fixture_is_pyro, FX_MACHINE_TYPES,
+    fixture_motor_only,
     fix_machine_profile,
     GOBO_SLOT_COUNT, GOBO_SLOT_NAMES, gobo_slot_dmx,
 )
@@ -9852,10 +9853,36 @@ class MainWindow(QMainWindow):
             return
         self._activate_memory_pad(btn, mem_col, row, col_akai=col_akai, toggle_off=True)
 
+    # Appui long (s) qui éteint une mémoire multi-cue déjà allumée.
+    MEM_LONG_PRESS_OFF = 0.6
+
     def _on_memory_pad_released(self, mem_col, row, col_akai=None):
-        """Relâché — seul un pad momentané a quelque chose à rendre."""
+        """Relâché — un pad momentané rend la main ; un appui LONG sur une
+        mémoire multi-cue déjà allumée l'éteint."""
         if self._mem_flash_holds(mem_col, row):
             self._mem_flash_end()
+            return
+        appui = getattr(self, "_mem_long_press", None)
+        self._mem_long_press = None
+        if not appui or appui[0] != (mem_col, row):
+            return
+        if time.monotonic() - appui[1] < self.MEM_LONG_PRESS_OFF:
+            return
+        if col_akai is None:
+            col_akai = self._mem_col_to_fader(mem_col)
+        if self.active_memory_pads.get(col_akai) == row:
+            self._mem_turn_off(mem_col, row, col_akai)
+
+    def _mem_turn_off(self, mem_col, row, col_akai=None):
+        """Éteint une mémoire allumée (réappui sur un cue unique, appui long,
+        menu « Éteindre »)."""
+        if col_akai is None:
+            col_akai = self._mem_col_to_fader(mem_col)
+        self._deactivate_memory_pad(mem_col, row, col_akai)
+        self._recompute_memory_mix()
+        self._log_message(tr("mw_mem_pad_off", a=mem_col + 1, a1=row + 1), "mem")
+        self._save_akai_config_auto()
+        self.send_dmx_update()
 
     def _activate_memory_pad(self, btn, mem_col, row, col_akai=None, toggle_off=False):
         """Active un pad memoire - independant par colonne.
@@ -9889,6 +9916,12 @@ class MainWindow(QMainWindow):
             if mem:
                 self._mem_ensure_cues(mem)
                 if len(mem.get("cues", [])) > 1:
+                    # Un appui direct qu'on TIENT éteindra la mémoire au
+                    # relâché (_on_memory_pad_released) : sans ça, une mémoire
+                    # multi-cue en boucle ne s'arrêtait qu'en ouvrant le
+                    # panneau Cues (retour client 16/11/2026).
+                    if toggle_off:
+                        self._mem_long_press = ((mem_col, row), time.monotonic())
                     self._release_manual_grabs()   # action volontaire → on repeint
                     if not self._mem_advance_cue(mem_col, row):
                         return   # fin de liste sans boucle : rien ne bouge
@@ -9916,11 +9949,7 @@ class MainWindow(QMainWindow):
                     # (retour client 23/09/2026). Réservé à l'appui direct :
                     # Stream Deck, tally vMix/OBS, manette et GO redéclenchent
                     # la même mémoire sans vouloir la couper.
-                    self._deactivate_memory_pad(mem_col, row, col_akai)
-                    self._recompute_memory_mix()
-                    self._log_message(tr("mw_mem_pad_off", a=mem_col + 1, a1=row + 1), "mem")
-                    self._save_akai_config_auto()
-                    self.send_dmx_update()
+                    self._mem_turn_off(mem_col, row, col_akai)
             return
 
         # Activation impossible si aucune memoire stockee
@@ -11712,6 +11741,15 @@ class MainWindow(QMainWindow):
             # « Effacer » était en 2e position, collé à « Remplacer » : le seul
             # geste irréversible du menu était le plus facile à toucher par
             # erreur. Il est désormais seul, tout en bas, après un séparateur.
+
+            # ── 0. Allumée ? On peut l'éteindre d'ici ────────────────────────
+            _col_on = next((ca for ca in self._mem_col_to_faders(mem_col)
+                            if self.active_memory_pads.get(ca) == row), None)
+            if _col_on is not None:
+                off_action = menu.addAction(tr("mw_mem_turn_off"))
+                off_action.triggered.connect(
+                    lambda: self._mem_turn_off(mem_col, row, _col_on))
+                menu.addSeparator()
 
             # ── 1. Contenu ──────────────────────────────────────────────────
             info_action = menu.addAction(tr("lt_seq_info_action"))
@@ -15287,13 +15325,13 @@ class MainWindow(QMainWindow):
                                   saved[3] if saved and len(saved) > 3 else 32768)
                         sym_pan  = ld.get("sym_pan", False)
                         pan_sign = -1 if (sym_pan and id(proj) in _sym_mir) else 1
-                        proj.pan = int(max(0, min(65535, center + pan_sign * (raw_mv - 0.5) * 2 * amplitude * _pan_ratio)))
+                        proj.pan = self._fx_pantilt(proj, 'pan', center, pan_sign * (raw_mv - 0.5) * 2, amplitude * _pan_ratio)
                     else:
                         center = (_ctr[1] if _ctr is not None else
                                   saved[4] if saved and len(saved) > 4 else 32768)
                         sym_tilt  = ld.get("sym_tilt", False)
                         tilt_sign = -1 if (sym_tilt and id(proj) in _sym_mir) else 1
-                        proj.tilt = int(max(0, min(65535, center + tilt_sign * (raw_mv - 0.5) * 2 * amplitude)))
+                        proj.tilt = self._fx_pantilt(proj, 'tilt', center, tilt_sign * (raw_mv - 0.5) * 2, amplitude)
 
                 elif attr == "Pan/Tilt":
                     # Forme de trajectoire couplée Pan+Tilt
@@ -15352,7 +15390,7 @@ class MainWindow(QMainWindow):
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = (_ctr[0] if _ctr is not None else
                                  saved[3] if saved and len(saved) > 3 else 32768)
-                        proj.pan = int(max(0, min(65535, c_pan + pan_sign * (pan_raw - 0.5) * 2 * amplitude * _pan_ratio)))
+                        proj.pan = self._fx_pantilt(proj, 'pan', c_pan, pan_sign * (pan_raw - 0.5) * 2, amplitude * _pan_ratio)
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
@@ -15361,7 +15399,7 @@ class MainWindow(QMainWindow):
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = (_ctr[1] if _ctr is not None else
                                   saved[4] if saved and len(saved) > 4 else 32768)
-                        proj.tilt = int(max(0, min(65535, c_tilt + tilt_sign * (tilt_raw - 0.5) * 2 * amplitude)))
+                        proj.tilt = self._fx_pantilt(proj, 'tilt', c_tilt, tilt_sign * (tilt_raw - 0.5) * 2, amplitude)
 
                 elif attr == "Zoom":
                     proj.zoom = int(max(0, min(255, scaled * 255)))
@@ -17180,6 +17218,27 @@ class MainWindow(QMainWindow):
                     proj.base_color = QColor(0, 0, 0)
                 self.dmx.blackout()
 
+    @classmethod
+    def _fx_pantilt(cls, proj, axis, center, norm, amp):
+        """Valeur pan/tilt d'une couche d'EFFET, gardée dans la zone de la lyre.
+
+        Retour client FuraxX (16/11/2026) : avec une zone réglée dans le patch
+        (« pas derrière moi »), les effets tournaient autour de la position de
+        départ sans lire la zone. Si ce point était hors zone ou contre une
+        butée, le clamp d'`artnet_dmx` écrêtait le motif : la lyre restait
+        plantée (« le Pan/Tilt ne bouge pas, je dois ajouter un Tilt »).
+        Avec une zone : centre ramené dedans, amplitude plafonnée à sa
+        demi-largeur (`_pantilt_in_limits`). Sans zone : calcul historique au
+        bit près.
+        """
+        lo = getattr(proj, f'{axis}_min', 0)
+        hi = getattr(proj, f'{axis}_max', 65535)
+        zone = (isinstance(lo, (int, float)) and isinstance(hi, (int, float))
+                and hi > lo and (lo > 0 or hi < 65535))
+        if not zone:
+            return int(max(0, min(65535, center + norm * amp)))
+        return cls._pantilt_in_limits(proj, axis, norm, amp, center=center)
+
     @staticmethod
     def _pantilt_in_limits(proj, axis, norm, amp, center=None):
         """Place une oscillation `norm` (-1..+1) DANS la zone autorisée de la lyre.
@@ -17307,8 +17366,9 @@ class MainWindow(QMainWindow):
             else:
                 p.color = QColor("black")
 
-            # Mouvement lyres uniquement
-            if getattr(p, 'fixture_type', '') not in ("Moving Head", "Laser"):
+            # Mouvement lyres uniquement (+ barres à Tilt motorisé)
+            if (getattr(p, 'fixture_type', '') not in ("Moving Head", "Laser")
+                    and not fixture_motor_only(p)):
                 continue
 
             _offset = _lyre_idx * (_math.pi * 0.6)   # déphasage entre lyres
@@ -17693,7 +17753,8 @@ class MainWindow(QMainWindow):
                     continue
                 p.level = 0
                 p.color = QColor(0, 0, 0)
-                if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser"):
+                if (getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
+                        or fixture_motor_only(p)):
                     _cur_pan  = getattr(p, 'pan',  32768)
                     _cur_tilt = getattr(p, 'tilt', 32768)
                     # Centre de la ZONE autorisée, pas le milieu de course : une
@@ -18265,7 +18326,8 @@ class MainWindow(QMainWindow):
 
         # ── Lyres — rotation continue dont la vitesse suit le rythme ────────
         moving_heads = [p for p in self.projectors
-                        if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")]
+                        if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
+                        or fixture_motor_only(p)]
         if moving_heads:
             import random as _random
             import live_mouvements as _lm
@@ -18516,6 +18578,8 @@ class MainWindow(QMainWindow):
                 # Motif recentré/borné sur la zone du profil de la lyre (voir
                 # `_pantilt_in_limits`) au lieu du milieu de course.
                 self._live_set_pantilt(p, pan_v, tilt_v, _amp_pan, _amp_tilt)
+                if fixture_motor_only(p):
+                    continue    # barre à Tilt : mouvement seul, couleur du wash
                 if p.group not in self._IA_BASE_COLOR_GROUPS:
                     p.level = max(0, min(100, lyre_level))
 
@@ -28023,8 +28087,20 @@ class MainWindow(QMainWindow):
                 return
             new_group = chosen.data()
             _push_history()
-            for idx in sorted(_checked):
-                if idx < len(fixture_data):
+            # Barre/matrice = UNE carte (son représentant) mais N projecteurs :
+            # changer le seul index coché ne déplaçait que le 1er pixel, les
+            # autres restaient dans l'ancien groupe. On étend à tous les membres.
+            _targets = set()
+            for idx in _checked:
+                if idx >= len(fixture_data):
+                    continue
+                _targets.add(idx)
+                _mid = fixture_data[idx].get('matrix_id')
+                if _mid is not None:
+                    _targets.update(i for i, f2 in enumerate(fixture_data)
+                                    if f2.get('matrix_id') == _mid)
+            for idx in sorted(_targets):
+                if idx < len(fixture_data) and idx < len(self.projectors):
                     fixture_data[idx]['group'] = new_group
                     self.projectors[idx].group = new_group
             _checked.clear()
