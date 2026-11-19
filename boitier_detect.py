@@ -283,7 +283,15 @@ class BoitierDetector(QObject):
             else:
                 card.show_error(msg, final=True)
 
+        def on_connect():
+            # Sortie DMX sur ce boîtier, sans toucher à la licence.
+            if self._connecter_dmx(rep["usb_id"]):
+                card.show_success(tr("bx_dmx_connected"))
+            else:
+                card.show_error(tr("bx_connect_fail"))
+
         card.activate.connect(on_activate)
+        card.connect_dmx.connect(on_connect)
         card.done.connect(on_done)
         card.exec()
 

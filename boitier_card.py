@@ -27,6 +27,7 @@ _ACCENT = "#FFD60A"
 class BoitierCard(QDialog):
     activate = Signal(str)      # clic « Activer » (email saisi, ou "")
     done = Signal(dict)         # réponse du serveur (émise depuis un thread)
+    connect_dmx = Signal()      # clic « Connecter le boîtier » (sans activer)
 
     def __init__(self, window, serial: str, months: int, ask: str,
                  email_field: bool, can_dismiss: bool = True):
@@ -63,6 +64,9 @@ class BoitierCard(QDialog):
             #primary {{ background: {_ACCENT}; color: #000; border: none; }}
             #primary:hover {{ background: #ffe14d; }}
             #primary:disabled {{ background: #5c5220; color: #2a2a2a; }}
+            #connect {{ background: transparent; color: {_ACCENT};
+                        border: 1px solid {_ACCENT}; }}
+            #connect:hover {{ background: rgba(255,214,10,0.12); }}
             #secondary {{ background: transparent; color: #aeaeb2; border: none; }}
             #secondary:hover {{ color: #f2f2f7; }}
             #never {{ background: transparent; color: #636366; border: none;
@@ -123,6 +127,13 @@ class BoitierCard(QDialog):
         self._primary.clicked.connect(self._on_primary)
         self._primary.setDefault(True)          # Entrée = Activer
         lay.addWidget(self._primary)
+        # Brancher la sortie DMX sur ce boîtier tout de suite, licence à
+        # activer plus tard (la carte revient au prochain lancement).
+        self._connect = QPushButton(tr("bx_btn_connect"), objectName="connect",
+                                    cursor=Qt.PointingHandCursor)
+        self._connect.setAutoDefault(False)
+        self._connect.clicked.connect(self.connect_dmx.emit)
+        lay.addWidget(self._connect)
         self._secondary = QPushButton(tr("bx_btn_later"), objectName="secondary",
                                       cursor=Qt.PointingHandCursor)
         self._secondary.clicked.connect(self.close_animated)
@@ -156,6 +167,7 @@ class BoitierCard(QDialog):
         self._email.setEnabled(False)
         self._primary.setEnabled(False)
         self._primary.setText(text)
+        self._connect.hide()
         self._secondary.hide()
         self._never.hide()
         self._recenter()
@@ -169,6 +181,7 @@ class BoitierCard(QDialog):
             self._email.hide()
             self._primary.setEnabled(True)
             self._primary.setText(tr("bx_btn_ok"))
+            self._connect.hide()
             self._secondary.hide()
             self._never.hide()
         else:
@@ -187,6 +200,7 @@ class BoitierCard(QDialog):
         self._msg.show()
         self._primary.setEnabled(True)
         self._primary.setText(tr("bx_btn_ok"))
+        self._connect.hide()
         self._secondary.hide()
         self._never.hide()
         self._recenter()

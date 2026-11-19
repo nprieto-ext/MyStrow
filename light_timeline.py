@@ -432,6 +432,7 @@ def strip_memory_param(ps, fam):
 # moteur DMX pousse `strobe_speed` dans la bande strobe du shutter.
 _PROFILE_TO_MEM = {
     "Strobe": ("strobe_speed",), "Shutter": ("shutter", "strobe_speed"),
+    "DimStrobe": ("strobe_speed",),
     "Gobo1": ("gobo",), "Gobo1Rot": ("gobo_rotation",), "Gobo2": ("gobo2",),
     "ColorWheel": ("color_wheel",), "Prism": ("prism",),
     "PrismRot": ("prism_rotation",), "Zoom": ("zoom",), "Focus": ("focus",),
@@ -871,9 +872,24 @@ class SequenceInfoDialog(QDialog):
         """N° des projecteurs affichés — ceux que la mémoire règle, ou tous."""
         if not self._chk_all.isChecked():
             return self._set_idxs()
-        states = self._states()
+        # ⚠️ TOUT le patch, pas `min(len(states), …)` : une mémoire enregistrée
+        # avant l'ajout d'un projecteur a une liste plus courte que le rig, et
+        # la 2e barre LED patchée après le REC n'apparaissait jamais — même
+        # « tout le patch » coché. L'entrée manquante est créée à la 1re édition
+        # (`_ensure_state`), pas ici : simplement regarder ne modifie rien.
         projectors = getattr(self._mw, 'projectors', None) or []
-        return list(range(min(len(states), len(projectors))))
+        return list(range(len(projectors)))
+
+    def _ensure_state(self, idx):
+        """Allonge la liste de la mémoire jusqu'au projecteur `idx` (édition
+        d'une ligne patchée après le REC). Entrées neutres : niveau 0, pas de
+        pan/tilt. Rien à faire si l'entrée existe déjà."""
+        states = resolve_memory_projectors(self._ref, self._cue, self._memories())
+        if states is None:
+            return
+        n_proj = len(getattr(self._mw, 'projectors', None) or [])
+        while len(states) <= idx < n_proj:
+            states.append({"level": 0, "base_color": "#000000"})
 
     def _proj(self, idx):
         projs = getattr(self._mw, 'projectors', None) or []
@@ -964,7 +980,7 @@ class SequenceInfoDialog(QDialog):
 
         Une édition qui vide une ligne (niveau à 0, gobo remis au repos) ne doit
         pas la faire disparaître sous le curseur au milieu d'une saisie : le
-        filtre n'est rejoué qu'au prochain `_rebuild` — case « tout le rig »,
+        filtre n'est rejoué qu'au prochain `_rebuild` — case « tout le patch »,
         pastille, suppression, annulation, réouverture de la fenêtre.
         """
         self._loading = True
@@ -977,9 +993,8 @@ class SequenceInfoDialog(QDialog):
 
     def _fill_row(self, r, idx, create=False):
         states = self._states()
-        if idx >= len(states):
-            return
-        ps = states[idx]
+        # Projecteur patché après le REC : pas encore d'entrée → ligne vide.
+        ps = states[idx] if idx < len(states) else {}
         p = self._proj(idx)
         group_display = getattr(self._mw, 'GROUP_DISPLAY', {}) or {}
         supported = memory_supported_keys(p)
@@ -1240,6 +1255,7 @@ class SequenceInfoDialog(QDialog):
         if r >= len(self._idxs) or col >= len(self._cols):
             return
         idx    = self._idxs[r]
+        self._ensure_state(idx)
         states = self._states()
         if idx >= len(states):
             return
@@ -1300,11 +1316,13 @@ class SequenceInfoDialog(QDialog):
         if r >= len(self._idxs) or col >= len(self._cols):
             return
         idx    = self._idxs[r]
+        key = self._cols[col]
+        if key in ("color", "raw"):
+            self._ensure_state(idx)
         states = self._states()
         if idx >= len(states):
             return
         ps  = states[idx]
-        key = self._cols[col]
 
         if key == "color":
             from PySide6.QtWidgets import QColorDialog
@@ -1326,7 +1344,7 @@ class SequenceInfoDialog(QDialog):
             snap = [copy.deepcopy(s) for s in states]
             dlg = MemoryChannelsDialog(self, ps, self._proj_name(idx))
             if dlg.exec() == QDialog.Accepted and dlg.apply_to(ps):
-                self._undo.append(snap)
+                self._undo.append((self._cue, snap))
                 self._btn_undo.setEnabled(True)
                 self._save()
                 self._rebuild()
@@ -4029,9 +4047,26 @@ class LightTrack(QWidget):
 
         Pour une piste projecteur, `name` est une clé interne (« @A2 », cf.
         `core.projector_track_key`) qu'on ne montre JAMAIS : le libellé porte le
-        nom de la fixture. Partout ailleurs, les deux sont identiques.
+        nom de la fixture.
+
+        Les pistes fixes « Effet », « Séquence », « Position » (et « Effet 2 »,
+        « Séquence 3 »…) gardent leur nom FRANÇAIS comme clé : le code et les
+        montages enregistrés les retrouvent par ce nom (`track_map`, préfixes
+        `Effet` / `Séquence` au chargement, restitution). On ne traduit donc que
+        le libellé affiché — avant, ces en-têtes restaient en français dans
+        toutes les langues.
         """
-        return self.display_label or self.name
+        # `display_label` vaut `name` par défaut (__init__) : seul un libellé
+        # réellement différent (piste projecteur) court-circuite la traduction.
+        if self.display_label and self.display_label != self.name:
+            return self.display_label
+        for base, key in (("Effet", "lt_track_effect"), ("Séquence", "lt_track_sequence"),
+                          ("Position", "lt_track_position")):
+            if self.name == base:
+                return tr(key)
+            if self.name.startswith(base + " ") and self.name[len(base) + 1:].isdigit():
+                return f"{tr(key)} {self.name[len(base) + 1:]}"
+        return self.name
 
     def targets_moving_head(self):
         """True si la piste pilote au moins une lyre.

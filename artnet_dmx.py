@@ -1769,6 +1769,29 @@ class ArtNetDMX:
                             _lo, _hi = _hi, _lo
                         ch_val = max(0, min(255,
                                             int(_lo + (_spd / 100.0) * (_hi - _lo))))
+                elif ch_type == "DimStrobe":
+                    # Dimmer ET strobe sur un SEUL canal (BoomTone Wash 7x12 :
+                    # 0-134 luminosité, 135-240 strobe, 241-255 plein feu ;
+                    # Lytor wash 7 LED…). Le profil n'a donc pas de « Dim » :
+                    # le niveau passe par les couleurs (cf. `has_dimmer`), et
+                    # ce canal reste en haut de course. Les petites valeurs de
+                    # luminosité de ces appareils scintillent (PWM lent, très
+                    # visible à la caméra) : la plage « plein feu » non.
+                    # Le strobe part dans la bande réglée par clic droit sur la
+                    # pastille (mêmes attributs que la bande du Shutter).
+                    _spd = getattr(proj, 'strobe_speed', 0)
+                    if proj.muted or dimmer <= 0 or not (r or g or b or
+                                                         getattr(proj, 'white_boost', 0)):
+                        ch_val = 0
+                    elif _spd > 0 and not has_strobe:
+                        _lo = int(getattr(proj, 'shutter_strobe_min', 64))
+                        _hi = int(getattr(proj, 'shutter_strobe_max', 95))
+                        if _hi < _lo:
+                            _lo, _hi = _hi, _lo
+                        ch_val = max(0, min(255,
+                                            int(_lo + (_spd / 100.0) * (_hi - _lo))))
+                    else:
+                        ch_val = 255
                 elif ch_type == "Prism":
                     ch_val = getattr(proj, 'prism', 0)
                 elif ch_type == "PrismRot":

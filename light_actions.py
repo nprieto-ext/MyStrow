@@ -245,7 +245,10 @@ def change_gobo(w, idxs: list, open_: bool = False) -> int:
 # ── Position des lyres (« les lyres en l'air », « au sol », « vers le public ») ─
 # Directions dans le repère du plan 3D : Y vers le haut, public du côté des Z
 # NÉGATIFS (la caméra de salle regarde vers les Z croissants).
-AIM_DIRS = {"up": (0.0, 1.0, 0.0), "down": (0.0, -1.0, 0.0), "public": (0.0, -0.25, -1.0)}
+AIM_DIRS = {"up": (0.0, 1.0, 0.0), "down": (0.0, -1.0, 0.0), "public": (0.0, -0.25, -1.0),
+            # Repos d'une lyre POSÉE (core.rest_pantilt) : au-dessus du public,
+            # ~30° au-dessus de l'horizontale — jamais le plafond.
+            "rest_floor": (0.0, 0.6, -1.0)}
 
 # Mots d'un nom de position enregistrée (REC position) qui disent la même chose :
 # la position calée par l'utilisateur sur ses vraies lyres passe avant le calcul.

@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.19"
+VERSION = "3.2.20"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -485,6 +485,60 @@ def pan_tilt_ranges(proj):
     return rng
 
 
+def mount_is_hung(proj):
+    """Vrai si la lyre est accrochée tête en bas (RX du plan 3D proche de 0°).
+
+    RX : 0 = accrochée, faisceau vers le bas · 90 = couchée · 180 = posée au
+    sol, faisceau vers le haut. Attribut absent (patch ancien, plan 3D jamais
+    ouvert) = accrochée, le modèle historique.
+    """
+    try:
+        rx = float(getattr(proj, 'rot3d_x', 0.0) or 0.0)
+    except (TypeError, ValueError):
+        rx = 0.0
+    rx = (rx + 180.0) % 360.0 - 180.0
+    return abs(rx) <= 45.0
+
+
+_REST_CACHE = {}
+
+
+def rest_pantilt(proj):
+    """Position de REPOS (pan, tilt) d'une lyre, déduite de son accroche 3D.
+
+    Retour utilisateur 19/11/2026 : « le balancier [...] en regardant le
+    plafond ». Le repos historique 32768/32768 vise dans l'axe du socle :
+    le sol pour une lyre accrochée, le PLAFOND pour une lyre posée.
+    - Accrochée (ou accroche inconnue) : (32768, 32768), au bit près.
+    - Posée / couchée : visée au-dessus du public calculée par la même
+      géométrie que le plan 3D (`light_actions.aim_values`, « rest_floor »),
+      dans les limites de la lyre.
+    Mis en cache : la recherche sur grille coûte quelques ms.
+    """
+    if mount_is_hung(proj):
+        return (32768, 32768)
+    def _f(nom, d=0.0):
+        try:
+            return float(getattr(proj, nom, d) or d)
+        except (TypeError, ValueError):
+            return d
+    cle = (round(_f('rot3d_x'), 1), round(_f('body_rotation'), 1), round(_f('rot3d_z'), 1),
+           pan_tilt_ranges(proj),
+           int(_f('pan_min', 0)), int(_f('pan_max', 65535)),
+           int(_f('tilt_min', 0)), int(_f('tilt_max', 65535)))
+    r = _REST_CACHE.get(cle)
+    if r is None:
+        try:
+            from light_actions import aim_values
+            r = tuple(int(v) for v in aim_values(proj, "rest_floor"))
+        except Exception:
+            r = (32768, 32768)
+        if len(_REST_CACHE) > 512:
+            _REST_CACHE.clear()
+        _REST_CACHE[cle] = r
+    return r
+
+
 # ── Plage utile par canal (« brider » un canal) ──────────────────────────────
 # Beaucoup d'appareils d'entree de gamme rangent un programme AUTOMATIQUE dans
 # le haut de la course d'un canal : laser 10 canaux dont Pan/Tilt valent
@@ -625,6 +679,38 @@ def pan_tilt_angles(proj, pan_dmx, tilt_dmx):
             (tilt_dmx - 32768) / 32768.0 * math.radians(tilt_deg / 2.0))
 
 
+def pan_front_offset(proj):
+    """Décalage Pan (DMX 16 bits) entre le milieu de course et le « face scène ».
+
+    Le plan 2D, la 3D, le pad Pan/Tilt et ses presets travaillent dans un repère
+    où 32768 = la lyre regarde la scène. C'est vrai par construction tant que
+    `pan_front` vaut 32768 (défaut, comportement historique) ; une lyre
+    calibrée (« 📍 Face scène ») décale ce repère d'autant.
+
+        valeur du pad / du dessin = proj.pan − offset
+        proj.pan                  = valeur du pad + offset
+
+    Tolère l'attribut absent (patch antérieur), None et les valeurs hors 0-65535.
+    """
+    try:
+        front = int(getattr(proj, 'pan_front', 32768))
+    except (TypeError, ValueError):
+        return 0
+    if not 0 <= front <= 65535:
+        return 0
+    return front - 32768
+
+
+def pan_from_front(proj, pad_pan):
+    """Valeur DMX à poser sur la lyre pour une visée `pad_pan` relative au face scène."""
+    return int(max(0, min(65535, int(pad_pan) + pan_front_offset(proj))))
+
+
+def pan_to_front(proj, pan):
+    """Inverse de `pan_from_front` : visée relative au face scène (non bornée)."""
+    return int(pan) - pan_front_offset(proj)
+
+
 def pan_angular_ratio(proj):
     """Facteur d'amplitude PAN d'un effet, pour que le cercle soit rond.
 
@@ -638,6 +724,20 @@ def pan_angular_ratio(proj):
     """
     pan_deg, tilt_deg = pan_tilt_ranges(proj)
     return tilt_deg / pan_deg if pan_deg else 0.5
+
+
+def pt_shape_pan_ratio(proj, tilt_forme):
+    """Facteur PAN d'une trajectoire de couche « Pan/Tilt ».
+
+    `pan_angular_ratio` sert à garder un cercle rond. Une forme qui ne
+    bouge QUE le pan (Balancier : tilt None/« Fixe ») n'a rien à arrondir :
+    la réduire de moitié donnait un balayage minuscule (retour utilisateur
+    19/11/2026, « le balancier ne fait que des minuscules mouvements »).
+    Parité obligatoire : moteur, aperçu de l'éditeur, tablette (engine.js).
+    """
+    if not tilt_forme or tilt_forme == "Fixe":
+        return 1.0
+    return pan_angular_ratio(proj)
 
 
 # ─── Répartition des effets entre fixtures ────────────────────────────────────

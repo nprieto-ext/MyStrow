@@ -226,7 +226,7 @@ from core import (
     layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
-    cw_slot_for_color, pan_angular_ratio, pan_tilt_ranges, normalize_channel_ranges,
+    cw_slot_for_color, pan_angular_ratio, pt_shape_pan_ratio, rest_pantilt, pan_tilt_ranges, normalize_channel_ranges,
     PAN_TILT_RANGE_MIN, PAN_TILT_RANGE_MAX,
     copy_report, send_report_email, DMX_FRAME_MS, make_precise_timer,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
@@ -260,6 +260,7 @@ from pixel_fixture import (
     layout_pixels, matrix_children, pixel_positions,
 )
 from i18n import tr
+import patch_addressing
 
 
 # Liaisons régie vidéo → lumière (vMix, OBS). Le protocole des deux est testé
@@ -333,6 +334,7 @@ CH_COLORS = {
     "Gobo1":      "#993355",
     "Gobo2":      "#774455",
     "Shutter":    "#999911",
+    "DimStrobe":  "#cc8811",
     "Speed":      "#557722",
     "Mode":       "#445566",
     "ColorWheel": "#aa2299",
@@ -353,7 +355,7 @@ CH_LABELS = {
     "Prism": tr("chl_prism"), "PrismRot": tr("chl_prismrot"),
     "Gobo1": "GOBO1", "Gobo2": "GOBO2", "Gobo1Rot": "GOBO↻",
     "ColorWheel": tr("chl_wheel"), "Speed": tr("chl_speed"),
-    "Smoke": tr("chl_smoke"), "Fan": tr("chl_fan"), "Shutter": "SHUTTER",
+    "Smoke": tr("chl_smoke"), "Fan": tr("chl_fan"), "Shutter": "SHUTTER", "DimStrobe": "DIM+STB",
     "Spark": tr("chl_spark"), "Flame": tr("chl_flame"),
     "Effects": tr("chl_effects"), "Mode": "MODE",
     "CTO": "CTO", "CTB": "CTB",
@@ -629,6 +631,8 @@ _PANTILT_META_FIELDS = (
     # patch antérieur : `_apply_pantilt_meta` ignore les clés à None, la lyre
     # garde donc les 540/270 par défaut de `Projector`.
     "pan_range", "tilt_range",
+    # « Face scène » de la lyre (cf. `core.pan_front_offset`).
+    "pan_front",
 )
 
 
@@ -6229,6 +6233,7 @@ class MainWindow(QMainWindow):
         ctrl_menu.addAction(tr("mw_menu_ctrl_settings"), self._open_akai_layout_editor)
 
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
+        ctrl_menu.addAction(tr("api_net_menu"), self._open_api_network_dialog)
         ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
         # App tablette sans PC : elle retrouve patch, mémoires et effets dans le compte.
         ctrl_menu.addAction(tr("mw_menu_send_tablet"), self._send_config_to_tablet)
@@ -6343,7 +6348,7 @@ class MainWindow(QMainWindow):
         # ── Bloc « Mon compte » ───────────────────────────────────────
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_license"), self._open_activation_dialog)
-        about_menu.addAction(tr("bx_menu_have"), self._have_boitier)
+        about_menu.addAction(f"🔌 {tr('bx_menu_have')}", self._have_boitier)
 
         # ── Bloc « Communauté » (sous-menu regroupant réseaux/newsletter/idée) ─
         about_menu.addSeparator()
@@ -13233,10 +13238,9 @@ class MainWindow(QMainWindow):
             shape = self._QE_TO_SHAPE[eff]
             speed = round(max(0.1, (float(st0.speed) - 0.05) / 7.0 * 100.0), 1)
             amp = float(st0.amplitude)
-            if shape == "balancier":
-                # Pan seul : le moteur à couches réduit le pan du ratio
-                # angulaire (cercle rond), l'effet rapide non → compensé.
-                amp /= max(0.05, pan_angular_ratio(p0))
+            # Balancier (pan seul) : plus de compensation du ratio angulaire,
+            # le moteur ne l'applique plus aux formes à un seul axe
+            # (`core.pt_shape_pan_ratio`).
             size = int(round(max(1.0, min(400.0, amp / 8192.0 * 100.0))))
             dephase = any(x[0] > 1e-6 for x in items)
             spread = phase_value if (len(items) > 1 and dephase) else 0
@@ -14224,9 +14228,16 @@ class MainWindow(QMainWindow):
                 continue
             if id(p) in getattr(self, '_pan_tilt_transitions', {}):
                 continue
-            pan, tilt = centers.get(id(p)) or aims.get(id(p)) or (
-                self._pantilt_in_limits(p, 'pan',  0.0, 0),
-                self._pantilt_in_limits(p, 'tilt', 0.0, 0))
+            _rest = rest_pantilt(p)
+            if _rest == (32768, 32768):
+                # Lyre accrochée : centre de la zone, comme avant.
+                _rest_c = (self._pantilt_in_limits(p, 'pan',  0.0, 0),
+                           self._pantilt_in_limits(p, 'tilt', 0.0, 0))
+            else:
+                # Lyre posée : son repos (pas le plafond), gardé dans la zone.
+                _rest_c = (self._pantilt_in_limits(p, 'pan',  0.0, 0, center=_rest[0]),
+                           self._pantilt_in_limits(p, 'tilt', 0.0, 0, center=_rest[1]))
+            pan, tilt = centers.get(id(p)) or aims.get(id(p)) or _rest_c
             self._start_pan_tilt_transition(p, pan, tilt, 500)
 
     def stop_effect(self):
@@ -15322,13 +15333,13 @@ class MainWindow(QMainWindow):
                         _ctr = getattr(self, '_timeline_pos_centers', {}).get(id(proj))
                     if attr == "Pan":
                         center = (_ctr[0] if _ctr is not None else
-                                  saved[3] if saved and len(saved) > 3 else 32768)
+                                  saved[3] if saved and len(saved) > 3 else rest_pantilt(proj)[0])
                         sym_pan  = ld.get("sym_pan", False)
                         pan_sign = -1 if (sym_pan and id(proj) in _sym_mir) else 1
                         proj.pan = self._fx_pantilt(proj, 'pan', center, pan_sign * (raw_mv - 0.5) * 2, amplitude * _pan_ratio)
                     else:
                         center = (_ctr[1] if _ctr is not None else
-                                  saved[4] if saved and len(saved) > 4 else 32768)
+                                  saved[4] if saved and len(saved) > 4 else rest_pantilt(proj)[1])
                         sym_tilt  = ld.get("sym_tilt", False)
                         tilt_sign = -1 if (sym_tilt and id(proj) in _sym_mir) else 1
                         proj.tilt = self._fx_pantilt(proj, 'tilt', center, tilt_sign * (raw_mv - 0.5) * 2, amplitude)
@@ -15389,8 +15400,9 @@ class MainWindow(QMainWindow):
                         pan_x = (_pt_time(pan_freq) + _mh_i / _mh_n_pt * _sp_move + phase + pan_phase_pct / 100.0) % 1.0
                         pan_raw = _wave(pan_forme, pan_x)
                         c_pan = (_ctr[0] if _ctr is not None else
-                                 saved[3] if saved and len(saved) > 3 else 32768)
-                        proj.pan = self._fx_pantilt(proj, 'pan', c_pan, pan_sign * (pan_raw - 0.5) * 2, amplitude * _pan_ratio)
+                                 saved[3] if saved and len(saved) > 3 else rest_pantilt(proj)[0])
+                        proj.pan = self._fx_pantilt(proj, 'pan', c_pan, pan_sign * (pan_raw - 0.5) * 2,
+                                                    amplitude * pt_shape_pan_ratio(proj, tilt_forme))
 
                     # Tilt
                     if tilt_forme and tilt_forme != "Fixe":
@@ -15398,7 +15410,7 @@ class MainWindow(QMainWindow):
                         tilt_x = (_pt_time(tilt_freq) + _mh_i / _mh_n_pt * _sp_move + phase + tilt_phase_pct / 100.0) % 1.0
                         tilt_raw = _wave(tilt_forme, tilt_x)
                         c_tilt = (_ctr[1] if _ctr is not None else
-                                  saved[4] if saved and len(saved) > 4 else 32768)
+                                  saved[4] if saved and len(saved) > 4 else rest_pantilt(proj)[1])
                         proj.tilt = self._fx_pantilt(proj, 'tilt', c_tilt, tilt_sign * (tilt_raw - 0.5) * 2, amplitude)
 
                 elif attr == "Zoom":
@@ -16258,8 +16270,7 @@ class MainWindow(QMainWindow):
             p.amber_boost  = 0
             p.orange_boost = 0
             p.strobe_speed = 0
-            p.pan          = 32768
-            p.tilt         = 32768
+            p.pan, p.tilt  = rest_pantilt(p)   # repos selon l'accroche
             p.gobo         = 0
             p.gobo_rotation = 0
             p.zoom         = 0
@@ -22255,7 +22266,7 @@ class MainWindow(QMainWindow):
 
     # Canaux que la tablette pilote déjà par ses propres commandes (couleurs,
     # niveau, strobe, pad pan/tilt, roue, gobo) : pas de curseur en double.
-    _TABLET_HANDLED_CH = {"R", "G", "B", "Dim", "Dim2", "Strobe", "Shutter",
+    _TABLET_HANDLED_CH = {"R", "G", "B", "Dim", "Dim2", "Strobe", "Shutter", "DimStrobe",
                           "Pan", "PanFine", "Tilt", "TiltFine", "ColorWheel", "Gobo1"}
     # Canaux à état dédié : écrits dans leur attribut, comme le menu du plan de
     # feu — via `channel_extras`, ils masqueraient ce curseur-là au PC.
@@ -22718,6 +22729,131 @@ class MainWindow(QMainWindow):
     #
     #   Actions disponibles : Play/Pause, Suivant, Précédent, Blackout,
     #                         Effet lumière, Niveau fader, Mute, Scène mémoire.
+
+    def _open_api_network_dialog(self):
+        """API réseau : ouvrir l'API HTTP (port 8765) au réseau local, avec une
+        clé exigée des appareils autres que ce PC (Home Assistant, KNX…)."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                       QPushButton, QCheckBox, QLineEdit)
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        import streamdeck_api as _sd
+        try:
+            from tablet_server import get_local_ip
+            ip = get_local_ip() or "IP-DU-PC"
+        except Exception:
+            ip = "IP-DU-PC"
+
+        srv = getattr(self, "_streamdeck_server", None)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("api_net_title"))
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setStyleSheet(
+            "QDialog{background:#111;} QLabel{color:#ccc;background:transparent;}"
+            "QCheckBox{color:#fff;font-weight:bold;} "
+            "QLineEdit{background:#1c1c1c;color:#fff;border:1px solid #333;border-radius:4px;"
+            "padding:5px;font-family:Consolas,monospace;}"
+            "QPushButton{background:#222;color:#ddd;border:1px solid #3a3a3a;border-radius:4px;"
+            "padding:5px 12px;} QPushButton:hover{border-color:#00bcd4;color:#fff;}"
+            "QPushButton:disabled{color:#555;border-color:#2a2a2a;}")
+        dlg.setFixedWidth(480)
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(20, 20, 20, 18)
+        root.setSpacing(10)
+
+        t = QLabel(tr("api_net_title"))
+        t.setStyleSheet("font-size:17px;font-weight:bold;color:#fff;")
+        root.addWidget(t)
+
+        intro = QLabel(tr("api_net_intro"))
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        cb = QCheckBox(tr("api_net_enable"))
+        cb.setChecked(bool(srv and srv.is_network()))
+        root.addWidget(cb)
+
+        status = QLabel()
+        status.setWordWrap(True)
+        status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        root.addWidget(status)
+
+        key_lbl = QLabel(tr("api_net_key"))
+        root.addWidget(key_lbl)
+        key_row = QHBoxLayout()
+        key_edit = QLineEdit()
+        key_edit.setReadOnly(True)
+        btn_copy = QPushButton(tr("api_net_copy"))
+        btn_new = QPushButton(tr("api_net_new_key"))
+        key_row.addWidget(key_edit, 1)
+        key_row.addWidget(btn_copy)
+        key_row.addWidget(btn_new)
+        root.addLayout(key_row)
+
+        example = QLabel()
+        example.setWordWrap(True)
+        example.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        example.setStyleSheet("color:#9a9a9a;font-family:Consolas,monospace;font-size:11px;")
+        root.addWidget(example)
+
+        note = QLabel(tr("api_net_note"))
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#888;font-size:11px;")
+        root.addWidget(note)
+
+        bottom = QHBoxLayout()
+        btn_doc = QPushButton(tr("api_net_doc"))
+        btn_close = QPushButton(tr("api_net_close"))
+        bottom.addWidget(btn_doc)
+        bottom.addStretch(1)
+        bottom.addWidget(btn_close)
+        root.addLayout(bottom)
+
+        def _refresh(error=False):
+            on = bool(srv and srv.is_network())
+            key = _sd.network_key() if on else ""
+            for w in (key_lbl, key_edit, btn_copy, btn_new, example):
+                w.setEnabled(on)
+            key_edit.setText(key)
+            if error:
+                status.setStyleSheet("color:#ff6b6b;")
+                status.setText(tr("api_net_error", port=_sd.STREAMDECK_API_PORT))
+            elif on:
+                status.setStyleSheet("color:#00cc66;")
+                status.setText(tr("api_net_on", url=f"http://{ip}:{_sd.STREAMDECK_API_PORT}/api/"))
+            else:
+                status.setStyleSheet("color:#888;")
+                status.setText(tr("api_net_off"))
+            example.setText(
+                f'curl -X POST -H "Authorization: Bearer {key}" '
+                f'http://{ip}:{_sd.STREAMDECK_API_PORT}/api/memory/1.1' if on else "")
+
+        def _toggle(checked):
+            if srv is None:
+                _refresh(error=True)
+                return
+            ok = srv.set_network(checked)
+            if not ok:
+                cb.blockSignals(True)
+                cb.setChecked(srv.is_network())
+                cb.blockSignals(False)
+            _refresh(error=not ok)
+
+        def _new_key():
+            _sd.new_network_key()
+            _refresh()
+
+        cb.toggled.connect(_toggle)
+        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(key_edit.text()))
+        btn_new.clicked.connect(_new_key)
+        btn_doc.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://mystrow.fr/api-mystrow-domotique-stream-deck")))
+        btn_close.clicked.connect(dlg.accept)
+
+        _refresh(error=srv is None)
+        dlg.exec()
 
     def _start_streamdeck_dialog(self):
         """Ouvre le dialog Stream Deck : statut API + installation plugin."""
@@ -24854,6 +24990,17 @@ class MainWindow(QMainWindow):
         lbl_conflict_det.setStyleSheet("color:#ff6644; font-size:11px; padding:2px 0; border:none;")
         lbl_conflict_det.setVisible(False)
         fv.addWidget(lbl_conflict_det)
+        # Insérer un appareil au milieu d'une chaîne (demande client 19/11/2026) :
+        # on lui donne l'adresse voulue, puis ce bouton pousse les suivants.
+        btn_shift = QPushButton(tr("mw_shift_next"))
+        btn_shift.setCursor(Qt.PointingHandCursor)
+        btn_shift.setStyleSheet(
+            "QPushButton { background:#1a1206; color:#ffaa55; border:1px solid #553311;"
+            " border-radius:6px; padding:5px 12px; font-size:12px; text-align:left; }"
+            "QPushButton:hover { background:#2a1c0a; border-color:#aa6622; }"
+        )
+        btn_shift.setVisible(False)
+        fv.addWidget(btn_shift)
         fv.addWidget(_hdiv())
 
 
@@ -26312,7 +26459,7 @@ class MainWindow(QMainWindow):
                 # que la lyre restait fixe (« je ne peux pas faire strober mes
                 # projecteurs »). Le moteur envoie maintenant la vitesse dans
                 # cette bande, cf. le bloc `Shutter` de `artnet_dmx`.
-                if (ch_type == "Shutter"
+                if (ch_type in ("Shutter", "DimStrobe")
                         and snap_idx is not None
                         and snap_idx < len(self.projectors)
                         and "Strobe" not in (getattr(self.projectors[snap_idx],
@@ -26408,7 +26555,8 @@ class MainWindow(QMainWindow):
                     wl.addWidget(btn_sh_test)
                     m.aboutToHide.connect(lambda: _sh_test(False))
 
-                    _sh_hint = QLabel(tr("mw_shutter_strobe_tip"))
+                    _sh_hint = QLabel(tr("mw_dimstrobe_tip" if ch_type == "DimStrobe"
+                                          else "mw_shutter_strobe_tip"))
                     _sh_hint.setWordWrap(True)
                     _sh_hint.setFixedWidth(200)
                     _sh_hint.setStyleSheet("color:#5e5e5e;font-size:9px;")
@@ -27077,8 +27225,10 @@ class MainWindow(QMainWindow):
                         others.append(fd2['name'] or fd2['group'])
                 lbl_conflict_det.setText(tr("mw_f_overlap_with", a0=', '.join(others)))
                 lbl_conflict_det.setVisible(True)
+                btn_shift.setVisible(True)
             else:
                 lbl_conflict_det.setVisible(False)
+                btn_shift.setVisible(False)
             if idx < len(_cards) and _cards[idx] is not None:
                 scroll.ensureWidgetVisible(_cards[idx])
 
@@ -27245,8 +27395,10 @@ class MainWindow(QMainWindow):
                         others.append(fd2['name'] or fd2['group'])
                 lbl_conflict_det.setText(tr("mw_f_overlap_with", a0=', '.join(others)))
                 lbl_conflict_det.setVisible(True)
+                btn_shift.setVisible(True)
             else:
                 lbl_conflict_det.setVisible(False)
+                btn_shift.setVisible(False)
         _name_tmr = QTimer(dialog)
         _name_tmr.setSingleShot(True)
         _name_tmr.setInterval(500)
@@ -27864,30 +28016,79 @@ class MainWindow(QMainWindow):
             _select_card(len(fixture_data) - 1)
             _mark_dirty()
 
+        def _patch_units():
+            return patch_addressing.patch_units(
+                fixture_data, lambda fd: self.GROUP_DISPLAY.get(fd['group'], fd['group']))
+
+        def _move_unit(u, uni, start):
+            delta = start - u["start"]
+            for i in u["members"]:
+                fd = fixture_data[i]
+                fd['universe'] = uni
+                fd['start_address'] = fd.get('start_address', 1) + delta
+                if i < len(self.projectors):
+                    self.projectors[i].universe = uni
+                    self.projectors[i].start_address = fd['start_address']
+
+        def _after_readdress():
+            self._rebuild_dmx_patch()
+            _mark_dirty()
+            cur = _sel[0]
+            _build_cards(filter_bar.text())
+            if cur is not None: _select_card(cur)
+
+        def _shift_following():
+            """Pousse les appareils qui suivent l'appareil sélectionné (même
+            univers) juste assez pour supprimer les chevauchements. Les écarts
+            voulus plus loin sont conservés."""
+            idx = _sel[0]
+            if idx is None or idx >= len(fixture_data):
+                return
+            units = _patch_units()
+            anchor = next(u for u in units if idx in u["members"])
+            moves, err = patch_addressing.plan_shift_following(units, anchor)
+            if err == "no_room":
+                QMessageBox.warning(dialog, tr("mw_shift_title"),
+                                    tr("mw_shift_no_room", u=anchor["uni"] + 1))
+                return
+            if not moves:
+                QMessageBox.information(dialog, tr("mw_shift_title"), tr("mw_shift_nothing"))
+                return
+            lines = "\n".join(f"•  {u['name']} : {u['start']} → {new}" for u, new in moves)
+            if QMessageBox.question(
+                dialog, tr("mw_shift_title"),
+                tr("mw_shift_confirm", u=anchor["uni"] + 1, lst=lines),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+            ) != QMessageBox.Yes:
+                return
+            _push_history()
+            for u, new in moves:
+                _move_unit(u, u["uni"], new)
+            _after_readdress()
+
+        btn_shift.clicked.connect(_shift_following)
+
         def _auto_address():
             if QMessageBox.question(
                 dialog, tr("mw_auto_address"),
                 tr("mw_auto_address_confirm"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             ) != QMessageBox.Yes: return
+            # Avant le 19/11/2026 : chaque fixture à la suite dans l'ordre de
+            # CRÉATION, en repartant de U1. Trois défauts : un appareil ajouté
+            # plus tard partait en fin de chaîne ; une barre à cheval sur 512
+            # était coupée entre deux univers ; et l'univers choisi par
+            # l'utilisateur (un node par
+            # côté de scène…) était écrasé. Au-delà de U4, les adresses
+            # repartaient à 1 dans U4, par-dessus les précédentes.
+            plan = patch_addressing.plan_auto_address(_patch_units())
+            if plan is None:
+                QMessageBox.warning(dialog, tr("mw_auto_address"), tr("mw_auto_no_room"))
+                return
             _push_history()
-            addr = 1
-            uni  = 0
-            for fd in fixture_data:
-                if addr + len(fd['profile']) - 1 > 512:
-                    uni  = min(uni + 1, 3)
-                    addr = 1
-                fd['universe']      = uni
-                fd['start_address'] = addr
-                addr += len(fd['profile'])
-            for proj, fd in zip(self.projectors, fixture_data):
-                proj.universe      = fd['universe']
-                proj.start_address = fd['start_address']
-            self._rebuild_dmx_patch()
-            _mark_dirty()
-            cur = _sel[0]
-            _build_cards(filter_bar.text())
-            if cur is not None: _select_card(cur)
+            for u, uni, start in plan:
+                _move_unit(u, uni, start)
+            _after_readdress()
         def _reset_defaults():
             if QMessageBox.question(
                 dialog, tr("mw_reset"),
@@ -32761,8 +32962,29 @@ class MainWindow(QMainWindow):
                     proj.base_color = color
         return saved
 
+    def _sync_rest_positions(self):
+        """Amène au REPOS de son accroche une lyre restée au repos précédent.
+
+        `core.rest_pantilt` : 32768/32768 pour une lyre accrochée, visée
+        au-dessus du public pour une lyre posée au sol (RX du plan 3D, ou
+        « Accroche » du patch). Une lyre que rien n'a bougée (chargement du
+        patch, accroche changée, CLEAR) suit le nouveau repos ; une lyre
+        positionnée par l'utilisateur n'est jamais touchée. Coût : une
+        lecture de cache par lyre.
+        """
+        for p in self.projectors:
+            if getattr(p, 'fixture_type', '') not in ('Moving Head', 'Lyre', 'Laser'):
+                continue
+            r = rest_pantilt(p)
+            last = p.__dict__.get('_rest_last', (32768, 32768))
+            if r != last:
+                if (int(getattr(p, 'pan', 32768)), int(getattr(p, 'tilt', 32768))) == last:
+                    p.pan, p.tilt = r
+                p._rest_last = r
+
     def send_dmx_update(self):
         """Envoie les donnees DMX avec HTP memoires + pads AKAI + refresh plan de feu"""
+        self._sync_rest_positions()
         # Appliquer l'effet en cours — sauf si un autre moteur pilote déjà les
         # projecteurs et appelle update_effect() lui-même :
         #  • timeline (Play Lumière) → apply_timeline_to_dmx

@@ -348,6 +348,18 @@
             }
             break;
           }
+          case "DimStrobe": {
+            // Dimmer + strobe sur un seul canal (même règle que artnet_dmx.py) :
+            // plein feu (255) au repos, niveau porté par les couleurs, strobe
+            // dans la bande shutter_strobe_min/max, 0 au noir.
+            if (dimmer <= 0 || !(r || g || b || attr("white_boost"))) v = 0;
+            else if (spd > 0 && !hasStrobe) {
+              let lo = trunc(attr("shutter_strobe_min", 64)), hi = trunc(attr("shutter_strobe_max", 95));
+              if (hi < lo) [lo, hi] = [hi, lo];
+              v = Math.max(0, Math.min(255, trunc(lo + (spd / 100.0) * (hi - lo))));
+            } else v = 255;
+            break;
+          }
           case "Prism": v = attr("prism"); break;
           case "PrismRot": v = attr("prism_rotation"); break;
           case "Effects": v = attr("effects"); break;
@@ -600,10 +612,12 @@
           const tiltSign = ld.sym_tilt && symMir.has(proj) ? -1 : 1;
           const spMove = Math.min(1.0, spread / 100.0);
           const ptTime = (f) => (direction === 0 ? Math.abs(2 * pmod(f * t, 1.0) - 1) : direction === -1 ? -f * t : f * t);
+          // core.pt_shape_pan_ratio : forme pan seul (Balancier) → pas de réduction
+          const ptPanRatio = (!tiltForme || tiltForme === "Fixe") ? 1.0 : panRatio;
           if (panForme && panForme !== "Fixe") {
             const pf = layerFrequency(speed, panMult);
             const px = pmod(ptTime(pf) + mi / mn * spMove + phase + panPh / 100.0, 1.0);
-            proj.pan = trunc(Math.max(0, Math.min(65535, ctrPan + panSign * (wave(panForme, px) - 0.5) * 2 * amplitude * panRatio)));
+            proj.pan = trunc(Math.max(0, Math.min(65535, ctrPan + panSign * (wave(panForme, px) - 0.5) * 2 * amplitude * ptPanRatio)));
           }
           if (tiltForme && tiltForme !== "Fixe") {
             const tf = layerFrequency(speed, tiltMult);

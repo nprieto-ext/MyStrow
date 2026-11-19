@@ -29,7 +29,7 @@ from PySide6.QtGui import QColor, QBrush, QPainter, QPen, QImage, QPolygonF, QFo
 from core import (ComboSansMolette, color_wheel_display_color,
                   fixture_machine_kind,
                   emitted_brightness, fixture_projects_gobo, media_icon,
-                  pan_tilt_ranges)
+                  pan_tilt_ranges, pan_to_front)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer
@@ -3933,7 +3933,9 @@ class Plan3DWebWindow(QMainWindow):
                 'r': r, 'g': g, 'b': b,
                 'x':              x_w,
                 'z':              z_w,
-                'pan':            pan_v,
+                # Repère « face scène » (cf. core.pan_front_offset) : une lyre
+                # calibrée qui vise le centre se dessine face à la scène.
+                'pan':            pan_to_front(p, pan_v),
                 'tilt':           tilt_v,
                 'fixture_type':   getattr(p, 'fixture_type', 'PAR LED'),
                 # Genre de machine a effet ('fog', 'haze', 'spark', 'flame'),

@@ -46,6 +46,7 @@ _TYPE_DOC = [
     ("ColorWheel2", "second colour wheel"),
     ("Strobe", "DEDICATED strobe channel (strobe speed only)"),
     ("Shutter", "shutter channel that mixes closed / open / strobe ranges"),
+    ("DimStrobe", "ONE channel that mixes dimmer (intensity) AND strobe ranges, e.g. 0-134 dimmer, 135-240 strobe, 241-255 full"),
     ("Pan", "pan, coarse (8-bit MSB)"), ("PanFine", "pan fine (16-bit LSB)"),
     ("Tilt", "tilt, coarse"), ("TiltFine", "tilt fine"),
     ("Speed", "pan/tilt movement speed (or the speed of a built-in effect "
@@ -199,7 +200,7 @@ RULES
 2. One object in "modes" per DMX mode / personality listed in the chart, the most complete mode first.
 3. Never use the same channel type twice in a mode, except "Unused" (channels of the same type are driven together). For a second dimmer use Dim2, for a second gobo wheel Gobo2, for a second named-function channel Preset2, and so on. If you still have a duplicate, use "Unused" for the less useful one.
 4. 16-bit pan/tilt: coarse channel = Pan / Tilt, fine channel = PanFine / TiltFine.
-5. Strobe: a channel that ONLY sets the strobe speed is "Strobe". A channel that mixes closed, open and strobe ranges is "Shutter".
+5. Strobe: a channel that ONLY sets the strobe speed is "Strobe". A channel that mixes closed, open and strobe ranges is "Shutter". A channel that mixes dimmer (intensity) ranges and strobe ranges, with no separate dimmer channel, is "DimStrobe".
 6. A channel whose value ranges select named functions (off / auto / sound / DMX mode, macros, built-in programs) is a Preset channel. List each range in "preset_slots" with "dmx" = the MIDDLE of the range.
 7. Colour wheel: list every fixed colour in "color_wheel_slots", with "dmx" = the middle of its range and "color" = an approximate #rrggbb hex value. Skip rotation / rainbow / scroll ranges. Same for gobos in "gobo_wheel_slots" ("color": "#888888"). Leave these lists empty if the chart does not give the ranges.
 8. "channel_ranges" (optional): when only part of a channel's travel is usable and the rest triggers an automatic program (e.g. pan 0-127 = position, 128-255 = auto movement), give the usable range [min, max]. Omit the field otherwise.

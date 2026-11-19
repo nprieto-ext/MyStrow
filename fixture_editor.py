@@ -98,7 +98,7 @@ ALL_CHANNEL_TYPES = [
     #   Iris   : diaphragme.
     "C", "M", "Y", "Lime", "CTO", "CTB", "Iris",
     "Smoke", "Fan", "Spark", "Flame", "Pan", "PanFine", "Tilt", "TiltFine",
-    "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+    "Gobo1", "Gobo1Rot", "Gobo2", "Prism", "PrismRot", "Focus", "ColorWheel", "Shutter", "DimStrobe", "Speed", "Mode",
     # ── Couronne LED (« ring ») ───────────────────────────────────────────────
     # Une deuxième source, indépendante du faisceau, présente sur la plupart des
     # wash et beam récents. Elle n'avait AUCUN type : ses canaux tombaient sur
@@ -156,6 +156,7 @@ CHANNEL_COLORS = {
     "Gobo1": "#aa8800", "Gobo1Rot": "#cc9900", "Gobo2": "#886600",
     "Prism": "#dd00dd", "PrismRot": "#bb00bb",
     "Focus": "#00aa88", "ColorWheel": "#ff8800", "Shutter": "#ff2266",
+    "DimStrobe": "#ff9933",
     "Speed": "#66ff66", "Mode": "#88aaff", "Effects": "#cc44ff", "Reset": "#ff3333",
     # Trichromie, émetteur lime, correcteurs de température, diaphragme.
     "C": "#00cccc", "M": "#cc00cc", "Y": "#cccc00", "Lime": "#aaee00",

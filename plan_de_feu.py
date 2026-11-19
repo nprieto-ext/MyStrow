@@ -9,6 +9,7 @@ import time as _time
 from collections import Counter
 from i18n import tr, tr_name
 from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
+                  pan_from_front, pan_to_front, rest_pantilt, mount_is_hung,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
                   GOBO_SLOT_NAMES, GOBO_SLOT_ICONS, GOBO_SLOT_COUNT,
@@ -1640,7 +1641,7 @@ _TEINTE_CANAL = {
     "R": "#ff5252", "G": "#4ade80", "B": "#4d8dff", "W": "#f0f0f0",
     "Ambre": "#ffb340", "Orange": "#ff8a3d", "UV": "#a06bff", "Lime": "#c6ff4d",
     "C": "#4ddbff", "M": "#ff5ce0", "Y": "#ffe14d",
-    "Dim": "#ffd166", "Strobe": "#ff6b6b", "Shutter": "#ff6b6b",
+    "Dim": "#ffd166", "Strobe": "#ff6b6b", "Shutter": "#ff6b6b", "DimStrobe": "#ffb347",
     "Pan": "#00d4ff", "PanFine": "#0e8fac", "Tilt": "#00d4ff", "TiltFine": "#0e8fac",
     "Gobo1": "#b388ff", "Gobo2": "#b388ff", "Gobo1Rot": "#8c68d0",
     "Prism": "#7fd7ff", "PrismRot": "#5fb0d8",
@@ -1668,6 +1669,7 @@ _NOM_CANAL = {
     "Ambre": "Amber", "Orange": "Orange", "UV": "UV", "Lime": "Lime",
     "C": "Cyan", "M": "Magenta", "Y": "Yellow",
     "Dim": "Dimmer", "Dim2": "Dimmer 2", "Strobe": "Strobe", "Shutter": "Shutter",
+    "DimStrobe": "Dimmer + Strobe",
     "Pan": "Pan", "PanFine": "Pan Fine", "Tilt": "Tilt", "TiltFine": "Tilt Fine",
     "Gobo1": "Gobo", "Gobo1Rot": "Gobo Rot", "Gobo2": "Gobo 2",
     "Prism": "Prism", "PrismRot": "Prism Rot",
@@ -2110,7 +2112,25 @@ class _PanTiltFloater(QFrame):
             "QPushButton:hover{color:#00d4ff;border-color:#00d4ff44;}"
         )
         btn_center.clicked.connect(lambda: self._apply_preset({"pan": 32768, "tilt": 32768}))
-        lay.addWidget(btn_center)
+        ctr_row = QHBoxLayout()
+        ctr_row.setSpacing(4)
+        ctr_row.addWidget(btn_center, 1)
+
+        # Calibrage « face scène » : la position ACTUELLE de chaque lyre devient
+        # son centre. Clic droit = revenir au milieu de course (32768).
+        btn_front = QPushButton(tr("pdf_front_set"))
+        btn_front.setFixedHeight(22)
+        btn_front.setToolTip(tr("pdf_front_set_tip"))
+        btn_front.setContextMenuPolicy(Qt.CustomContextMenu)
+        btn_front.setStyleSheet(
+            "QPushButton{background:#1a1a1a;color:#777;border:1px solid #222;"
+            "border-radius:4px;font-size:9px;padding:0 6px;}"
+            "QPushButton:hover{color:#ffcc44;border-color:#ffcc4444;}"
+        )
+        btn_front.clicked.connect(lambda: self._set_front(reset=False))
+        btn_front.customContextMenuRequested.connect(lambda _pos: self._set_front(reset=True))
+        ctr_row.addWidget(btn_front)
+        lay.addLayout(ctr_row)
 
         self.adjustSize()
         self.hide()
@@ -2125,7 +2145,10 @@ class _PanTiltFloater(QFrame):
 
         self._targets = projs
         if projs:
-            pan  = getattr(projs[0], 'pan',  32768)
+            # Le pad parle dans le repère « face scène » de la lyre : son
+            # centre (double-clic, bouton Centre, preset « Centre ») = la scène.
+            pan  = max(0, min(65535, pan_to_front(projs[0],
+                                                  getattr(projs[0], 'pan', 32768))))
             tilt = getattr(projs[0], 'tilt', 32768)
         else:
             pan, tilt = 32768, 32768
@@ -2195,7 +2218,7 @@ class _PanTiltFloater(QFrame):
                     d_pan, d_tilt, id(p) in mir)
         else:
             for p in self._targets:
-                p.pan  = pan
+                p.pan  = pan_from_front(p, pan)
                 p.tilt = tilt
         self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
         self._canvas.update()
@@ -2205,6 +2228,28 @@ class _PanTiltFloater(QFrame):
 
     def _apply_preset(self, pr):
         self._pad.set_values(pr["pan"], pr["tilt"], emit=True)
+
+    def _set_front(self, reset=False):
+        """« Face scène » = position actuelle de chaque lyre ciblée (ou 32768)."""
+        if not self._targets:
+            return
+        for p in self._targets:
+            p.pan_front = 32768 if reset else int(getattr(p, 'pan', 32768))
+        p0 = self._targets[0]
+        pad_pan = max(0, min(65535, pan_to_front(p0, getattr(p0, 'pan', 32768))))
+        tilt = getattr(p0, 'tilt', 32768)
+        self._pad.set_values(pad_pan, tilt)
+        self._sym_origin = {id(p): (getattr(p, 'pan', 32768),
+                                    getattr(p, 'tilt', 32768)) for p in self._targets}
+        self._sym_pad0 = (pad_pan, tilt)
+        self._lbl_vals.setText(f"P:{pad_pan}  T:{tilt}")
+        self._canvas.update()
+        mw = getattr(self._canvas.pdf, 'main_window', None)
+        if mw is not None and hasattr(mw, 'save_dmx_patch_config'):
+            try:
+                mw.save_dmx_patch_config()
+            except Exception:
+                pass
 
     def hide_floater(self):
         self._targets = []
@@ -2489,6 +2534,8 @@ class FixtureCanvas(QWidget):
             # Coordonnées dézoomées : sans ça, viser le même point du plan
             # donnait un tilt différent selon le zoom.
             pan_val, tilt_val = beam_aim(dx / self._zoom, dy / self._zoom, r)
+            # `beam_aim` rend une visée dans le repère du dessin (face scène).
+            pan_val = pan_from_front(proj, pan_val)
             # Le mode cible ne vise que l'avant-scène : on ne renvoie jamais
             # la lyre vers le fond (tilt < 32768).
             #
@@ -2500,6 +2547,9 @@ class FixtureCanvas(QWidget):
             # ≈ 213/255) et, si elle est réglée, la zone de la lyre
             # (« Limites de mouvement »), seul garde-fou qui connaît le matériel.
             tilt_val = max(32768, tilt_val)
+            if not mount_is_hung(proj):
+                # Lyre posée : profondeur miroir (cf. dessin du faisceau).
+                tilt_val = min(65535, 65536 - tilt_val)
             _t_lo = getattr(proj, 'tilt_min', 0)
             _t_hi = getattr(proj, 'tilt_max', 65535)
             if isinstance(_t_lo, (int, float)) and isinstance(_t_hi, (int, float)) and _t_hi > _t_lo:
@@ -2743,8 +2793,10 @@ class FixtureCanvas(QWidget):
             # là où il n'est pas (l'ancien calcul avait sa propre formule,
             # avec un tilt ramené sur 0..1 au lieu d'un écart au centre —
             # une lyre au repos se voyait attribuer un cône de 71 px).
+            # Repère « face scène » de la lyre (cf. core.pan_front_offset).
             pan_angle, beam_len, beam_hw = beam_geometry(
-                getattr(proj, 'pan', 32768), getattr(proj, 'tilt', 32768), r)
+                pan_to_front(proj, getattr(proj, 'pan', 32768)),
+                getattr(proj, 'tilt', 32768), r)
 
             # Transformer dans le repère local (centré + rotation inverse)
             rad = _m.radians(-pan_angle)
@@ -2918,7 +2970,14 @@ class FixtureCanvas(QWidget):
         if ftype in ("Moving Head", "Laser"):
             pan_val  = _htp_e[2] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'pan',  32768)
             tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
-            pan_angle, beam_len, beam_hw = beam_geometry(pan_val, tilt_val, r)
+            # Dessin dans le repère « face scène » : une lyre calibrée qui vise
+            # le centre de la scène se dessine droite (cf. core.pan_front_offset).
+            # Lyre posée (retournée) : même pan, profondeur inversée — miroir
+            # de la géométrie 3D (rotation X de 180° : z → −z).
+            if not mount_is_hung(proj):
+                tilt_val = 65536 - tilt_val
+            pan_angle, beam_len, beam_hw = beam_geometry(
+                pan_to_front(proj, pan_val), tilt_val, r)
             # Base du cône : au bord de l'icône quand le faisceau est franc,
             # ramenée vers le centre quand il se rétracte — sans quoi un cône
             # plus court que `r` se dessinerait à l'envers (base au-delà de la
@@ -3093,6 +3152,14 @@ class FixtureCanvas(QWidget):
                     painter.drawEllipse(QPointF(ap_cx, cy), ap_r * 0.38, ap_r * 0.38)
             else:
                 # ── Lyre / Moving Head ───────────────────────────────────────────────
+                # Posée au sol (RX du plan 3D ≈ 180°) : dessin retourné, socle
+                # en bas. Restauré après la tête (cf. `_flip_restore`).
+                _flip_restore = not mount_is_hung(proj)
+                if _flip_restore:
+                    painter.save()
+                    painter.translate(cx, cy)
+                    painter.scale(1, -1)
+                    painter.translate(-cx, -cy)
                 lr          = int(r * 1.4)
                 yoke_top_hw = int(lr * 0.88)
                 yoke_bot_hw = int(lr * 0.54)
@@ -3184,6 +3251,8 @@ class FixtureCanvas(QWidget):
                 painter.drawEllipse(
                     QPoint(cx - int(lens_dot_r * 0.35), head_cy - int(lens_dot_r * 0.35)),
                     hl_r, hl_r)
+                if _flip_restore:
+                    painter.restore()
 
         elif ftype == "Barre LED":
             painter.drawRoundedRect(QRect(cx - barre_hw, cy - barre_hh, barre_hw * 2, barre_hh * 2), 3, 3)
@@ -3414,6 +3483,18 @@ class FixtureCanvas(QWidget):
             return fn()
         except Exception:
             return {}
+
+    def _flip_label_dy(self, proj):
+        """Décalage vers le bas sous une lyre retournée (socle en bas).
+
+        Accrochée, l'icône s'arrête à ~0,54 × lr sous le centre (bas de la
+        tête) ; retournée, le socle descend à lr : sans décalage le nom
+        touchait l'icône.
+        """
+        if getattr(proj, 'fixture_type', '') != 'Moving Head' or mount_is_hung(proj):
+            return 0
+        lr = int((9 if self.compact else 13) * 1.4)
+        return lr - int(lr * 0.54) + 1
 
     def _draw_selection_badge(self, painter, cx, cy, rank):
         """Pastille numérotée SOUS la fixture : sa place dans la sélection.
@@ -4032,7 +4113,8 @@ class FixtureCanvas(QWidget):
                     (self._draw_stack_badge(painter, cx, cy, len(_membres)), _membres))
 
             if is_selected and key in _sel_rank:
-                self._draw_selection_badge(painter, cx, cy, _sel_rank[key])
+                self._draw_selection_badge(painter, cx, cy + self._flip_label_dy(proj),
+                                           _sel_rank[key])
 
             if not self.compact:
                 # Dessinées après la boucle, par priorité (voir plus bas)
@@ -4043,6 +4125,9 @@ class FixtureCanvas(QWidget):
         # train de manipuler, ce sont elles qu'on a besoin d'identifier.
         for cx, cy, proj, group, is_selected, _ in sorted(
                 _label_todo, key=lambda t: not (t[4] or t[5])):
+            # Lyre retournée (posée au sol) : socle en bas, l'icône descend
+            # plus bas — on décale l'étiquette d'autant.
+            cy = cy + self._flip_label_dy(proj)
             _lbl_rect = QRect(cx - 38, cy + 16, 76, 24)
             if any(_lbl_rect.intersects(r) for r in _label_rects):
                 continue              # place déjà prise : on n'empile pas
@@ -4766,9 +4851,12 @@ class FixtureCanvas(QWidget):
                 # Recale aussi le centre de l'effet en cours : sinon la visée
                 # posée à la souris sautait à l'ancienne position dès l'arrêt
                 # de l'effet (qui restaure depuis ce centre).
+                _dtilt = -int(ddy / _PX * 65535)
+                if not mount_is_hung(p):
+                    _dtilt = -_dtilt     # lyre posée : le faisceau suit la souris
                 apply_pan_tilt(_mw_drag, p,
                                pan0 + int(dpan),
-                               tilt0 - int(ddy / _PX * 65535))
+                               tilt0 + _dtilt)
             if hasattr(self.pdf, '_flush_dmx'):
                 self.pdf._flush_dmx()
             self.update()
@@ -6311,8 +6399,7 @@ class PlanDeFeu(QFrame):
             proj.amber_boost  = 0
             proj.orange_boost = 0
             # Moving head
-            proj.pan          = 32768
-            proj.tilt         = 32768
+            proj.pan, proj.tilt = rest_pantilt(proj)   # repos selon l'accroche
             proj.gobo         = 0
             proj.gobo_rotation = 0
             proj.zoom         = 0
@@ -7485,8 +7572,7 @@ class PlanDeFeu(QFrame):
                 p.amber_boost    = 0
                 p.orange_boost   = 0
                 p.strobe_speed   = 0
-                p.pan            = 32768
-                p.tilt           = 32768
+                p.pan, p.tilt    = rest_pantilt(p)   # repos selon l'accroche
                 p.gobo           = 0
                 p.zoom           = 0
                 p.shutter        = 255
@@ -7941,6 +8027,9 @@ class PlanDeFeu(QFrame):
             else:
                 _pad_init_pan  = getattr(p0, 'pan',  32768)
                 _pad_init_tilt = getattr(p0, 'tilt', 32768)
+            # Pad dans le repère « face scène » (cf. core.pan_front_offset) ;
+            # les branches effet et SYM ne travaillent qu'en écarts : inchangées.
+            _pad_init_pan = max(0, min(65535, pan_to_front(p0, _pad_init_pan)))
 
             # Centre initial de chaque target pour le calcul du delta
             _init_centers = {}
@@ -7979,9 +8068,9 @@ class PlanDeFeu(QFrame):
                             p, init_c.get(id(p), (32768, 32768)),
                             d_pan, d_tilt, mirror)
                     else:
-                        # SYM éteint : le pad reste absolu, toutes les lyres
-                        # sélectionnées vont au même endroit. Inchangé.
-                        p.pan  = pan
+                        # SYM éteint : le pad reste absolu (dans le repère
+                        # face scène de chaque lyre) : toutes vont au même endroit.
+                        p.pan  = pan_from_front(p, pan)
                         p.tilt = tilt
                 _flush()
             pt_pad.changed.connect(_on_pantilt)
@@ -8002,7 +8091,9 @@ class PlanDeFeu(QFrame):
                 pad.set_values(pan_g, tilt_g)
                 for p, g, i in t:
                     key = str(p.start_address)
-                    new_pan  = per_proj[key]["pan"]  if key in per_proj else pan_g
+                    # per_proj = valeurs DMX exactes de CETTE lyre ; un preset
+                    # global (Centre, Face…) est relatif à son face scène.
+                    new_pan  = per_proj[key]["pan"]  if key in per_proj else pan_from_front(p, pan_g)
                     new_tilt = per_proj[key]["tilt"] if key in per_proj else tilt_g
                     apply_pan_tilt(_mw, p, new_pan, new_tilt)
                 _flush()
@@ -10203,6 +10294,10 @@ class _PatchCanvasProxy:
         if getattr(proj, 'matrix_id', None) is not None:
             menu.addAction(tr("pdf_rotate_matrix"),
                            lambda: self._rotate_matrix(idx))
+        if getattr(proj, 'fixture_type', '') == 'Moving Head':
+            menu.addAction(tr("pdf_flip_lyre_to_hung" if not mount_is_hung(proj)
+                              else "pdf_flip_lyre_to_floor"),
+                           lambda: self._flip_lyres(idx))
         menu.addSeparator()
 
         grp_menu = menu.addMenu(tr("pdf_assign_group"))
@@ -10217,6 +10312,30 @@ class _PatchCanvasProxy:
                        self._delete_selected_fixtures)
 
         menu.exec(global_pos)
+
+    def _flip_lyres(self, idx):
+        """Retourne la lyre (accrochée ⇄ posée au sol), et toute la sélection
+        si elle en fait partie. Même réglage que le RX du plan 3D (0 / 180) :
+        le dessin 2D, la 3D et le repos (`core.rest_pantilt`) suivent.
+        """
+        g_cnt, sel = {}, []
+        for i, p in enumerate(self.projectors):
+            li = g_cnt.get(p.group, 0)
+            if (p.group, li) in self.selected_lamps:
+                sel.append(i)
+            g_cnt[p.group] = li + 1
+        cibles = sel if idx in sel else [idx]
+        floor = mount_is_hung(self.projectors[idx])   # on bascule vers l'autre
+        for i in cibles:
+            p = self.projectors[i]
+            if getattr(p, 'fixture_type', '') == 'Moving Head':
+                p.rot3d_x = 180.0 if floor else 0.0
+        if self.main_window and hasattr(self.main_window, 'save_dmx_patch_config'):
+            self.main_window.save_dmx_patch_config()
+        if self.canvas_widget:
+            self.canvas_widget.update()
+        if self._refresh_cb:
+            self._refresh_cb()
 
     def _rotate_matrix(self, idx):
         """Fait pivoter une matrice/barre de 90° autour de son centre (bloc)."""

@@ -4,6 +4,9 @@ streamdeck_api.py — Serveur HTTP local pour l'integration StreamDeck.
 Permet au plugin Elgato StreamDeck de controler MyStrow via HTTP REST
 sur http://127.0.0.1:8765/api/...
 
+Option « API réseau » : le même serveur écoute aussi sur le réseau local,
+clé obligatoire pour les appareils autres que le PC (voir _NET_FILE plus bas).
+
 Endpoints:
   GET  /api/state                    → etat complet (JSON)
   GET  /api/cartouches               → liste des 4 cartouches
@@ -33,15 +36,96 @@ Ajouts pour l'assistant IA (serveur MCP, dossier mcp/) :
   POST /api/fixture_import           → {"fixture": {...}} : valide + enregistre
 """
 
+import hmac
 import json
+import os
+import secrets
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
 
 from PySide6.QtCore import QObject, Signal
 
 # Port d'ecoute du serveur HTTP local
 STREAMDECK_API_PORT = 8765
+
+
+# ---------------------------------------------------------------------------
+# Accès réseau local (domotique : Home Assistant, KNX, Jeedom…)
+# ---------------------------------------------------------------------------
+#
+# Par défaut l'API n'écoute que sur 127.0.0.1. Quand l'utilisateur coche
+# « Accès réseau » (Connexion › Contrôle › API réseau), le serveur écoute sur
+# toutes les cartes (0.0.0.0) et toute requête qui ne vient PAS du PC lui-même
+# doit présenter la clé : en-tête `Authorization: Bearer <clé>`, en-tête
+# `X-API-Key: <clé>` ou paramètre `?key=<clé>`. Les clients locaux (plugin
+# Stream Deck, extension Claude, curl sur le PC) restent sans clé : rien ne
+# change pour eux.
+#
+# La clé est stockée EN CLAIR : on doit pouvoir la réafficher pour la copier
+# dans la box domotique, et ce fichier n'est lisible que depuis le PC — qui
+# pilote de toute façon l'API sans clé.
+
+_NET_FILE = Path.home() / ".mystrow_api_network.json"
+_net_lock = threading.Lock()
+
+
+def _load_net() -> dict:
+    try:
+        data = json.loads(_NET_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {"enabled": bool(data.get("enabled")),
+                    "key": str(data.get("key") or "")}
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"[StreamDeck API] Lecture des réglages réseau impossible : {exc}")
+    return {"enabled": False, "key": ""}
+
+
+def _save_net(cfg: dict):
+    tmp = _NET_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
+    os.replace(tmp, _NET_FILE)
+
+
+_net = _load_net()
+
+
+def network_enabled() -> bool:
+    with _net_lock:
+        return _net["enabled"]
+
+
+def network_key() -> str:
+    """Clé exigée des appareils du réseau (créée au premier besoin)."""
+    with _net_lock:
+        if not _net["key"]:
+            _net["key"] = secrets.token_urlsafe(12)
+            _save_net(_net)
+        return _net["key"]
+
+
+def new_network_key() -> str:
+    """Remplace la clé : l'ancienne cesse aussitôt de marcher."""
+    with _net_lock:
+        _net["key"] = secrets.token_urlsafe(12)
+        _save_net(_net)
+        return _net["key"]
+
+
+def _set_network_flag(enabled: bool):
+    with _net_lock:
+        _net["enabled"] = bool(enabled)
+        _save_net(_net)
+
+
+def _is_loopback(ip: str) -> bool:
+    ip = (ip or "").lower()
+    if ip.startswith("::ffff:"):
+        ip = ip[7:]
+    return ip.startswith("127.") or ip == "::1"
 
 
 # ---------------------------------------------------------------------------
@@ -171,18 +255,46 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
             """Retourne les segments du path, URL-decodés."""
             return [unquote(p) for p in urlparse(self.path).path.split("/") if p]
 
+        def _authorized(self) -> bool:
+            """Le PC lui-même passe toujours ; un appareil du réseau doit
+            donner la clé, et seulement si l'accès réseau est activé."""
+            if _is_loopback(self.client_address[0]):
+                return True
+            if not network_enabled():
+                return False
+            given = ""
+            auth = self.headers.get("Authorization") or ""
+            if auth.lower().startswith("bearer "):
+                given = auth[7:].strip()
+            if not given:
+                given = (self.headers.get("X-API-Key") or "").strip()
+            if not given:
+                given = parse_qs(urlparse(self.path).query).get("key", [""])[0]
+            return bool(given) and hmac.compare_digest(given.encode("utf-8"),
+                                                       network_key().encode("utf-8"))
+
+        def _refuse_if_unauthorized(self) -> bool:
+            if self._authorized():
+                return False
+            self._send_error("Clé API manquante ou invalide "
+                             "(MyStrow › Connexion › Contrôle › API réseau)", 401)
+            return True
+
         # ── CORS pre-flight ─────────────────────────────────────────────────
 
         def do_OPTIONS(self):
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers",
+                             "Content-Type, Authorization, X-API-Key")
             self.end_headers()
 
         # ── GET ─────────────────────────────────────────────────────────────
 
         def do_GET(self):
+            if self._refuse_if_unauthorized():
+                return
             parts = self._parts()
             if parts == ["api", "state"]:
                 self._handle_state()
@@ -454,6 +566,8 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
         # ── POST /api/* ──────────────────────────────────────────────────────
 
         def do_POST(self):
+            if self._refuse_if_unauthorized():
+                return
             parts = self._parts()
 
             if len(parts) < 2 or parts[0] != "api":
@@ -704,6 +818,7 @@ class StreamDeckAPIServer:
         self._server     = None
         self._thread     = None
         self._port       = STREAMDECK_API_PORT
+        self._host       = ""
         self._connect_signals(window)
 
     # ── connexion signaux → slots MainWindow ────────────────────────────────
@@ -835,23 +950,50 @@ class StreamDeckAPIServer:
     def start(self, port: int = STREAMDECK_API_PORT) -> bool:
         self._port = port
         handler = _make_handler(self._bridge, self._window_ref)
+        host = "0.0.0.0" if network_enabled() else "127.0.0.1"
         try:
-            self._server = HTTPServer(("127.0.0.1", port), handler)
+            self._server = HTTPServer((host, port), handler)
         except OSError as exc:
-            print(f"[StreamDeck API] Impossible de demarrer sur le port {port} : {exc}")
-            return False
+            print(f"[StreamDeck API] Impossible de demarrer sur {host}:{port} : {exc}")
+            if host == "127.0.0.1":
+                return False
+            # Accès réseau impossible : garder au moins l'API locale (Stream
+            # Deck, Claude) plutôt que plus rien du tout.
+            try:
+                host = "127.0.0.1"
+                self._server = HTTPServer((host, port), handler)
+            except OSError as exc2:
+                print(f"[StreamDeck API] Impossible de demarrer sur le port {port} : {exc2}")
+                self._server = None
+                return False
 
+        self._host = host
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             daemon=True,
             name="streamdeck-api",
         )
         self._thread.start()
-        print(f"[StreamDeck API] Serveur demarre — http://127.0.0.1:{port}/api/")
+        print(f"[StreamDeck API] Serveur demarre — http://{host}:{port}/api/")
         return True
+
+    def is_network(self) -> bool:
+        """Vrai si le serveur écoute réellement sur le réseau."""
+        return self._server is not None and getattr(self, "_host", "") == "0.0.0.0"
+
+    def set_network(self, enabled: bool) -> bool:
+        """Active/coupe l'accès réseau et redémarre le serveur. Renvoie True si
+        le serveur écoute bien comme demandé."""
+        _set_network_flag(enabled)
+        if enabled:
+            network_key()
+        self.stop()
+        ok = self.start(self._port)
+        return ok and self.is_network() == bool(enabled)
 
     def stop(self):
         if self._server:
             self._server.shutdown()
+            self._server.server_close()   # libère le port pour un redémarrage
             self._server = None
             print("[StreamDeck API] Serveur arrete")

@@ -25,7 +25,7 @@ from core import (fixture_is_fx_machine, effect_cycle_seconds,
                   block_index, chase_slot, layer_frequency, random_wave,
                   effect_dim_base_color, position_preset_values,
                   find_position_preset, ComboSansMolette,
-                  pan_angular_ratio)
+                  pan_angular_ratio, pt_shape_pan_ratio)
 from i18n import tr, tr_name
 
 
@@ -5123,7 +5123,7 @@ class EffectEditorDialog(QDialog):
                         p_freq = layer_frequency(layer.speed, p_mult)
                         p_x    = (_pt_time(p_freq) + i_fx / max(n_fx, 1) * spread + phase + p_ph / 100.0) % 1.0
                         p_raw  = self._wave(p_forme, p_x)
-                        pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * pan_angular_ratio(proj))))
+                        pan_v  = int(max(0, min(65535, c_pan + pan_sign * (p_raw - 0.5) * 2 * pt_amp * pt_shape_pan_ratio(proj, tilt_cfg[0]))))
                     t_forme, t_ph, t_mult = tilt_cfg
                     if t_forme and t_forme != "Fixe":
                         t_freq = layer_frequency(layer.speed, t_mult)

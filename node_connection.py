@@ -2504,9 +2504,9 @@ class DmxOutputDialog(QDialog):
         self._build_ui()
         self._refresh_ports()
         self._set_transport(self._transport, save=False)
+        self._fit_to_content()
         if usb_node:
             self._choisir_usb_node()
-        self._choisir_boitier(self._boitier_initial(dmx, usb_node), connecter=False)
 
     def _fit_to_content(self):
         """Ouvre la fenêtre à la hauteur réellement demandée par la page.
@@ -2516,16 +2516,13 @@ class DmxOutputDialog(QDialog):
         plafonnée à l'écran. Sans ça, la page Node dépassait la taille fixe et
         la carte « Aiguillage des sorties » se retrouvait rognée.
         """
-        if self._classic.isHidden():
-            besoin = self.layout().sizeHint().height()
-        else:
-            besoin = (self.layout().minimumSize().height()
-                      - self._scroll.minimumHeight()
-                      + self._stack.sizeHint().height())
+        besoin = (self.layout().minimumSize().height()
+                  - self._scroll.minimumHeight()
+                  + self._stack.sizeHint().height())
         ecran = self.screen() or QApplication.primaryScreen()
         dispo = int(ecran.availableGeometry().height() * 0.92) if ecran else 800
         self.setFixedWidth(520)
-        self.setMinimumHeight(min(430, besoin) if not self._classic.isHidden() else besoin)
+        self.setMinimumHeight(min(430, besoin))
         self.setMaximumHeight(besoin)
         self.resize(520, min(besoin, dispo))
 
@@ -2566,66 +2563,6 @@ class DmxOutputDialog(QDialog):
             return transport
         return transport if self._usb_port_available(dmx) else TRANSPORT_ARTNET
 
-    def _boitier_initial(self, dmx, usb_node=False):
-        """Carte présélectionnée à l'ouverture (None = aucune : on demande)."""
-        from boitier_picker import FRONT, TOP, OTHER
-        pid = getattr(dmx, "product_id", "") or ""
-        if usb_node or pid == USB_NODE_ID:
-            return FRONT
-        if pid == MYSTROW_USB_ID:
-            return TOP
-        if port_boitier_maison():
-            return TOP                      # branché : c'est forcément lui
-        # Jamais réglé (pas de ~/.mystrow_dmx.json) : on pose la question.
-        if not os.path.exists(os.path.join(os.path.expanduser("~"), ".mystrow_dmx.json")):
-            return None
-        return OTHER
-
-    def _choisir_boitier(self, mode, connecter=True):
-        """Clic sur une carte « Quel boîtier avez-vous ? »."""
-        from boitier_picker import FRONT, TOP, OTHER
-        self._bx_mode = mode
-        self._picker.set_selected(mode)
-        self._classic.setVisible(mode == OTHER)
-        self._bx_info.setVisible(mode in (FRONT, TOP))
-        self._maj_bx_front()
-        self._btn_apply.setVisible(mode is not None)
-        self._status_lbl.setText("")
-        if mode == FRONT:
-            # USB NODE : sortie Node, l'adresse est trouvée toute seule.
-            self._choisir_usb_node()
-            self._status_lbl.setText("")     # la carte d'info le dit déjà
-            self._bx_info.setText(tr("nc_bx_front_info"))
-        elif mode == TOP:
-            port = port_boitier_maison()
-            if port:
-                self._set_transport(TRANSPORT_ENTTEC_PRO)
-                self._proto_combo.setCurrentIndex(
-                    max(0, self._proto_combo.findData(MYSTROW_USB_ID)))
-                idx = self._port_combo.findData(port)
-                if idx >= 0:
-                    self._port_combo.setCurrentIndex(idx)
-                self._bx_info.setText(tr("nc_bx_top_info", port=port))
-            else:
-                self._bx_info.setText(tr("nc_bx_top_missing"))
-                connecter = False
-        self._fit_to_content()
-        if connecter and mode in (FRONT, TOP):
-            self._apply()
-
-    def _maj_bx_front(self):
-        """Bouton « Régler automatiquement » du mode USB NODE : seulement
-        quand quelque chose cloche (node muet ou carte réseau hors 2.x)."""
-        btn = getattr(self, "_bx_fix_btn", None)
-        if btn is None:
-            return
-        souci = (getattr(self, "_node_found", None) is False
-                 or getattr(self, "_net_todo", False))
-        voir = getattr(self, "_bx_mode", None) == "front" and souci
-        if voir != btn.isVisible():
-            btn.setVisible(voir)
-            QTimer.singleShot(0, self._fit_to_content)
-
     def _ouvrir_materiel(self, _lien=None):
         # Le Shop du site remplace la fenêtre « Matériel recommandé ».
         from core import SHOP_URLS
@@ -2646,42 +2583,6 @@ class DmxOutputDialog(QDialog):
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet("color: #f0f0f0;")
         content.addWidget(title)
-
-        # « Quel boîtier avez-vous ? » : les deux boîtiers MyStrow se
-        # reconnaissent à l'emplacement du logo et se branchent en un clic ;
-        # l'écran complet (Node / USB, IP, ports) n'apparaît que pour une
-        # autre interface.
-        from boitier_picker import BoitierPicker
-        self._picker = BoitierPicker()
-        self._picker.chosen.connect(self._choisir_boitier)
-        content.addWidget(self._picker)
-
-        self._bx_info = QLabel("")
-        self._bx_info.setWordWrap(True)
-        self._bx_info.setStyleSheet(
-            "color:#ccc; font-size:11px; background:#161616; border:1px solid #2a2a2a;"
-            " border-radius:6px; padding:10px 12px;")
-        self._bx_info.hide()
-        content.addWidget(self._bx_info)
-
-        # USB NODE pas trouvé, ou carte réseau du PC pas en 2.x : l'assistant
-        # réseau (variante USB) règle tout seul, sans adresse IP à taper.
-        self._bx_fix_btn = QPushButton(tr("nc_bx_front_fix"))
-        self._bx_fix_btn.setFixedHeight(34)
-        self._bx_fix_btn.setStyleSheet(_BTN_NET_TODO)
-        self._bx_fix_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._bx_fix_btn.clicked.connect(self._open_node_wizard)
-        self._bx_fix_btn.hide()
-        content.addWidget(self._bx_fix_btn)
-
-        self._classic = QWidget()
-        self._classic.setStyleSheet("background: transparent;")
-        classic = QVBoxLayout(self._classic)
-        classic.setContentsMargins(0, 0, 0, 0)
-        classic.setSpacing(16)
-        content.addWidget(self._classic, 1)
-        outer = content
-        content = classic
 
         # Toggle Node / USB
         toggle_row = QHBoxLayout()
@@ -2716,19 +2617,8 @@ class DmxOutputDialog(QDialog):
         )
         content.addWidget(hint)
 
-        # Pas encore d'interface : c'est ICI qu'on le découvre, donc ici qu'on
-        # propose la nôtre. Ouvre la fenêtre Matériel (Pack en tête, interfaces
-        # tierces en dessous) plutôt qu'un lien Amazon nu.
-        pack = QLabel(tr("nc_pack_hint"))
-        pack.setAlignment(Qt.AlignCenter)
-        pack.setWordWrap(True)
-        pack.setCursor(QCursor(Qt.PointingHandCursor))
-        pack.setStyleSheet(
-            "color:#E2CE16; font-size:11px; background:#1a1700;"
-            " border:1px solid rgba(226,206,22,0.35); border-radius:5px; padding:5px 10px;"
-        )
-        pack.linkActivated.connect(self._ouvrir_materiel)
-        content.addWidget(pack)
+        # Encart « Pas encore d'interface ? Pack MyStrow » retiré (19/11/2026) :
+        # pub hors sujet dans une fenêtre de réglage.
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -2760,7 +2650,6 @@ class DmxOutputDialog(QDialog):
         self._stack.setStyleSheet("background: transparent;")
         self._scroll.setWidget(self._stack)
         content.addWidget(self._scroll, 1)
-        content = outer
 
         # Boutons bas
         btn_row = QHBoxLayout()
@@ -2935,13 +2824,16 @@ class DmxOutputDialog(QDialog):
             card_lay.addWidget(avance_box)
 
             def _basculer(ouvert):
-                avance_btn.setText(("▾  " if ouvert else "▸  ") + tr("nc_options_avancees"))
+                avance_btn.setText(("▾  " if ouvert else "▸  ") + tr("nc_options_avancees")
+                                   + ("  •" if modifie else ""))
                 avance_box.setVisible(ouvert)
                 if hasattr(self, '_stack'):
                     QTimer.singleShot(0, self._fit_to_content)
+            # Toujours replié à l'ouverture (demande 19/11/2026), même avec
+            # un aiguillage modifié : le titre l'indique d'un « • ».
             avance_btn.toggled.connect(_basculer)
-            avance_btn.setChecked(modifie)
-            _basculer(modifie)
+            avance_btn.setChecked(False)
+            _basculer(False)
 
             titre = QLabel(tr("nc_output_routing"))
             titre.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -3124,8 +3016,6 @@ class DmxOutputDialog(QDialog):
             self._node_list_hint.setText(tr("nc_node_hint"))
 
     def _on_node_checked(self, found: bool):
-        self._node_found = bool(found)
-        self._maj_bx_front()
         if self._node_combo is not None and not getattr(self, "_node_scan_lance", False):
             self._node_scan_lance = True
             QTimer.singleShot(0, self._scan_nodes)
@@ -3168,8 +3058,6 @@ class DmxOutputDialog(QDialog):
     def _set_net_hint(self, a_configurer: bool):
         """Met le bouton de configuration reseau en avant quand la carte
         n'est pas en 2.x."""
-        self._net_todo = a_configurer
-        self._maj_bx_front()
         btn = getattr(self, '_node_cfg_btn', None)
         if btn is not None:
             btn.setStyleSheet(_BTN_NET_TODO if a_configurer else _BTN_DIAG)
@@ -3541,13 +3429,6 @@ class DmxOutputDialog(QDialog):
         if not self._dmx:
             self.accept()
             return
-        if getattr(self, "_bx_mode", None) == "top":
-            # Boîtier maison : on ne se fie qu'à SON port (1A86:5740), relu à
-            # l'instant — branché après l'ouverture, ou débranché depuis.
-            self._refresh_ports()
-            self._choisir_boitier("top", connecter=False)
-            if not port_boitier_maison():
-                return
 
         if self._transport == TRANSPORT_ARTNET:
             # Aiguillage des sorties, appliqué AVANT connect() : c'est lui qui
