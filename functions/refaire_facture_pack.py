@@ -1,5 +1,5 @@
 """Annule et remplace une facture de pack émise AVANT la ventilation
-marchandise/service (02/11/2026) : une seule ligne « Pack MyStrow — … ».
+marchandise/service (02/11/2026) : une seule ligne « Pack MyStrow - … ».
 
 Une facture émise ne se modifie pas : on émet
   1. un AVOIR qui reprend la ligne d'origine en quantité −1, soldé par un
@@ -55,7 +55,7 @@ def main() -> None:
     cid = inv["company"]["id"]
     lignes = inv.get("invoice_lines") or []
     if len(lignes) != 1 or not (lignes[0].get("name") or "").startswith("Pack MyStrow"):
-        raise SystemExit(f"{numero} n'est pas une facture de pack à ligne unique — rien à faire")
+        raise SystemExit(f"{numero} n'est pas une facture de pack à ligne unique - rien à faire")
     l0 = lignes[0]
     ht, ttc = float(inv["pre_tax_amount"]), float(inv["total"])
     taux = float((l0.get("tax_rates") or [{}])[0].get("rate", m.TVA_RATE))
@@ -65,12 +65,12 @@ def main() -> None:
     for x in m._axonaut("GET", f"/companies/{cid}/invoices") or []:
         full = m._axonaut("GET", f"/invoices/{x['id']}") or {}
         if (full.get("mandatory_mentions") or "").strip() == mention_avoir:
-            raise SystemExit(f"Avoir déjà émis ({full.get('number')}) — arrêt")
+            raise SystemExit(f"Avoir déjà émis ({full.get('number')}) - arrêt")
 
     avoir_lignes = [{"id": l0.get("product_id"), "name": l0.get("name"),
                      "price": float(l0["price"]), "tax_rate": taux, "quantity": -1}]
     nouv_lignes = m._invoice_lines(plan, ht, taux)
-    print(f"{numero} — {inv['company']['name']} — {ht} € HT / {ttc} € TTC ({taux} %)")
+    print(f"{numero} - {inv['company']['name']} - {ht} € HT / {ttc} € TTC ({taux} %)")
     print("  Avoir      :", [(l["name"], -l["price"]) for l in avoir_lignes])
     print("  Nouvelle   :", [(l["name"], l["price"]) for l in nouv_lignes],
           "=", round(sum(l["price"] for l in nouv_lignes), 2), "€ HT")
@@ -100,7 +100,7 @@ def main() -> None:
     m._axonaut_register_payment(nv["id"], ttc, ref or "Stripe")
     nv_full = m._axonaut("GET", f"/invoices/{nv['id']}") or {}
     nv_num, nv_url = nv_full.get("number"), nv_full.get("public_path")
-    print(f"✓ Nouvelle facture {nv_num} (id {nv['id']}) — {nv_full.get('total')} € TTC, "
+    print(f"✓ Nouvelle facture {nv_num} (id {nv['id']}) - {nv_full.get('total')} € TTC, "
           f"reste dû {nv_full.get('outstanding_amount')}")
 
     # Espace client : on ajoute l'avoir et la nouvelle facture à côté de l'ancienne.

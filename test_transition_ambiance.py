@@ -35,7 +35,7 @@ class Stub:
     # `transition_blackout` repose ensuite le look tenu sur les colonnes GROUPE
     # (cf. test_lumiere_manuelle_survit_media). Ici l'ambiance est sur une
     # colonne MEMOIRE : elle est portee par la couche HTP des memoires, pas par
-    # les projecteurs — le rig doit donc bien rester a zero apres la transition.
+    # les projecteurs - le rig doit donc bien rester a zero apres la transition.
     _slot_groups        = staticmethod(MainWindow._slot_groups)
     set_proj_level      = MainWindow.set_proj_level
     restore_manual_look = MainWindow.restore_manual_look

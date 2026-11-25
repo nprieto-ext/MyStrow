@@ -134,7 +134,7 @@ def _port_keyword(port_name: str) -> str:
     """Mot-clé de détection déduit d'un nom de port.
 
     Windows suffixe le nom par l'index du port (« DDJ-400 0 »). Ce numéro
-    change d'une machine — ou d'un rebranchement — à l'autre : un mot-clé qui
+    change d'une machine - ou d'un rebranchement - à l'autre : un mot-clé qui
     le contient ne retrouverait plus le contrôleur au démarrage suivant.
     """
     parts = port_name.upper().split()
@@ -277,8 +277,8 @@ class MidiMappingWizard(QDialog):
         # ── Écoute MIDI propre à l'assistant ──────────────────────────────────
         # L'assistant ne peut PAS se reposer sur le MIDIHandler : celui-ci
         # n'ouvre un port que pour un contrôleur qu'il reconnaît déjà (natif ou
-        # profil custom existant). Pour un contrôleur inconnu — le seul cas où
-        # cet assistant sert à quelque chose — `midi_in` reste None, `poll_midi`
+        # profil custom existant). Pour un contrôleur inconnu - le seul cas où
+        # cet assistant sert à quelque chose - `midi_in` reste None, `poll_midi`
         # sort immédiatement et AUCUN message n'arrive jamais : l'utilisateur
         # appuie sur ses pads devant une fenêtre qui « écoute » dans le vide.
         # On ouvre donc nous-mêmes le port choisi dans le menu déroulant.
@@ -401,7 +401,7 @@ class MidiMappingWizard(QDialog):
 
         # État du port : ouvert, déjà pris par un autre logiciel, messages reçus.
         # Sans ce retour, un port indisponible est indiscernable d'un contrôleur
-        # muet — c'est exactement le symptôme « rien n'y fait ».
+        # muet - c'est exactement le symptôme « rien n'y fait ».
         self._port_status = QLabel("")
         self._port_status.setWordWrap(True)
         self._port_status.setStyleSheet("color:#888888; font-size:9pt;")
@@ -825,7 +825,7 @@ class MidiMappingWizard(QDialog):
 
         # ── Action principale : installer le profil et s'en servir tout de suite ──
         # L'utilisateur vient de mapper son contrôleur ; ce qu'il veut d'abord,
-        # c'est le voir marcher — pas envoyer un mail et attendre une réponse.
+        # c'est le voir marcher - pas envoyer un mail et attendre une réponse.
         frame_use = QFrame(); frame_use.setObjectName("card")
         fu = QVBoxLayout(frame_use); fu.setContentsMargins(16, 14, 16, 14); fu.setSpacing(10)
 
@@ -860,7 +860,7 @@ class MidiMappingWizard(QDialog):
         #
         # Cet argumentaire ouvrait l'assistant. Il y était au mauvais endroit :
         # on demandait d'adhérer à une communauté avant d'avoir rien obtenu.
-        # Ici, l'utilisateur vient de faire marcher son contrôleur — c'est le
+        # Ici, l'utilisateur vient de faire marcher son contrôleur - c'est le
         # moment où rendre service à son tour a du sens.
         frame_share = QFrame(); frame_share.setObjectName("card")
         fs = QVBoxLayout(frame_share); fs.setContentsMargins(16, 14, 16, 14); fs.setSpacing(8)
@@ -984,7 +984,7 @@ class MidiMappingWizard(QDialog):
         à la première modification de l'une d'elles.
 
         Sur un contrôleur DJ, les LED des pads sont pilotées par le logiciel DJ.
-        Les tester ne prouverait rien et les ferait clignoter en plein set —
+        Les tester ne prouverait rien et les ferait clignoter en plein set -
         deux écrivains sur la même LED, exactement ce qu'on évite ailleurs.
         """
         if self._pad_map and not getattr(self, "_dj_mode", False):
@@ -1072,7 +1072,7 @@ class MidiMappingWizard(QDialog):
 
         # Port déjà ouvert par MyStrow (contrôleur reconnu) : la plupart des
         # pilotes MIDI Windows n'acceptent qu'un seul client, inutile de lui
-        # disputer l'accès — on récupère ses messages via le handler.
+        # disputer l'accès - on récupère ses messages via le handler.
         try:
             handler_ports = self.midi_handler.open_input_names() if self.midi_handler else []
         except Exception:
@@ -1105,7 +1105,7 @@ class MidiMappingWizard(QDialog):
         self._update_port_status('own')
 
     def _open_own_output(self, in_name):
-        """Ouvre la sortie du même appareil — sans elle, le test des LEDs est muet."""
+        """Ouvre la sortie du même appareil - sans elle, le test des LEDs est muet."""
         mod = _rtmidi_module()
         if not mod:
             return
@@ -1172,7 +1172,7 @@ class MidiMappingWizard(QDialog):
         self._keywords = [kw] if kw else []
 
         # Contrôleur DJ : pads seulement. Les faders et les boutons d'effet
-        # tombent à 0, ce qui suffit à faire sauter leurs étapes — toute la
+        # tombent à 0, ce qui suffit à faire sauter leurs étapes - toute la
         # navigation de l'assistant est déjà pilotée par ces compteurs.
         self._dj_mode = self._chk_dj.isChecked()
         if self._dj_mode:
@@ -1211,7 +1211,7 @@ class MidiMappingWizard(QDialog):
     def _on_dim_midi(self, msg):
         """Note reçue pendant la page Dimensions : allume la case suivante.
 
-        On ne mappe RIEN ici — c'est un simple comptage de pads distincts, pour
+        On ne mappe RIEN ici - c'est un simple comptage de pads distincts, pour
         que l'utilisateur vérifie sa grille avant de se lancer dans le mappage.
         """
         if len(msg) < 3:
@@ -1509,7 +1509,7 @@ class MidiMappingWizard(QDialog):
                             self._bright_slider.value()])
 
     def _bright_test_noteoff(self):
-        """Envoie Note Off (0x80) avec la vélocité du slider — certains contrôleurs allument la LED en mode dim."""
+        """Envoie Note Off (0x80) avec la vélocité du slider - certains contrôleurs allument la LED en mode dim."""
         entry = self._bright_ref_entry
         if entry:
             self._send_raw([0x80 | entry.get("channel", 0), entry["note"],
@@ -1642,7 +1642,7 @@ class MidiMappingWizard(QDialog):
         self._save_confirm.setVisible(True)
 
     def _export_profile(self):
-        """Enregistre le profil dans un fichier choisi — pour l'échanger."""
+        """Enregistre le profil dans un fichier choisi - pour l'échanger."""
         data = self._build_profile_dict()
         suggested = f"{data.get('id') or 'controleur'}.json"
         path, _ = QFileDialog.getSaveFileName(
@@ -1747,7 +1747,7 @@ class MidiMappingWizard(QDialog):
             self._rx_queue.append(list(msg))
 
     def _on_raw_midi(self, event, data=None):
-        """Callback rtmidi — thread MIDI : on empile, rien d'autre."""
+        """Callback rtmidi - thread MIDI : on empile, rien d'autre."""
         if (isinstance(event, tuple) and len(event) == 2
                 and isinstance(event[0], (list, tuple))):
             msg = event[0]          # python-rtmidi : (message, delta)

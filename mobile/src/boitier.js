@@ -2,7 +2,7 @@
 //
 // Même logique que boitier_detect.py / boitier_card.py sur PC :
 //   1. le boîtier (USB 1A86:5740) est vu ; son numéro de série USB = identité ;
-//   2. on demande au serveur (`boitier_detect`) ce qu'il inclut — jamais au
+//   2. on demande au serveur (`boitier_detect`) ce qu'il inclut - jamais au
 //      boîtier lui-même (un périphérique USB peut mentir) ;
 //   3. libre et avec des mois de licence → carte : « Les activer sur le compte
 //      … ? » (connecté) ou adresse e-mail (pas connecté) → `activate_code`.

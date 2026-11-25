@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Diagnostic interactif « boîtier Open DMX muet » — macOS (et Windows/Linux).
+Diagnostic interactif « boîtier Open DMX muet » - macOS (et Windows/Linux).
 
 Cherche POURQUOI un boîtier USB/DMX passif (ENTTEC Open DMX USB, USB Opto…)
 n'allume rien alors que le PC envoie ses trames sans la moindre erreur.
@@ -109,7 +109,7 @@ def demander(question, choix="onrq"):
 def lister_ports():
     ports = list(serial.tools.list_ports.comports())
     if sys.platform == "darwin":
-        # /dev/tty.* bloque en attente du DCD à l'ouverture — toujours /dev/cu.*
+        # /dev/tty.* bloque en attente du DCD à l'ouverture - toujours /dev/cu.*
         ports = [p for p in ports if "/dev/tty." not in p.device]
     return ports
 
@@ -122,7 +122,7 @@ def choisir_port(argv):
     titre("1. PORTS SÉRIE")
     ports = lister_ports()
     if not ports:
-        log("  ✗  Aucun port série détecté — rebranchez le boîtier USB.", "err")
+        log("  ✗  Aucun port série détecté - rebranchez le boîtier USB.", "err")
         return None
     for i, p in enumerate(ports):
         etoile = "★" if est_ftdi(p) else " "
@@ -148,7 +148,7 @@ def choisir_port(argv):
 
 # ── Émission DMX ──────────────────────────────────────────────────────────────
 class Sortie:
-    """Émetteur DMX brut sur port série — reproduit exactement la sortie live."""
+    """Émetteur DMX brut sur port série - reproduit exactement la sortie live."""
 
     def __init__(self, ser):
         self.ser = ser
@@ -230,7 +230,7 @@ def jouer(sortie, intitule, secondes=6.0, **kw):
     while True:
         log("")
         log(f"  ▶  {intitule}", "gras")
-        log(f"     {secondes:.0f} s — plein feu clignotant, REGARDEZ LES PROJECTEURS…", "dim")
+        log(f"     {secondes:.0f} s - plein feu clignotant, REGARDEZ LES PROJECTEURS…", "dim")
         envoyees, erreurs, fps = sortie.sequence(secondes=secondes, **kw)
         detail = f"     {envoyees} trames à {fps:.0f} fps"
         if erreurs:
@@ -268,7 +268,7 @@ def enregistrer_reglage(mode_lignes):
         os.replace(tmp, CONFIG_MYSTROW)      # écriture atomique
         log(f"  ✓  \"serial_lines\": \"{mode_lignes}\" enregistré dans {CONFIG_MYSTROW}", "ok")
     except Exception as e:
-        log(f"  ✗  Écriture impossible ({e}) — ajoutez à la main dans "
+        log(f"  ✗  Écriture impossible ({e}) - ajoutez à la main dans "
             f"{CONFIG_MYSTROW} :  \"serial_lines\": \"{mode_lignes}\"", "err")
 
 
@@ -282,7 +282,7 @@ def main():
         import ftd2xx
         log(f"  Driver D2XX : disponible ({len(ftd2xx.listDevices() or [])} puce(s) vue(s))", "ok")
     except Exception as e:
-        log(f"  Driver D2XX : indisponible ({type(e).__name__}) — repli série VCP obligatoire", "dim")
+        log(f"  Driver D2XX : indisponible ({type(e).__name__}) - repli série VCP obligatoire", "dim")
     log("")
     log("  ⚠  MyStrow doit être FERMÉ (deux writers sur la même puce FTDI", "warn")
     log("     faussent tous les résultats).", "warn")
@@ -319,7 +319,7 @@ def main():
     gagnant_lignes = None
     try:
         # ── A. Lignes RTS / DTR ──────────────────────────────────────────────
-        titre("3. TEST A — LIGNES DE CONTRÔLE RTS / DTR")
+        titre("3. TEST A - LIGNES DE CONTRÔLE RTS / DTR")
         log("  Sur un boîtier passif, la broche Driver Enable du transceiver", "dim")
         log("  RS485 peut être pilotée par RTS ou DTR. pyserial les asserte à", "dim")
         log("  l'ouverture : si le câblage attend l'inverse, l'émetteur est", "dim")
@@ -351,7 +351,7 @@ def main():
         sortie.lignes("clear")
 
         # ── B. Durée du break ────────────────────────────────────────────────
-        titre("4. TEST B — DURÉE DU SIGNAL BREAK")
+        titre("4. TEST B - DURÉE DU SIGNAL BREAK")
         log("  DMX512-A impose au transmetteur un break ≥ 92 µs. MyStrow émet", "dim")
         log("  100 µs : conforme, mais sans marge face à la gigue USB.", "dim")
         for baud, label in BREAKS.items():
@@ -367,7 +367,7 @@ def main():
                 return
 
         # ── C. Méthode de break ──────────────────────────────────────────────
-        titre("5. TEST C — MÉTHODE DE GÉNÉRATION DU BREAK")
+        titre("5. TEST C - MÉTHODE DE GÉNÉRATION DU BREAK")
         for methode, label in (("send_break", "send_break(1 ms)"),
                                ("break_condition", "break_condition (200 µs)")):
             try:
@@ -384,7 +384,7 @@ def main():
                 return
 
         # ── D. Cadence ───────────────────────────────────────────────────────
-        titre("6. TEST D — CADENCE D'ENVOI")
+        titre("6. TEST D - CADENCE D'ENVOI")
         for fps in (40, 10):
             r = jouer(sortie, f"Envoi à {fps} fps", fps=fps)
             if r is None:
@@ -401,11 +401,11 @@ def main():
         log("")
         log("  Le problème n'est donc PAS dans la façon dont MyStrow parle au", "warn")
         log("  port série. Restent, par ordre de probabilité :", "warn")
-        log("   1. Câble XLR / adresse DMX / mode du projecteur — vérifiez en", "dim")
+        log("   1. Câble XLR / adresse DMX / mode du projecteur - vérifiez en", "dim")
         log("      rebranchant le boîtier qui fonctionne SANS rien changer d'autre.", "dim")
         log("   2. Le boîtier exige le driver FTDI D2XX (méthode QLC+), que le", "dim")
         log("      pilote Apple ne laisse pas prendre la main sur macOS.", "dim")
-        log("   3. Boîtier ou fusible/transceiver HS — testez-le sur un PC Windows.", "dim")
+        log("   3. Boîtier ou fusible/transceiver HS - testez-le sur un PC Windows.", "dim")
 
     except KeyboardInterrupt:
         log("\n  Interrompu.", "warn")

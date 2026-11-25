@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# install_intel_watch.sh  —  Installe le veilleur du build Mac Intel
+# install_intel_watch.sh  -  Installe le veilleur du build Mac Intel
 #
 # À lancer UNE SEULE FOIS sur le Mac Intel, depuis le dossier du projet :
 #   bash install_intel_watch.sh
@@ -60,17 +60,17 @@ fi
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
   ok "Certificat Developer ID présent"
 else
-  warn "Aucun certificat 'Developer ID Application' — les DMG publiés ne seront PAS signés."
+  warn "Aucun certificat 'Developer ID Application' - les DMG publiés ne seront PAS signés."
 fi
 
 if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
   ok "Profil de notarisation '$NOTARY_PROFILE' présent"
 else
-  warn "Profil de notarisation '$NOTARY_PROFILE' absent — les DMG ne seront PAS notarisés."
+  warn "Profil de notarisation '$NOTARY_PROFILE' absent - les DMG ne seront PAS notarisés."
   warn "  xcrun notarytool store-credentials '$NOTARY_PROFILE' --apple-id TON@APPLE.ID --team-id TEAMID --password APP-PASSWORD"
 fi
 
-command -v create-dmg >/dev/null 2>&1 || warn "create-dmg absent (brew install create-dmg) — repli sur hdiutil, DMG moins joli"
+command -v create-dmg >/dev/null 2>&1 || warn "create-dmg absent (brew install create-dmg) - repli sur hdiutil, DMG moins joli"
 
 chmod +x "$SCRIPT_DIR/intel_watch.sh" "$SCRIPT_DIR/build_intel_mac.sh" 2>/dev/null || true
 mkdir -p "$STATE_DIR/logs" "$HOME/Library/LaunchAgents"
@@ -133,13 +133,13 @@ launchctl load -w "$PLIST" 2>&1 | sed 's/^/    /'
 if launchctl list | grep -q "$LABEL"; then
   ok "Veilleur actif (vérification toutes les $((INTERVAL / 60)) min)"
 else
-  die "launchctl n'a pas chargé la tâche — regarde $STATE_DIR/launchd.err.log"
+  die "launchctl n'a pas chargé la tâche - regarde $STATE_DIR/launchd.err.log"
 fi
 
 # ── Résumé ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BLD}${GRN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLD}${GRN}║  ✅  Veilleur installé — ce Mac se débrouille tout seul   ║${NC}"
+echo -e "${BLD}${GRN}║  ✅  Veilleur installé - ce Mac se débrouille tout seul   ║${NC}"
 echo -e "${BLD}${GRN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "  Il vérifie GitHub toutes les $((INTERVAL / 60)) minutes et construit le DMG Intel"

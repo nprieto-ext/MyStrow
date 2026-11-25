@@ -6,7 +6,7 @@ six motifs classiques). Le piege de cet elargissement est la COMPATIBILITE : les
 shows enregistres portent des valeurs DMX, les prereglages LIVE portent des
 INDICES, et les deux devaient continuer a montrer le meme motif qu'avant.
 
-On verifie aussi que les deux dessins — QPainter en 2D, canvas en 3D — couvrent
+On verifie aussi que les deux dessins - QPainter en 2D, canvas en 3D - couvrent
 bien les seize memes slots : ils ont deja diverge une fois.
 """
 import os

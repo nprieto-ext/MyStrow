@@ -222,7 +222,7 @@ def build_local_installer(version):
     _ffmpeg_bin = BASE_DIR / "ffmpeg.exe"
     _ffmpeg_flag = f"--add-binary \"ffmpeg.exe;.\" " if _ffmpeg_bin.exists() else ""
     if not _ffmpeg_bin.exists():
-        print("⚠️  ffmpeg.exe absent de la racine — l'exe n'embarquera PAS ffmpeg "
+        print("⚠️  ffmpeg.exe absent de la racine - l'exe n'embarquera PAS ffmpeg "
               "(analyse audio sur repli miniaudio/Qt). Voir README pour l'ajouter.")
 
     bat_path = BASE_DIR / "_build_tmp.bat"
@@ -262,6 +262,8 @@ def build_local_installer(version):
         f"--collect-all sounddevice "
         f"--collect-all _sounddevice_data "
         f"--collect-all pyaudiowpatch "
+        # Assistant masqué (25/11/2026) : dictée et modèle hors de l'installeur.
+        f"--exclude-module=faster_whisper --exclude-module=ctranslate2 --exclude-module=av --exclude-module=tokenizers --exclude-module=onnxruntime --exclude-module=llama_cpp "
         # pygame = pilote de manette (pan/tilt au stick). collect-all embarque
         # les binaires SDL2, sinon pygame._sdl2.controller casse dans l'exe.
         f"--collect-all pygame "
@@ -567,12 +569,12 @@ def discord_embed_latest(version):
     from datetime import date
     d = date.today()
     liens = (
-        f"🪟  **Windows 10 / 11** — [télécharger l'installeur]({_DL_CF}win)\n"
-        f"🍎  **macOS Apple Silicon** (M1 → M5) — [télécharger le .dmg]({_DL_CF}mac)\n"
-        f"🍏  **macOS Intel** — [télécharger le .dmg]({_DL_CF}mac_intel)"
+        f"🪟  **Windows 10 / 11** - [télécharger l'installeur]({_DL_CF}win)\n"
+        f"🍎  **macOS Apple Silicon** (M1 → M5) - [télécharger le .dmg]({_DL_CF}mac)\n"
+        f"🍏  **macOS Intel** - [télécharger le .dmg]({_DL_CF}mac_intel)"
     )
     return {
-        "title": f"⬇️  MyStrow {version} — dernière version",
+        "title": f"⬇️  MyStrow {version} - dernière version",
         "url": "https://mystrow.fr/telecharger",
         "color": 0xE2CE16,
         "description": (
@@ -609,7 +611,7 @@ def notify_discord_latest(version):
     """
     webhook = discord_load_webhook()
     if not webhook:
-        return False, "webhook Discord non configuré — canal inchangé"
+        return False, "webhook Discord non configuré - canal inchangé"
 
     payload = {"username": "MyStrow",
                "avatar_url": "https://mystrow.fr/og-image.webp",

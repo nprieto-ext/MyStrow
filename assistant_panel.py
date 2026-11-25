@@ -1,5 +1,5 @@
 """
-assistant_panel.py — L'assistant intégré, onglet à côté du Journal.
+assistant_panel.py - L'assistant intégré, onglet à côté du Journal.
 
 On lui écrit ou on lui parle (bouton micro, maintenir pour parler) :
 « allume mes projecteurs en rouge », « envoie un effet rapide », « ouvre le
@@ -531,7 +531,7 @@ class AssistantExecutor:
     def _targets(self, target, lang):
         idxs = self._select(target)
         if not idxs:
-            raise _Reply(_r("no_target", lang, g=", ".join(la.groups_present(self.w)) or "—"))
+            raise _Reply(_r("no_target", lang, g=", ".join(la.groups_present(self.w)) or "-"))
         return idxs
 
     def _do(self, a, lang, text):
@@ -664,7 +664,7 @@ class AssistantExecutor:
         if do == "status":
             eff = getattr(w, "active_effect", None) or _r("none", lang)
             dmx = _r("yes", lang) if getattr(w.dmx, "connected", False) else _r("no", lang)
-            return _r("status", lang, n=len(w.projectors), g=", ".join(la.groups_present(w)) or "—", d=dmx, e=eff)
+            return _r("status", lang, n=len(w.projectors), g=", ".join(la.groups_present(w)) or "-", d=dmx, e=eff)
         if do == "help":
             return _r("help", lang)
         if do == "learn":

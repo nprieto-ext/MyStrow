@@ -70,12 +70,12 @@ function _loadEffects() {
                     if (e.index === currentIdx) opt2.selected = true;
                     sel.appendChild(opt2);
                 }
-                document.getElementById("status").textContent = "MyStrow connecté — " + effects.length + " effet(s)";
+                document.getElementById("status").textContent = "MyStrow connecté - " + effects.length + " effet(s)";
                 document.getElementById("status").className = "status ok";
             }
         })
         .catch(function() {
-            // MyStrow pas encore lancé — afficher liste numérotée
+            // MyStrow pas encore lancé - afficher liste numérotée
             var sel = document.getElementById("effect_idx");
             sel.innerHTML = "";
             for (var i = 0; i < 8; i++) {
@@ -85,7 +85,7 @@ function _loadEffects() {
                 if (i === currentIdx) opt.selected = true;
                 sel.appendChild(opt);
             }
-            document.getElementById("status").textContent = "MyStrow non détecté — lancez le logiciel puis rouvrez ce panneau.";
+            document.getElementById("status").textContent = "MyStrow non détecté - lancez le logiciel puis rouvrez ce panneau.";
             document.getElementById("status").className = "status err";
         });
 }

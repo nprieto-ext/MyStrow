@@ -1,5 +1,5 @@
 """
-test_fabricants_canoniques.py — Un fabricant, une rubrique.
+test_fabricants_canoniques.py - Un fabricant, une rubrique.
 
 `FIXTURE_LIBRARY` groupait sur la chaine BRUTE du champ `manufacturer`. Les
 quatre bibliotheques qui l'alimentent (196 fixtures natives, la collection
@@ -10,13 +10,13 @@ American DJ (274 fixtures, « ADJ » + « American DJ ») et Cameo (175, « came
 
 Le tri aggravait la chose : `sorted()` brut range TOUTES les majuscules avant
 TOUTES les minuscules, si bien que « cameo » et « beamZ » atterrissaient a la
-fin de la liste, apres « lightmaXX » — a l'oppose de leurs jumelles.
+fin de la liste, apres « lightmaXX » - a l'oppose de leurs jumelles.
 
 Ce qui est verrouille ici :
 
   * la normalisation ignore casse, accents, espaces et ponctuation ;
   * les alias explicites (abreviation, faute de frappe, gamme accolee) ;
-  * un fabricant HORS table garde son orthographe exacte — on ne fusionne que
+  * un fabricant HORS table garde son orthographe exacte - on ne fusionne que
     ce qui a ete verifie a la main, jamais par ressemblance ;
   * « Generique » reste epingle en tete, le reste est trie sans tenir compte
     de la casse ;
@@ -131,7 +131,7 @@ class TestBibliotheque(unittest.TestCase):
         """La normalisation est un habillage : les donnees restent intactes.
 
         C'est ce qui empeche le bouton Actualiser de faire revenir les copies
-        distantes en double — sa cle de dedoublonnage est `(nom, fabricant)`.
+        distantes en double - sa cle de dedoublonnage est `(nom, fabricant)`.
         """
         src = [dict(f) for f in self.FIXTURES]
         lib = build_fixture_library(src)

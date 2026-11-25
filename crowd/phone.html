@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>MyStrow Up</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-user-select:none;user-select:none}
+  #lum{position:fixed;inset:0;background:#000}
+  *{box-sizing:border-box}
+  #ecran{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:18px;padding:24px;text-align:center;background:#0b0b0f}
+  h1{margin:0;font-size:28px;letter-spacing:.5px}
+  h1 b{color:#ffd400}
+  /* width:100% : sans lui, un paragraphe en colonne flex prend sa largeur
+     « naturelle » (jusqu'à 420 px) et déborde des téléphones étroits. */
+  p{margin:0;width:100%;max-width:420px;line-height:1.45;color:#cfd2da;font-size:16px}
+  .alerte{font-size:13px;color:#ffb3b3;border:1px solid #6b2a2a;border-radius:10px;padding:10px 12px}
+  button{font-size:20px;font-weight:700;padding:16px 40px;border-radius:999px;border:0;
+    background:#ffd400;color:#000;cursor:pointer}
+  #etat{position:fixed;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom));text-align:center;
+    font-size:12px;color:rgba(255,255,255,.35);pointer-events:none}
+  .cache{display:none!important}
+  /* Quitter : toujours à portée de pouce, discret pour ne pas gâcher la lumière. */
+  #quitter{position:fixed;z-index:10;top:calc(10px + env(safe-area-inset-top));
+    right:calc(10px + env(safe-area-inset-right));font-size:14px;font-weight:600;
+    padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.25);
+    background:rgba(0,0,0,.45);color:rgba(255,255,255,.85);
+    -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+    opacity:0;pointer-events:none;transition:opacity .35s}
+  /* Invisible pendant le show : un appui sur l'écran le fait apparaître 4 s. */
+  #quitter.visible{opacity:1;pointer-events:auto}
+  #revenir{background:transparent;color:#ffd400;border:2px solid #ffd400;font-size:17px;padding:12px 28px}
+  #fermer{position:fixed;z-index:10;top:calc(10px + env(safe-area-inset-top));
+    right:calc(10px + env(safe-area-inset-right));font-size:14px;font-weight:600;
+    padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.2);
+    background:transparent;color:rgba(255,255,255,.7)}
+  #credit{position:fixed;left:0;right:0;bottom:calc(18px + env(safe-area-inset-bottom));
+    text-align:center;font-size:13px;color:rgba(255,255,255,.4)}
+  #credit a{color:rgba(255,212,0,.8);text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+<div id="lum"></div>
+<div id="ecran">
+  <h1>My<b>Strow</b> Up</h1>
+  <p id="msg" data-t="intro">Ton téléphone va devenir une lumière du spectacle.<br>
+     <b>Monte la luminosité à fond</b> et garde cette page ouverte, écran vers la scène.</p>
+  <p class="alerte" data-t="alerte">⚠ Cet écran va changer de couleur et peut clignoter.
+     Si tu es sensible aux lumières clignotantes (épilepsie photosensible), ne participe pas.</p>
+  <button id="go" data-t="go">Je participe</button>
+  <button id="revenir" class="cache" data-t="revenir">Revenir dans le show</button>
+</div>
+<button id="quitter" class="cache" data-t="quitter" data-a="quitter_a" aria-label="Quitter le show">✕ Quitter</button>
+<button id="fermer" class="cache" data-t="fermer" data-a="fermer_a" aria-label="Fermer la page">✕ Fermer</button>
+<div id="credit" class="cache"><span data-t="credit">Lumière pilotée avec MyStrow</span> ·
+  <a href="https://mystrow.fr/?utm_source=mystrow_up&amp;utm_medium=telephone" target="_blank" rel="noopener">mystrow.fr</a></div>
+<div id="etat"></div>
+<script>
+// Langue du TÉLÉPHONE du spectateur (pas celle de MyStrow) ; anglais si elle
+// n'est pas traduite. Le HTML ci-dessus garde le français, remplacé ici.
+const T = {
+  fr: {intro: "Ton téléphone va devenir une lumière du spectacle.<br><b>Monte la luminosité à fond</b> et garde cette page ouverte, écran vers la scène.",
+       alerte: "⚠ Cet écran va changer de couleur et peut clignoter. Si tu es sensible aux lumières clignotantes (épilepsie photosensible), ne participe pas.",
+       go: "Je participe", revenir: "Revenir dans le show", quitter: "✕ Quitter", quitter_a: "Quitter le show",
+       fermer: "✕ Fermer", fermer_a: "Fermer la page", credit: "Lumière pilotée avec MyStrow",
+       full: "Session complète ({cap} téléphones maximum).<br>Merci quand même !",
+       end: "Le spectacle est terminé. Merci d'avoir participé ! 🎉",
+       wait: "Le spectacle va bientôt commencer…<br><b>Garde cette page ouverte</b>, luminosité à fond : ton écran s'allumera tout seul.",
+       reco: "Reconnexion…", quit: "Tu as quitté le show. Merci d'avoir participé ! 👋",
+       bye: "Merci et à bientôt ! 👋<br>Tu peux maintenant fermer cet onglet."},
+  en: {intro: "Your phone is about to become one of the show's lights.<br><b>Turn your brightness all the way up</b> and keep this page open, screen facing the stage.",
+       alerte: "⚠ This screen will change colour and may flash. If you are sensitive to flashing lights (photosensitive epilepsy), please do not take part.",
+       go: "Join in", revenir: "Back to the show", quitter: "✕ Leave", quitter_a: "Leave the show",
+       fermer: "✕ Close", fermer_a: "Close the page", credit: "Lighting powered by MyStrow",
+       full: "This session is full ({cap} phones maximum).<br>Thanks anyway!",
+       end: "The show is over. Thanks for taking part! 🎉",
+       wait: "The show will start soon…<br><b>Keep this page open</b> with full brightness: your screen will light up on its own.",
+       reco: "Reconnecting…", quit: "You left the show. Thanks for taking part! 👋",
+       bye: "Thanks and see you soon! 👋<br>You can now close this tab."},
+  es: {intro: "Tu teléfono va a convertirse en una luz del espectáculo.<br><b>Sube el brillo al máximo</b> y deja esta página abierta, con la pantalla hacia el escenario.",
+       alerte: "⚠ Esta pantalla cambiará de color y puede parpadear. Si eres sensible a las luces intermitentes (epilepsia fotosensible), no participes.",
+       go: "Participo", revenir: "Volver al show", quitter: "✕ Salir", quitter_a: "Salir del show",
+       fermer: "✕ Cerrar", fermer_a: "Cerrar la página", credit: "Iluminación controlada con MyStrow",
+       full: "Sesión completa (máximo {cap} teléfonos).<br>¡Gracias de todos modos!",
+       end: "El espectáculo ha terminado. ¡Gracias por participar! 🎉",
+       wait: "El espectáculo empezará pronto…<br><b>Deja esta página abierta</b>, con el brillo al máximo: tu pantalla se encenderá sola.",
+       reco: "Reconectando…", quit: "Has salido del show. ¡Gracias por participar! 👋",
+       bye: "¡Gracias y hasta pronto! 👋<br>Ya puedes cerrar esta pestaña."},
+  de: {intro: "Dein Handy wird gleich zu einem Licht der Show.<br><b>Dreh die Helligkeit ganz auf</b> und lass diese Seite offen, Bildschirm zur Bühne.",
+       alerte: "⚠ Dieser Bildschirm wechselt die Farbe und kann blinken. Wenn du empfindlich auf Blinklicht reagierst (fotosensitive Epilepsie), mach bitte nicht mit.",
+       go: "Ich mache mit", revenir: "Zurück zur Show", quitter: "✕ Verlassen", quitter_a: "Show verlassen",
+       fermer: "✕ Schließen", fermer_a: "Seite schließen", credit: "Licht gesteuert mit MyStrow",
+       full: "Session voll (maximal {cap} Handys).<br>Trotzdem danke!",
+       end: "Die Show ist vorbei. Danke fürs Mitmachen! 🎉",
+       wait: "Die Show beginnt gleich…<br><b>Lass diese Seite offen</b>, Helligkeit ganz auf: dein Bildschirm leuchtet von selbst auf.",
+       reco: "Verbindung wird wiederhergestellt…", quit: "Du hast die Show verlassen. Danke fürs Mitmachen! 👋",
+       bye: "Danke und bis bald! 👋<br>Du kannst diesen Tab jetzt schließen."},
+  pt: {intro: "Seu celular vai virar uma luz do espetáculo.<br><b>Coloque o brilho no máximo</b> e deixe esta página aberta, com a tela virada para o palco.",
+       alerte: "⚠ Esta tela vai mudar de cor e pode piscar. Se você é sensível a luzes piscando (epilepsia fotossensível), não participe.",
+       go: "Quero participar", revenir: "Voltar ao show", quitter: "✕ Sair", quitter_a: "Sair do show",
+       fermer: "✕ Fechar", fermer_a: "Fechar a página", credit: "Iluminação controlada com MyStrow",
+       full: "Sessão completa (máximo de {cap} celulares).<br>Obrigado mesmo assim!",
+       end: "O espetáculo terminou. Obrigado por participar! 🎉",
+       wait: "O espetáculo vai começar em breve…<br><b>Deixe esta página aberta</b>, brilho no máximo: sua tela vai acender sozinha.",
+       reco: "Reconectando…", quit: "Você saiu do show. Obrigado por participar! 👋",
+       bye: "Obrigado e até breve! 👋<br>Agora você pode fechar esta aba."},
+  it: {intro: "Il tuo telefono sta per diventare una luce dello spettacolo.<br><b>Alza la luminosità al massimo</b> e tieni aperta questa pagina, con lo schermo verso il palco.",
+       alerte: "⚠ Questo schermo cambierà colore e può lampeggiare. Se sei sensibile alle luci lampeggianti (epilessia fotosensibile), non partecipare.",
+       go: "Partecipo", revenir: "Torna allo show", quitter: "✕ Esci", quitter_a: "Esci dallo show",
+       fermer: "✕ Chiudi", fermer_a: "Chiudi la pagina", credit: "Luci controllate con MyStrow",
+       full: "Sessione al completo (massimo {cap} telefoni).<br>Grazie lo stesso!",
+       end: "Lo spettacolo è finito. Grazie per aver partecipato! 🎉",
+       wait: "Lo spettacolo sta per iniziare…<br><b>Tieni aperta questa pagina</b>, luminosità al massimo: lo schermo si accenderà da solo.",
+       reco: "Riconnessione…", quit: "Hai lasciato lo show. Grazie per aver partecipato! 👋",
+       bye: "Grazie e a presto! 👋<br>Ora puoi chiudere questa scheda."},
+  ja: {intro: "あなたのスマホがショーのライトになります。<br><b>画面の明るさを最大にして</b>、このページを開いたまま画面をステージに向けてください。",
+       alerte: "⚠ この画面は色が変わり、点滅することがあります。点滅する光に敏感な方（光過敏性てんかん）は参加しないでください。",
+       go: "参加する", revenir: "ショーに戻る", quitter: "✕ 退出", quitter_a: "ショーから退出",
+       fermer: "✕ 閉じる", fermer_a: "ページを閉じる", credit: "照明制御：MyStrow",
+       full: "満員です（最大 {cap} 台）。<br>ありがとうございました！",
+       end: "ショーは終了しました。ご参加ありがとうございました！🎉",
+       wait: "まもなくショーが始まります…<br><b>このページを開いたまま</b>、明るさを最大に：画面は自動で点灯します。",
+       reco: "再接続中…", quit: "ショーから退出しました。ご参加ありがとうございました！👋",
+       bye: "ありがとうございました！👋<br>このタブを閉じてかまいません。"},
+};
+const LANG = (() => {
+  for (const l of (navigator.languages || [navigator.language || ""])) {
+    const c = String(l).slice(0, 2).toLowerCase();
+    if (T[c]) return c;
+  }
+  return "en";
+})();
+const t = (k, v = {}) => (T[LANG][k] || T.en[k]).replace(/\{(\w+)\}/g, (_, n) => v[n]);
+document.documentElement.lang = LANG;
+document.querySelectorAll("[data-t]").forEach(e => { e.innerHTML = t(e.dataset.t); });
+document.querySelectorAll("[data-a]").forEach(e => e.setAttribute("aria-label", t(e.dataset.a)));
+</script>
+<script>
+(() => {
+  const sid = location.pathname.split("/").filter(Boolean).pop();
+  const $ = id => document.getElementById(id);
+  const lum = $("lum"), etat = $("etat");
+  const CLE_TOK = "mystrow_live_tok_" + sid;
+  let tok = ""; try { tok = localStorage.getItem(CLE_TOK) || ""; } catch (e) {}
+
+  let ws = null, zone = 0, offset = 0, meilleurRtt = 1e9, fin = false, attente = false;
+  const file = [];              // états en attente de leur heure d'exécution
+  const srvNow = () => Date.now() + offset;
+
+  // ── Sécurité épilepsie : au plus 3 allumages par seconde, quoi que MyStrow
+  // envoie (norme WCAG 2.3.1). Un strobe plus rapide est tenu allumé.
+  const MAX_FLASH_S = 3;
+  const allumages = [];
+  let allume = false, couleurAffichee = "";
+
+  function appliquer(r, g, b) {
+    const on = (r + g + b) > 24;
+    const t = performance.now();
+    while (allumages.length && t - allumages[0] > 1000) allumages.shift();
+    if (on && !allume) {
+      if (allumages.length >= MAX_FLASH_S) return;   // trop de flashs : on ignore ce rallumage
+      allumages.push(t);
+    }
+    if (!on && allume && allumages.length >= MAX_FLASH_S) {
+      // Extinction tolérée seulement si on ne pourra pas rallumer trop vite :
+      // on reste allumé plutôt que de clignoter au-delà du plafond.
+      return;
+    }
+    allume = on;
+    const c = `rgb(${r},${g},${b})`;
+    if (c !== couleurAffichee) { peindre(c); couleurAffichee = c; }
+  }
+
+  // iPhone : une page web ne peut PAS passer en plein écran (Apple ne
+  // l'autorise que pour la vidéo, Safari comme Chrome iOS). On colore donc
+  // aussi le fond de la page et la couleur de thème : les barres du
+  // navigateur et les bords (encoche, barre du bas) prennent la couleur du show.
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  function peindre(c) {
+    lum.style.background = c;
+    document.documentElement.style.background = c;
+    document.body.style.background = c;
+    if (metaTheme) metaTheme.setAttribute("content", c);
+  }
+
+  let actuel = null;            // [R, G, B, Dim, Strobe] de ma zone
+  function boucle() {
+    const t = srvNow();
+    let dernier = null;
+    while (file.length && file[0].at <= t) dernier = file.shift();
+    if (dernier) actuel = dernier.z[zone % dernier.z.length] || [0, 0, 0, 255, 0];
+    if (actuel && !fin) {
+      const k = actuel[3] / 255;
+      let r = Math.round(actuel[0] * k), g = Math.round(actuel[1] * k), b = Math.round(actuel[2] * k);
+      // Canal Strobe (16-250, comme en DMX) : clignotement LOCAL, en phase
+      // sur l'horloge du serveur → tous les téléphones flashent ensemble.
+      // Vitesse ramenée à 1-2,5 Hz pour rester sous le plafond de sécurité.
+      const st = actuel[4] || 0;
+      if (st >= 16) {
+        const hz = 1 + (Math.min(st, 250) - 16) / 234 * 1.5;
+        if ((t / 1000 * hz) % 1 >= 0.5) r = g = b = 0;
+      }
+      appliquer(r, g, b);
+    }
+    requestAnimationFrame(boucle);
+  }
+
+  // ── Synchro d'horloge : on garde l'échange au plus court aller-retour,
+  // c'est celui dont l'estimation est la plus juste.
+  function ping() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({t: "p", c: Date.now()})); }
+  function surPong(m) {
+    const t = Date.now(), rtt = t - m.c;
+    if (rtt <= meilleurRtt * 1.2 || rtt < 60) {
+      meilleurRtt = Math.min(meilleurRtt, rtt);
+      offset = m.s + rtt / 2 - t;
+    }
+  }
+
+  let wakeLock = null;
+  async function garderEveille() {
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && !fin && boucleLancee) {
+      garderEveille(); if (!ws || ws.readyState > 1) connecter();
+    }
+  });
+
+  function message(txt) {
+    $("ecran").classList.remove("cache");
+    $("go").classList.add("cache");
+    document.querySelectorAll(".alerte").forEach(e => e.classList.add("cache"));
+    $("msg").innerHTML = txt;
+    peindre("#000"); couleurAffichee = "";
+  }
+
+  let essais = 0;
+  function connecter() {
+    if (fin) return;
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/p/${sid}?tok=${encodeURIComponent(tok)}`);
+    ws.onopen = () => { essais = 0; meilleurRtt = 1e9; for (let i = 0; i < 5; i++) setTimeout(ping, i * 300); };
+    ws.onmessage = ev => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "hello") {
+        tok = m.tok; zone = m.zone; offset = m.srv - Date.now();
+        try { localStorage.setItem(CLE_TOK, tok); } catch (e) {}
+        etat.textContent = "";
+        attente = false;
+        $("ecran").classList.add("cache");   // fin de l'attente : l'écran devient la lumière
+      } else if (m.t === "p") surPong(m);
+      else if (m.t === "s") { file.push(m); file.sort((a, b) => a.at - b.at); if (file.length > 200) file.splice(0, file.length - 200); }
+      else if (m.t === "full") { fin = true; ecranFin(t("full", {cap: m.cap})); }
+      else if (m.t === "end") { fin = true; ecranFin(t("end")); }
+      else if (m.t === "wait") {
+        // QR permanent scanné avant le début : on patiente, la lumière
+        // s'allumera toute seule quand MyStrow démarrera la session.
+        attente = true;
+        message(t("wait"));
+      }
+    };
+    ws.onclose = () => {
+      if (fin) return;
+      if (attente) { setTimeout(connecter, 5000); return; }
+      etat.textContent = t("reco");
+      setTimeout(connecter, Math.min(8000, 500 * 2 ** essais++));
+    };
+  }
+  setInterval(ping, 10000);
+
+  let boucleLancee = false;
+  async function participer() {
+    fin = false; attente = false; essais = 0;
+    try { await document.documentElement.requestFullscreen?.({navigationUI: "hide"}); } catch (e) {}
+    await garderEveille();
+    $("ecran").classList.add("cache");
+    $("revenir").classList.add("cache");
+    cacherFin();
+    $("quitter").classList.remove("cache");
+    connecter();
+    if (!boucleLancee) { boucleLancee = true; requestAnimationFrame(boucle); }
+  }
+  $("go").onclick = participer;
+  $("revenir").onclick = participer;
+
+  // Appui n'importe où sur la lumière → « Quitter » apparaît 4 s puis s'efface.
+  let minuteurQuitter = null;
+  function montrerQuitter() {
+    if (fin || $("quitter").classList.contains("cache")) return;
+    $("quitter").classList.add("visible");
+    clearTimeout(minuteurQuitter);
+    minuteurQuitter = setTimeout(() => $("quitter").classList.remove("visible"), 4000);
+  }
+  lum.addEventListener("pointerdown", montrerQuitter);
+  $("ecran").addEventListener("pointerdown", e => { if (e.target.tagName !== "BUTTON") montrerQuitter(); });
+
+  // Quitter : on prévient le serveur (la place se libère tout de suite pour
+  // quelqu'un d'autre), on lâche l'anti-veille et le plein écran.
+  $("quitter").onclick = () => {
+    fin = true; attente = false;
+    try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({t: "bye"})); } catch (e) {}
+    try { ws && ws.close(); } catch (e) {}
+    try { wakeLock && wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+    try { document.fullscreenElement && document.exitFullscreen(); } catch (e) {}
+    file.length = 0; actuel = null; allume = false; couleurAffichee = "";
+    ecranFin(t("quit"));
+    $("revenir").classList.remove("cache");
+  };
+
+  // Écrans de fin : lien discret vers le site + bouton Fermer.
+  function ecranFin(txt) {
+    $("quitter").classList.add("cache");
+    message(txt);
+    $("credit").classList.remove("cache");
+    $("fermer").classList.remove("cache");
+  }
+  $("fermer").onclick = () => {
+    // Un navigateur ne laisse fermer par script que les onglets ouverts par
+    // script : depuis le QR, ça échoue souvent (iPhone surtout) → on le dit.
+    try { window.close(); } catch (e) {}
+    setTimeout(() => {
+      $("revenir").classList.add("cache");
+      $("msg").innerHTML = t("bye");
+    }, 300);
+  };
+  const cacherFin = () => { $("credit").classList.add("cache"); $("fermer").classList.add("cache"); };
+})();
+</script>
+</body>
+</html>

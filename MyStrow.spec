@@ -27,7 +27,7 @@ for _root, _dirs, _files in os.walk(os.path.join('vendor', 'three')):
 # Décors 3D des scènes par défaut (scenes3d/*.glb). Chargés par
 # plan_3d_webwindow._push_scene_glb depuis _MEIPASS : absents de l'exe, les
 # scènes « Scène de concert » et « Sono mobile » s'affichent vides, sans erreur
-# visible — seulement une ligne dans la console.
+# visible - seulement une ligne dans la console.
 for _root, _dirs, _files in os.walk('scenes3d'):
     for _f in _files:
         if _f.lower().endswith(('.glb', '.gltf')):
@@ -89,20 +89,9 @@ for _pkg in ('serial', 'flask', 'flask_socketio', 'qrcode', 'waitress', 'zerocon
         datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
     except Exception:
         pass
-# Dictée vocale de l'assistant (assistant_voice.py) : embarquée sur WINDOWS depuis
-# le 03/11/2026 (faster-whisper + ctranslate2 + av + tokenizers). onnxruntime (48 Mo)
-# ne sert qu'au filtre VAD, désactivé (vad_filter=False) et importé à la demande :
-# exclu. Sur Mac : pas vérifiée (roues natives), exclue comme avant → micro masqué.
-if sys.platform == 'win32':
-    _VOICE_EXCLUDES = ['onnxruntime']
-    for _pkg in ('faster_whisper', 'ctranslate2', 'av', 'tokenizers'):
-        try:
-            _r = collect_all(_pkg)
-            datas += _r[0]; binaries += _r[1]; hiddenimports += _r[2]
-        except Exception:
-            pass
-else:
-    _VOICE_EXCLUDES = ['faster_whisper', 'ctranslate2', 'av', 'tokenizers']
+# Assistant masqué depuis le 25/11/2026 : ni dictée (faster-whisper…) ni moteur du modèle
+# (llama_cpp) dans l'installeur, même s'ils sont installés sur la machine de build.
+_VOICE_EXCLUDES = ['faster_whisper', 'ctranslate2', 'av', 'tokenizers', 'onnxruntime', 'llama_cpp']
 # pygame : utilisé UNIQUEMENT comme pilote de manette (gamepad_client.py), pour
 # le pan/tilt des lyres au stick. collect_all est nécessaire pour embarquer les
 # binaires SDL2, sans lesquels l'import de pygame._sdl2.controller échoue dans
@@ -113,23 +102,9 @@ try:
     hiddenimports += ['pygame._sdl2', 'pygame._sdl2.controller']
 except Exception:
     pass
-# llama_cpp : moteur du modèle de l'assistant (assistant_llm.py, importé à la
-# demande). Ses bibliothèques natives sont chargées par ctypes depuis llama_cpp/lib,
-# invisibles pour PyInstaller sans aide. Les copies .dylib à numéro de version
-# complet (libllama.0.5.0.dylib…) ne sont référencées par personne : on les saute.
-# Absent sur Mac (cf. requirements.txt) : rien d'embarqué, le bandeau reste masqué.
-try:
-    import re as _re
-    from PyInstaller.utils.hooks import collect_dynamic_libs
-    binaries += [(_s, _d) for _s, _d in collect_dynamic_libs('llama_cpp')
-                 if not _re.search(r'\.\d+\.\d+\.\d+\.dylib$', _s)]
-    hiddenimports += ['llama_cpp', 'llama_cpp.llama_cpp', 'llama_cpp.llama_grammar']
-except Exception:
-    pass
-
 # ftd2xx : wrapper Python du driver FTDI D2XX (ENTTEC Open DMX USB en direct,
 # comme QLC+). La DLL ftd2xx elle-même provient du driver FTDI installé sur le
-# poste (chargée par ctypes au runtime) — on n'embarque que le module Python.
+# poste (chargée par ctypes au runtime) - on n'embarque que le module Python.
 if sys.platform == 'win32':
     try:
         _r = collect_all('ftd2xx')
@@ -138,7 +113,7 @@ if sys.platform == 'win32':
         pass
 
 # ------------------------------------------------------------------
-# BACKEND VIDÉO FFmpeg (décodage matériel) — CRUCIAL pour les longues
+# BACKEND VIDÉO FFmpeg (décodage matériel) - CRUCIAL pour les longues
 # vidéos (spectacles 40 min). Sans le plugin multimedia ffmpeg ET ses DLL
 # codec, l'exe retombe sur le backend Windows (WMF) qui sature le thread UI
 # (lecture saccadée, lumière décalée). On embarque explicitement le plugin
@@ -221,7 +196,7 @@ if IS_MAC:
             # 6.7.3 → Big Sur ; ARM en 6.10+ → Ventura. Un minimum trop bas =
             # l'icône rebondit puis l'app se ferme sans message.
             'LSMinimumSystemVersion':               _MACOS_MIN,
-            # Classe principale Qt — requis par macOS 26 Tahoe
+            # Classe principale Qt - requis par macOS 26 Tahoe
             'NSPrincipalClass':                     'NSApplication',
             # Rendu & affichage
             'NSHighResolutionCapable':              True,
@@ -233,12 +208,12 @@ if IS_MAC:
             # boucle USB-DMX (OPTO) et les projecteurs perdent le signal dès
             # qu'on change de fenêtre. Doublé à l'exécution dans main.py.
             'NSAppSleepDisabled':                   True,
-            # Capture audio (mode LIVE / IA Lumière) — SANS cette clé, macOS bloque
+            # Capture audio (mode LIVE / IA Lumière) - SANS cette clé, macOS bloque
             # silencieusement l'accès micro/ligne/BlackHole → aucun signal capté.
             'NSMicrophoneUsageDescription':
                 "MyStrow capte le son pour synchroniser vos lumières en temps réel "
                 "(mode LIVE / IA Lumière).",
-            # Réseau local (macOS 14+) — MÊME PIÈGE que le micro : sans cette
+            # Réseau local (macOS 14+) - MÊME PIÈGE que le micro : sans cette
             # clé, macOS bloque silencieusement le broadcast/multicast UDP, donc
             # l'ArtPoll ne trouve jamais le node et la sortie Art-Net reste
             # muette. Aucune erreur affichée, juste « le boîtier n'a pas répondu ».

@@ -23,7 +23,7 @@
                 n = len(conflicts)
                 conflict_banner.setText(
                     f"  ⚠  {n} fixture{'s' if n > 1 else ''} avec des canaux DMX qui se chevauchent"
-                    "  —  utilisez ⚡ Auto-addr. pour corriger"
+                    "  -  utilisez ⚡ Auto-addr. pour corriger"
                 )
                 conflict_banner.setVisible(True)
             else:
@@ -73,7 +73,7 @@
             for g in seen:
                 letter  = GROUP_LETTERS.get(g, "")
                 name    = self.GROUP_DISPLAY.get(g, g)
-                display = f"{letter}  —  {name}" if letter else name
+                display = f"{letter}  -  {name}" if letter else name
                 det_group_cb.addItem(display, g)
             det_group_cb.blockSignals(False)
 

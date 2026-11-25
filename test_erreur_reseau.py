@@ -1,11 +1,11 @@
 """
-test_erreur_reseau.py — Aucun message technique brut ne doit atteindre l'ecran.
+test_erreur_reseau.py - Aucun message technique brut ne doit atteindre l'ecran.
 
     python test_erreur_reseau.py
 
 Le cas qui a declenche ce test : un utilisateur a vu
 « <urlopen error [Errno 11001] getaddrinfo failed> » sur l'ecran de connexion.
-C'est de l'anglais, un numero, et surtout ca ne dit pas quoi faire — alors que
+C'est de l'anglais, un numero, et surtout ca ne dit pas quoi faire - alors que
 la cause est tres concrete : le nom de domaine ne se resout pas.
 
 Le piege structurel qui produit ca : un `try` qui ne rattrape que

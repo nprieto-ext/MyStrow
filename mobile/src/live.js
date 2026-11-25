@@ -7,7 +7,7 @@
 //     _detect_transients, _process_chunk, _detect_section_live, _update_bpm),
 //     morceaux de 50 ms comme le PC ;
 //   - état par groupe : audio_ai.AudioColorAI (palette, get_state_at) ;
-//   - rendu : MainWindow._apply_live_state_inner en mode « musical » — base
+//   - rendu : MainWindow._apply_live_state_inner en mode « musical » - base
 //     par groupe + bicolore, couleurs restreintes aux tuiles choisies, drop /
 //     montée, flashs sur kick et caisse claire, flash et strobe « intelligents »,
 //     strobe blanc du drop, lyres qui tournent au rythme, fondu au silence.
@@ -278,7 +278,7 @@
       for (let k = 0; k < n; k++) { const c = this.palette[(idx + k) % n]; if (c.join() !== principal.join()) return c; }
       return this.palette[idx % n];
     },
-    // get_state_at(time_ms, 0, accent_groups) — couleurs [r,g,b].
+    // get_state_at(time_ms, 0, accent_groups) - couleurs [r,g,b].
     stateAt(t, accentPool) {
       const P = this.palette, nP = P.length;
       const idx = Math.trunc(t / 50);
@@ -570,8 +570,8 @@
     <div class="lv-top">
       <button type="button" class="lv-go"><i></i><span>ÉCOUTER LA MUSIQUE</span></button>
       <div class="lv-meter"><div class="lv-vu"><b></b></div><div class="lv-hits"><i data-h="kick">KICK</i><i data-h="snare">CAISSE</i><i data-h="hihat">CHARLEY</i></div></div>
-      <div class="lv-bpm"><b>—</b><small>BPM</small></div>
-      <div class="lv-sec"><i></i><b>—</b></div>
+      <div class="lv-bpm"><b>-</b><small>BPM</small></div>
+      <div class="lv-sec"><i></i><b>-</b></div>
     </div>
     <div class="lv-body">
       <main class="lv-main">
@@ -680,10 +680,10 @@
   setInterval(() => {
     if (!root.classList.contains("active")) return;
     $(".lv-vu b").style.width = (A.running ? A.vu : 0) + "%";
-    $(".lv-bpm b").textContent = A.running && A.bpm ? Math.round(A.bpm) : "—";
+    $(".lv-bpm b").textContent = A.running && A.bpm ? Math.round(A.bpm) : "-";
     const sec = $(".lv-sec");
     sec.className = "lv-sec s-" + (A.running ? A.section : "off");
-    sec.querySelector("b").textContent = A.running ? SECTIONS[A.section] || A.section : "—";
+    sec.querySelector("b").textContent = A.running ? SECTIONS[A.section] || A.section : "-";
     sec.querySelector("i").classList.toggle("beat", A.running && performance.now() - beatT < 120);
     const t = nowS();
     root.querySelectorAll(".lv-hits i").forEach((el) => el.classList.toggle("on", A.running && t - A.lastTr[el.dataset.h] < 0.15));

@@ -1,22 +1,35 @@
 """
-Bibliothèque de fixtures DMX pré-définies — MyStrow
+Bibliothèque de fixtures DMX pré-définies - MyStrow
 Organisées par fabricant pour un accès rapide sans requête réseau.
 
 Format de chaque entrée :
-    name          : str   — nom affiché
-    manufacturer  : str   — marque / fabricant
-    fixture_type  : str   — "PAR LED" | "Moving Head" | "Laser" | "Barre LED"
+    name          : str   - nom affiché
+    manufacturer  : str   - marque / fabricant
+    fixture_type  : str   - "PAR LED" | "Moving Head" | "Laser" | "Barre LED"
                             | "Stroboscope" | "Gradateur"
                             | "Machine a fumee" | "Machine a brouillard"
                             | "Machine a etincelles" | "Lance-flamme"
-    group         : str   — groupe DMX par défaut
-    profile       : list  — séquence de types de canaux MyStrow
-    builtin       : True  — flag indiquant un template intégré (non supprimable)
+    group         : str   - groupe DMX par défaut
+    profile       : list  - séquence de types de canaux MyStrow
+    builtin       : True  - flag indiquant un template intégré (non supprimable)
 """
 
 _B = True  # builtin shorthand
 
 BUILTIN_FIXTURES = [
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # MyStrow Up : les téléphones du public (cf. crowd_link.py)
+    # ──────────────────────────────────────────────────────────────────────────
+    # Fixture VIRTUELLE : rien ne sort en DMX (artnet_dmx la saute) et son
+    # adresse ne compte pas dans les chevauchements. Pour le reste de MyStrow
+    # c'est un PAR LED (groupes, pads, effets, plan de feu). Chaque MyStrow Up
+    # du patch = une zone de la salle. Reconnue par son FABRICANT (sauvegardé
+    # avec le patch, contrairement au nom que l'utilisateur peut changer) :
+    # garder MYSTROW_UP_FABRICANT de crowd_link synchronisé.
+    # Fixture intégrée (et non bibliothèque Firebase) : elle ne marche qu'avec
+    # le code de la release qui l'accompagne.
+    {"name": "MyStrow Up · Téléphones du public",     "manufacturer": "MyStrow Up", "fixture_type": "PAR LED",        "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Générique  (profils de base, sans marque spécifique)
@@ -337,13 +350,13 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # Shehds
     # ──────────────────────────────────────────────────────────────────────────
-    # Notice « LED Spot 60W Lighting » / 60W图案灯说明书 — deux modes DMX, 9 et
+    # Notice « LED Spot 60W Lighting » / 60W图案灯说明书 - deux modes DMX, 9 et
     # 11 canaux. Les DEUX tableaux de la notice donnent les MEMES plages de
     # couleur et de gobo : une seule paire de roues sert aux deux modes, seul le
     # 16 bits Pan/Tilt change.
     #
     # ⚠️ Les trois derniers canaux (vitesse, programmes auto, reset) sortaient
-    # tous en `Mode` dans l'entree OFL de la bibliotheque — donc GANGES sur
+    # tous en `Mode` dans l'entree OFL de la bibliotheque - donc GANGES sur
     # `proj.mode_value` : l'unique curseur « Mode » des canaux avances les
     # poussait tous les trois d'un coup, et un reset partait avec. Ici
     # `Speed` / `Preset1` / `Reset`, trois types distincts. `Reset` sort 0 en
@@ -355,7 +368,7 @@ BUILTIN_FIXTURES = [
     # Roue de couleurs : 8 positions pleines PUIS 6 demi-positions (la roue
     # repart en arriere, cf. l'ordre de la notice). « Blanc » est premier de la
     # liste et gagne donc l'egalite de teinte contre « Défilement auto », qui
-    # porte le meme blanc — `core.cw_slot_for_color` departage par l'ORDRE.
+    # porte le meme blanc - `core.cw_slot_for_color` departage par l'ORDRE.
     # Roue de gobos : 8 motifs, les memes 8 secoues (prefixe `~`), puis le
     # defilement. Les libelles sont tronques a 6 caracteres sur les boutons du
     # plan de feu, d'ou les noms courts ; l'infobulle donne le nom complet.
@@ -465,7 +478,7 @@ BUILTIN_FIXTURES = [
     # Générique (laser blanc « LASER SHOW SYSTEM », sans marque ni modele)
     # ──────────────────────────────────────────────────────────────────────────
     # LASER 10 canaux, 500 mW RGB, 51 motifs (vendu GOTSTAGE sur AliExpress,
-    # 15/10/2026) — meme recette que le CS-1000 ci-dessous. Tableau DMX repris
+    # 15/10/2026) - meme recette que le CS-1000 ci-dessous. Tableau DMX repris
     # de la notice du meme chassis chinois (« Full Color Scan Laser Light »,
     # 10 canaux / 51 motifs) : la description du vendeur concorde canal par canal.
     # Canal 1 en `Preset1` (extinction + mode) et non `Dim`, pour la meme raison
@@ -507,7 +520,7 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # Laserworld
     # ──────────────────────────────────────────────────────────────────────────
-    # LASER — meme recette que le MAC 1000 RGB : `fixture_type` « Laser », que
+    # LASER - meme recette que le MAC 1000 RGB : `fixture_type` « Laser », que
     # le moteur traite partout comme une lyre (`core.fixture_projects_gobo`
     # l'autorise a projeter un motif), le dessin sur `Gobo1`, la position sur `Pan`/`Tilt`. Presets de position,
     # piste Position, effets pan/tilt et stick de la manette marchent d'emblee.
@@ -515,7 +528,7 @@ BUILTIN_FIXTURES = [
     # ⚠️ Le canal 1 porte a la fois l'EXTINCTION et le choix du mode
     # (0-62 laser eteint, 63-129 son, 130-189 automatique, 190-255 DMX). C'est
     # le SEUL canal capable de noircir l'appareil : il n'y a ni dimmer ni
-    # shutter sur ce laser. Il est donc en `Preset1` — un menu de blocs nommes,
+    # shutter sur ce laser. Il est donc en `Preset1` - un menu de blocs nommes,
     # pas un `Dim` : un fader a mi-course tomberait dans « mode son » et le
     # laser partirait en autonome au milieu du show. Repos = 0 = laser eteint,
     # ce qui est le bon etat de repos pour un laser ; il faut cliquer « DMX »
@@ -569,17 +582,17 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # Mac Mah
     # ──────────────────────────────────────────────────────────────────────────
-    # LASER — un laser ne se decrit PAS comme un projecteur : il ne melange pas
+    # LASER - un laser ne se decrit PAS comme un projecteur : il ne melange pas
     # de couleur, il DESSINE. Le motif est rendu par `Gobo1` (d'ou le
     # `fixture_type` « Laser », traite comme une lyre : `core.fixture_projects_gobo`
-    # l'autorise a projeter un motif) et se deplace par `Pan`/`Tilt` — ce qui
+    # l'autorise a projeter un motif) et se deplace par `Pan`/`Tilt` - ce qui
     # branche d'un coup les presets de position, la piste Position, les effets
     # pan/tilt et le stick de la manette sur l'appareil, sans une ligne de code
     # specifique. Choix opinione, cf. le Laserworld CS-12000.
     #
     # ⚠️ AUCUN canal n'est double : le moteur GANGE les canaux de meme type
     # (ils recoivent tous la meme valeur). Les fonctions secondaires prennent
-    # donc des types MANUELS distincts (`Anim`, `AnimRot`, `Frost`, `Iris`) —
+    # donc des types MANUELS distincts (`Anim`, `AnimRot`, `Frost`, `Iris`) -
     # ils sortent 0 au repos, ce qui vaut « aucune rotation / aucune onde » sur
     # cet appareil, et se poussent au curseur des « canaux avances ».
     # Les canaux restants sont `Unused` mais NOMMES : ils restent joignables par
@@ -660,19 +673,19 @@ BUILTIN_FIXTURES = [
     # ──────────────────────────────────────────────────────────────────────────
     # Electroconcept
     # ──────────────────────────────────────────────────────────────────────────
-    # Notice « LYRE BEAM 12X10W FULL RGBW 5° — MODELE B200-1 » (Electroconcept,
+    # Notice « LYRE BEAM 12X10W FULL RGBW 5° - MODELE B200-1 » (Electroconcept,
     # 7 pages, FR). 12 LED RGBW 4-en-1 de 10 W, 150 W, Pan 630° / Tilt 200°.
     # Deux modes DMX, 11 et 15 canaux : le mode 15 est le mode 11 auquel on
     # ajoute strobe, programmes internes et ID d'appareil.
     #
     # ⚠️ Pan/Tilt fin ne sont PAS entrelaces avec Pan/Tilt : la notice donne
     # 7 Pan, 8 Tilt, 9 Pan Fine, 10 Tilt Fine. Le profil est positionnel, il
-    # recopie donc cet ordre — recopier l'habituel Pan/PanFine/Tilt/TiltFine
+    # recopie donc cet ordre - recopier l'habituel Pan/PanFine/Tilt/TiltFine
     # ferait sortir le Tilt sur le canal du Pan fin.
     #
     # ⚠️ Canal 6 « Dimmer couleur personnalisee en mode test » : c'est un
     # SECOND gradateur, mais pose sur une couleur fixe reglee au menu (Test
-    # Mode) de l'appareil — pas sur la couleur du show. En `Dim2` il aurait
+    # Mode) de l'appareil - pas sur la couleur du show. En `Dim2` il aurait
     # suivi le fader master (cf. `artnet_dmx.py`, `ch_type in ("Dim","Dim2")`)
     # et aurait plaque cette couleur figee par-dessus le RGBW a chaque montee
     # de niveau. Il est donc `Unused` : il sort 0 et garde sa place dans la
@@ -690,7 +703,7 @@ BUILTIN_FIXTURES = [
     # Canal 14 est CONTEXTUEL, la notice le dit en deux tableaux : quand le
     # canal 13 est sur « Couleurs preprogrammees » (51-90) il choisit la
     # couleur, quand il est sur pulse/aleatoire/fondu (91-210) il donne la
-    # VITESSE du programme. Un seul canal, deux significations — il est en
+    # VITESSE du programme. Un seul canal, deux significations - il est en
     # `Preset2` (blocs nommes, aucun rendu visuel), pas en `ColorWheel` : la
     # lyre est une RGBW, la couleur du show sort deja par R/G/B/W et un
     # deuxieme ecrivain de couleur rejouerait l'anti-pattern des deux writers.
@@ -700,7 +713,7 @@ BUILTIN_FIXTURES = [
     # il manque une ligne dans la colonne des fonctions entre « No function »
     # et le dernier degrade. Arbitrage : les plages >= 141-170 sont sur la MEME
     # ligne que leur fonction dans le PDF, elles font foi ; en dessous, tout
-    # 1-170 est un fondu spectral continu, decoupe sans consequence pratique —
+    # 1-170 est un fondu spectral continu, decoupe sans consequence pratique -
     # d'ou un seul bloc « Degrade » plutot que huit paliers inventes.
     #
     # Les couleurs fixes (206-255) sont donnees en RGBW dans la notice avec

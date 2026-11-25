@@ -1,5 +1,5 @@
 """
-obs_client.py — Liaison OBS Studio → MyStrow (obs-websocket v5, port 4455).
+obs_client.py - Liaison OBS Studio → MyStrow (obs-websocket v5, port 4455).
 
 Meme parti pris que vmix_client.py, et pour les memes raisons : le sens est A
 SENS UNIQUE. C'est la regie video qui mene le direct, l'eclairage suit la scene
@@ -109,7 +109,7 @@ def _erreur_reseau(exc: OSError, host: str, port: int) -> Exception:
     faut faire. Or ce cas est de tres loin le plus frequent, et sa cause est
     presque toujours la meme : le serveur WebSocket d'OBS n'est PAS actif par
     defaut, il faut aller le cocher une fois. Le refus est d'ailleurs le seul
-    diagnostic fiable qu'on ait — rien n'ecoute sur le port — alors qu'un
+    diagnostic fiable qu'on ait - rien n'ecoute sur le port - alors qu'un
     pare-feu, lui, laisse expirer sans refuser.
     """
     cible = f"{host}:{port}"
@@ -178,7 +178,7 @@ class _WebSocket:
             # obs-websocket (serveur HTTP quelconque, ou OBS avec le serveur
             # WebSocket desactive).
             raise ConnectionError(
-                f"reponse inattendue du serveur ({premiere.strip() or 'vide'}) — "
+                f"reponse inattendue du serveur ({premiere.strip() or 'vide'}) - "
                 "le serveur WebSocket d'OBS est-il active ?")
 
         attendu = base64.b64encode(
@@ -198,20 +198,20 @@ class _WebSocket:
             # sont en cause, et l'utilisateur n'a plus rien a regarder. Les
             # deux cas se soignent differemment, on les distingue donc :
             #   - en-tete ABSENT   -> en face ce n'est pas un vrai serveur
-            #     WebSocket (autre logiciel sur le port, ou un intermediaire —
-            #     antivirus, proxy — qui a reecrit la reponse) ;
+            #     WebSocket (autre logiciel sur le port, ou un intermediaire -
+            #     antivirus, proxy - qui a reecrit la reponse) ;
             #   - en-tete PRESENT mais faux -> la reponse a bien ete fabriquee
             #     a partir d'une AUTRE cle que la notre, signature d'un
             #     intermediaire qui a rejoue la negociation pour son compte.
             if not recu:
                 raise ConnectionError(
                     f"reponse 101 sans en-tete Sec-WebSocket-Accept (recu : "
-                    f"{', '.join(entetes) or 'aucun en-tete'}) — ce n'est pas "
+                    f"{', '.join(entetes) or 'aucun en-tete'}) - ce n'est pas "
                     f"obs-websocket qui repond sur {host}:{port}, ou un "
                     f"antivirus/proxy s'intercale.")
             raise ConnectionError(
                 f"Sec-WebSocket-Accept incorrect (recu {recu}, attendu "
-                f"{attendu}) — un intermediaire (antivirus, proxy) a renegocie "
+                f"{attendu}) - un intermediaire (antivirus, proxy) a renegocie "
                 f"la connexion a {host}:{port}.")
 
     def _lire_jusqu_a(self, marqueur: bytes) -> bytes:
@@ -219,7 +219,7 @@ class _WebSocket:
 
         Indispensable : OBS envoie son Hello immediatement, et ces octets
         arrivent souvent dans le meme paquet TCP que la fin des en-tetes. Les
-        jeter ferait perdre le premier message a chaque connexion — de facon
+        jeter ferait perdre le premier message a chaque connexion - de facon
         intermittente, selon le decoupage reseau.
         """
         while marqueur not in self._buf:
@@ -409,7 +409,7 @@ class ObsClient(QObject):
     Les Signals sont emis depuis le thread reseau ; Qt les delivre dans le
     thread principal (connexion automatique = Queued des que les threads
     different). Aucun widget, aucun projecteur n'est donc touche depuis le
-    reseau — c'est la seule facon de ne pas voler d'images a la trame DMX.
+    reseau - c'est la seule facon de ne pas voler d'images a la trame DMX.
     """
 
     # (connecte, message affichable)
@@ -543,7 +543,7 @@ class ObsClient(QObject):
     def _on_program(self, nom):
         """Front montant. OBS n'emet cet evenement que sur changement reel,
         mais on garde la garde : une reconnexion, ou un futur evenement de
-        rafraichissement, republierait la scene courante — et rejouerait la
+        rafraichissement, republierait la scene courante - et rejouerait la
         memoire lumiere en plein milieu d'un plan."""
         if not nom:
             return

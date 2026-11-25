@@ -1,9 +1,9 @@
 """
-test_effet_une_fois.py — Editeur d'effets : lecture « Une fois ».
+test_effet_une_fois.py - Editeur d'effets : lecture « Une fois ».
 
 Le moteur savait deja jouer un effet en mode "once", mais :
 1. les boutons En boucle / Une fois etaient des objets orphelins, jamais poses
-   dans l'editeur — impossible de choisir le mode ;
+   dans l'editeur - impossible de choisir le mode ;
 2. "once" s'arretait apres 2 s fixes, quelle que soit la VITESSE : un effet
    lent etait coupe en plein milieu, un effet rapide tournait plusieurs fois ;
 3. en superposition, la fin d'un effet "once" arretait le timer commun, donc

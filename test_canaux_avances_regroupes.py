@@ -1,13 +1,13 @@
 """
-test_canaux_avances_regroupes.py — Une seule section de canaux techniques.
+test_canaux_avances_regroupes.py - Une seule section de canaux techniques.
 
 Le menu contextuel du plan de feu construisait DEUX paquets de canaux
 techniques, separes par tout le bloc Moving Head (pad Pan/Tilt, presets, roue
 de couleur, gobo, prisme) puis la grille de couleurs :
 
-  * « CANAUX SPECIAUX » — UV, Blanc, Ambre, Orange, Effects, puis Focus,
+  * « CANAUX SPECIAUX » - UV, Blanc, Ambre, Orange, Effects, puis Focus,
     Gobo 2, Vitesse, Mode ;
-  * « CANAUX AVANCES »  — tout le reste du profil (Zoom, Iris, Frost, CTO...).
+  * « CANAUX AVANCES »  - tout le reste du profil (Zoom, Iris, Frost, CTO...).
 
 Sur une Maverick Force S Spot, Focus/Gobo 2/Vitesse/Mode se retrouvaient donc
 tout en haut et Zoom/Iris/Frost/CTO tout en bas : la meme famille de reglages
@@ -18,7 +18,7 @@ Ce qui est verrouille ici :
   * les quatre canaux techniques a etat dedie sont rendus DANS la section
     « Canaux avances », en tete, et plus dans « Canaux speciaux » ;
   * « Canaux speciaux » ne garde que la couleur (UV, Blanc, Ambre, Orange,
-    Effects) — et disparait quand la fixture n'en a aucun ;
+    Effects) - et disparait quand la fixture n'en a aucun ;
   * un seul curseur par canal : deplacer les lignes ne doit pas en laisser une
     copie derriere (deux writers pour le meme canal DMX) ;
   * le curseur ecrit toujours l'ATTRIBUT dedie (`proj.focus`, `proj.mode_value`)
@@ -47,7 +47,7 @@ from projector import Projector
 
 
 # Maverick Force S Spot, mode etendu : le profil tel que MyStrow le voit apres
-# import. Focus/Gobo2/Speed/Mode y cotoient Zoom/Iris/Frost/CTO — c'est cette
+# import. Focus/Gobo2/Speed/Mode y cotoient Zoom/Iris/Frost/CTO - c'est cette
 # fixture qui a fait remonter la coupure.
 MAVERICK = [
     "Pan", "PanFine", "Tilt", "TiltFine", "Speed",
@@ -70,10 +70,10 @@ def _make_pdf(profile, fixture_type="Moving Head"):
 def _walk(menu):
     """Le menu, a plat : ('label', titre) et ('row', etiquette, curseur, action).
 
-    Les sections du menu sont des QWidgetAction — un QLabel pour le titre (ou
+    Les sections du menu sont des QWidgetAction - un QLabel pour le titre (ou
     un QPushButton « ▸ TITRE · n » quand la section se replie), un QWidget
     « etiquette + curseur + valeur » pour chaque ligne. On lit donc les widgets,
-    pas les QAction — mais on rend l'action de chaque ligne : c'est ELLE qu'on
+    pas les QAction - mais on rend l'action de chaque ligne : c'est ELLE qu'on
     masque au repli, et donc elle qu'il faut interroger.
     """
     out = []
@@ -237,7 +237,7 @@ class TestRegroupement(unittest.TestCase):
     def test_repliee_par_defaut(self):
         # 9 lignes sur une Maverick : la section fait la moitie du menu et on
         # n'y touche qu'au patch. Les lignes existent mais leur action est
-        # masquee — pas le widget, sinon QMenu laisse un rectangle vide.
+        # masquee - pas le widget, sinon QMenu laisse un rectangle vide.
         items = self._items()
         avances = _section(items, "CANAUX AVANCÉS")
         self.assertTrue(avances, "la section a disparu")
@@ -256,7 +256,7 @@ class TestRegroupement(unittest.TestCase):
 
     def test_le_choix_vaut_pour_le_projecteur_suivant(self):
         # Meme memoire que le mode « Curseurs » : on ouvre une fois, ca reste
-        # ouvert — sinon il faudrait redeplier a chaque clic droit.
+        # ouvert - sinon il faudrait redeplier a chaque clic droit.
         self._items()
         _entete_repliable(self.menu, "CANAUX AVANCÉS").click()
         self.assertIs(self.pdf._adv_expanded, True)

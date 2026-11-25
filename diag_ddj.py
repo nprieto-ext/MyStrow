@@ -1,5 +1,5 @@
 """
-Diagnostic MIDI brut — DDJ-400 (ou n'importe quel contrôleur).
+Diagnostic MIDI brut - DDJ-400 (ou n'importe quel contrôleur).
 
 But : savoir si Windows laisse MyStrow ouvrir le port du contrôleur, et voir
 ce que les pads envoient réellement (canal / note / vélocité).
@@ -47,7 +47,7 @@ def main():
     print("PORTS MIDI D'ENTREE VUS PAR WINDOWS")
     print("=" * 78)
     if not ports:
-        print("  (aucun) — le contrôleur n'est pas branché, ou son pilote n'est pas installé.")
+        print("  (aucun) - le contrôleur n'est pas branché, ou son pilote n'est pas installé.")
         return
     for i, p in enumerate(ports):
         print(f"  [{i}] {p}")
@@ -71,14 +71,14 @@ def main():
         except Exception as e:
             print(f"  ECHEC   port [{i}] refusé  : {p}")
             print(f"          -> {type(e).__name__}: {e}")
-            print("          (typiquement : une autre application le tient — VirtualDJ, rekordbox…)")
+            print("          (typiquement : une autre application le tient - VirtualDJ, rekordbox…)")
 
     if not opened:
         print("\nAucun port ouvert. Fermez le logiciel DJ et relancez ce script.")
         return
 
     print("\n" + "=" * 78)
-    print("APPUYEZ SUR LES PADS / BOUGEZ LES FADERS — 40 s d'écoute (Ctrl+C pour arrêter)")
+    print("APPUYEZ SUR LES PADS / BOUGEZ LES FADERS - 40 s d'écoute (Ctrl+C pour arrêter)")
     print("=" * 78)
     try:
         time.sleep(40)

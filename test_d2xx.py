@@ -31,7 +31,7 @@ print("Device :", info)
 dev.setBaudRate(250000)
 dev.setDataCharacteristics(d.BITS_8, d.STOP_BITS_2, d.PARITY_NONE)
 dev.setFlowControl(d.FLOW_NONE, 0, 0)
-dev.setLatencyTimer(1)          # 1 ms — le reglage cle que le VCP ne fait pas
+dev.setLatencyTimer(1)          # 1 ms - le reglage cle que le VCP ne fait pas
 dev.setTimeouts(100, 100)
 dev.purge(d.PURGE_TX | d.PURGE_RX)
 

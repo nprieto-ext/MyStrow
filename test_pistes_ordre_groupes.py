@@ -1,11 +1,11 @@
 """
-test_pistes_ordre_groupes.py — Ordre et couleur des pistes de groupe du REC
+test_pistes_ordre_groupes.py - Ordre et couleur des pistes de groupe du REC
 lumiere.
 
 Retour Christo, 11/09/2026 : « les groupe son plus ordonner ». Exact :
 `_TRACK_ORDER` (timeline_editor) s'arretait a F. Les groupes G et H prenaient
 donc la cle des groupes INCONNUS et atterrissaient tout en bas de la timeline,
-APRES les pistes speciales Lyres / Barres / Strobos / Fumee — et sans couleur
+APRES les pistes speciales Lyres / Barres / Strobos / Fumee - et sans couleur
 propre, ils heritaient du bleu de B.
 
 C'etait le seul endroit du code tronque a F : les ~13 autres listes de groupes

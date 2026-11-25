@@ -1,5 +1,5 @@
 """
-Génère controllers_bundle.json.gz — catalogue des profils de contrôleurs MIDI
+Génère controllers_bundle.json.gz - catalogue des profils de contrôleurs MIDI
 approuvés en modération, embarqué dans l'application.
 
 Pendant du couple `generate_bundle.py` / `_fetch_custom_fixtures_bundle()` pour
@@ -38,8 +38,8 @@ def _native_keywords():
     Un profil communautaire qui vise le même appareil ne doit PAS être embarqué :
     `MIDIHandler.connect_controller` consulte les profils AVANT
     `SUPPORTED_CONTROLLERS` (midi_handler.py, « en Auto, prioritaire sur le
-    natif »), donc l'embarquer remplacerait la gestion native — LED, pages,
-    particularités du MkII — chez tous les utilisateurs d'un coup.
+    natif »), donc l'embarquer remplacerait la gestion native - LED, pages,
+    particularités du MkII - chez tous les utilisateurs d'un coup.
 
     Import protégé : rtmidi peut manquer sur un runner de build.
     """
@@ -81,7 +81,7 @@ def build(out_path=OUT_FILE):
         docs = fc.fetch_controller_profiles(None)
     except Exception as e:
         print(f"AVERTISSEMENT: lecture de controller_profiles échouée ({e}) "
-              f"— catalogue vide généré.")
+              f"- catalogue vide généré.")
         _write([], out_path)
         return 0
 
@@ -102,12 +102,12 @@ def build(out_path=OUT_FILE):
         # au moment où quelqu'un regarde encore la sortie du build.
         ok, reason = validate_profile(data) if isinstance(data, dict) else (False, "pas un objet")
         if not ok:
-            print(f"  ignoré : {doc.get('name', '?')} — {reason}")
+            print(f"  ignoré : {doc.get('name', '?')} - {reason}")
             skipped += 1
             continue
         clash = _collides_with_native(data.get("keywords"), native)
         if clash:
-            print(f"  ignoré : {doc.get('name', '?')} — déjà supporté nativement "
+            print(f"  ignoré : {doc.get('name', '?')} - déjà supporté nativement "
                   f"(mot-clé « {clash} »)")
             skipped += 1
             continue

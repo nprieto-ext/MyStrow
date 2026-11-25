@@ -1,5 +1,5 @@
 """
-test_rec_couper_basculer.py — Couper un bloc ici et le basculer d'une ligne.
+test_rec_couper_basculer.py - Couper un bloc ici et le basculer d'une ligne.
 
 Depuis que chaque groupe est suivi de ses propres projecteurs, la ligne
 « en dessous » d'un groupe est l'un de SES projecteurs. D'ou le geste, au clic
@@ -19,7 +19,7 @@ Trois pieges, et c'est eux qu'on verrouille ici :
   * QUELLE ligne est « en dessous ». Celle qu'on VOIT : les lignes masquees,
     les pistes specialisees et celles qu'un cadenas protege sont sautees. Y
     pousser un bloc echouerait en silence, le menu ne doit proposer que ce qui
-    va marcher — et ne rien proposer du tout s'il n'y a pas de voisine.
+    va marcher - et ne rien proposer du tout s'il n'y a pas de voisine.
 
   * la COPIE. Elle passe par `_clone_clip`, seul cloneur de l'editeur : un bloc
     qui perd son identite en changeant de piste retombe en simple bloc couleur.
@@ -89,7 +89,7 @@ def _rig():
 
 
 class LigneVoisine(unittest.TestCase):
-    """Ce que le menu proposera — ou ne proposera pas."""
+    """Ce que le menu proposera - ou ne proposera pas."""
 
     def setUp(self):
         self.ed, self.a, self.p1, self.p2 = _rig()

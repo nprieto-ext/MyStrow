@@ -1,14 +1,14 @@
 """
-test_fondu_memoire_lyre.py — Le fondu entre deux memoires doit teindre AUSSI
+test_fondu_memoire_lyre.py - Le fondu entre deux memoires doit teindre AUSSI
 les lyres, pas seulement les PAR.
 
 Symptome remonte le 02/09/2026 : « autant ca fonctionne bien pour les par led,
 autant sur les lyres le mouvement se fait petit a petit mais le fondu de la
-couleur RVB ne marche pas — ni sur le plan 2D/3D, ni sur les vraies lyres ».
+couleur RVB ne marche pas - ni sur le plan 2D/3D, ni sur les vraies lyres ».
 
 Racine : `_compute_htp_overrides` repose les memoires en HTP par-dessus le
 modele a CHAQUE frame DMX, en comparant le niveau de la memoire au niveau
-INSTANTANE du projecteur — jamais a la cible du fondu. Des que la memoire
+INSTANTANE du projecteur - jamais a la cible du fondu. Des que la memoire
 d'arrivee est un cran plus haute que le look de depart (les lyres du show de
 test : 24 % -> 25 %), `mem_level > proj.level` reste vrai pendant TOUTE la
 rampe : la couleur d'arrivee etait reposee seche des la premiere frame. Les

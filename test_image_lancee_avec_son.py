@@ -1,8 +1,8 @@
 """
-test_image_lancee_avec_son.py — « Lancer avec le son précédent » (ligne image).
+test_image_lancee_avec_son.py - « Lancer avec le son précédent » (ligne image).
 
 Une image posée sous un son peut s'y accrocher : elle s'affiche pendant ce son
-(aperçu + sortie vidéo), et les deux lignes ne font qu'une étape — à la fin du
+(aperçu + sortie vidéo), et les deux lignes ne font qu'une étape - à la fin du
 son, la playlist passe à la ligne d'après l'image. Seul le son pilote la
 lumière : la ligne image n'est jamais lancée pour elle-même.
 

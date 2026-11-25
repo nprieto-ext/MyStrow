@@ -4,7 +4,7 @@
 - Play sur un média IA déjà chargé (après la fin du morceau, qui fait
   `audio_ai.reset()`) rejouait le son sans lumière : seul le double-clic
   (`play_row`) rechargeait la pré-analyse. `ensure_light_playback_armed` la
-  recharge maintenant — sans la recharger à chaque reprise après pause, et en
+  recharge maintenant - sans la recharger à chaque reprise après pause, et en
   remplaçant celle d'une AUTRE ligne restée en mémoire.
 - La barre d'espace n'atteignait jamais `MainWindow.keyPressEvent` : la
   playlist ou le dernier bouton cliqué la mangeaient.

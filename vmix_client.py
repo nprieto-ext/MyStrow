@@ -1,11 +1,11 @@
 """
-vmix_client.py — Liaison vMix → MyStrow (API TCP, port 8099).
+vmix_client.py - Liaison vMix → MyStrow (API TCP, port 8099).
 
 Le sens est volontairement A SENS UNIQUE : vMix pilote MyStrow, jamais
 l'inverse. C'est le realisateur video qui mene le direct ; l'eclairage suit la
 camera a l'antenne, pas le contraire. Une liaison bidirectionnelle ouvrirait en
 prime une boucle de retour (MyStrow change une scene, vMix renvoie le tally,
-MyStrow rejoue l'action...) qu'il faudrait garder — probleme qu'on s'evite en
+MyStrow rejoue l'action...) qu'il faudrait garder - probleme qu'on s'evite en
 ne l'introduisant pas.
 
 Meme ossature que streamdeck_api.py : un thread fait l'entree/sortie reseau, un
@@ -17,7 +17,7 @@ Protocole (doc vMix « TCP API », verifie sur vmix.com/help28/TCPAPI.html) :
   - port 8099, messages UTF-8 termines par \\r\\n
   - `SUBSCRIBE TALLY\\r\\n` puis vMix pousse `TALLY OK 0121...` a chaque
     changement : un chiffre par entree, 0 = eteinte, 1 = programme, 2 = preview
-  - `XML\\r\\n` repond `XML <nb_octets>\\r\\n` SUIVI des octets — cette
+  - `XML\\r\\n` repond `XML <nb_octets>\\r\\n` SUIVI des octets - cette
     reponse-la n'est donc pas delimitee par une fin de ligne, d'ou le lecteur
     a deux modes ci-dessous.
 
@@ -244,7 +244,7 @@ class VmixClient(QObject):
         # FRONT MONTANT uniquement. vMix renvoie l'etat COMPLET a chaque
         # changement : declencher sur « est au programme » au lieu de « vient
         # d'y passer » rejouerait l'action a chaque mouvement d'une AUTRE
-        # entree — une memoire relancee en boucle pendant tout le direct.
+        # entree - une memoire relancee en boucle pendant tout le direct.
         for i, etat in enumerate(courant):
             avant = precedent[i] if i < len(precedent) else TALLY_OFF
             if etat == TALLY_PROGRAM and avant != TALLY_PROGRAM:

@@ -1,5 +1,5 @@
 """
-dmx_in_link.py — Ce que MyStrow FAIT du DMX entrant, et son reglage.
+dmx_in_link.py - Ce que MyStrow FAIT du DMX entrant, et son reglage.
 
 artnet_input.py recoit les trames ; ce module decide de l'effet. Meme partage
 que gamepad_client.py / gamepad_link.py, et pour la meme raison : toute la
@@ -8,14 +8,14 @@ logique se teste sans reseau ni pupitre branche.
 UN PATCH, RIEN D'AUTRE
 -----------------------
 Une seule table : les 512 adresses de l'univers d'entree, et en face de chacune
-ce qu'elle pilote — un groupe (A a H), une memoire (MEM 1 a 99), une colonne
+ce qu'elle pilote - un groupe (A a H), une memoire (MEM 1 a 99), une colonne
 d'effets (FX 1 a 8), le volume du lecteur, ou la vitesse des effets. C'est le
 meme vocabulaire que le selecteur de slot de l'AKAI (`_AKAI_SLOT_OPTIONS`), et
 c'est voulu : « MEM 3 » designe la meme chose des deux cotes.
 
 Rien d'autre a regler. Pas de mode, pas d'adresse de depart, pas de priorite,
 pas d'apprentissage : le numero du canal qui BOUGE passe en cyan dans la table,
-donc bouger un fader du pupitre suffit a le reconnaitre — c'est ce que faisait
+donc bouger un fader du pupitre suffit a le reconnaitre - c'est ce que faisait
 l'apprentissage, en moins de clics et sans suspendre le pilotage.
 
 LA CIBLE NE DEPEND PAS DE LA PAGE
@@ -23,7 +23,7 @@ LA CIBLE NE DEPEND PAS DE LA PAGE
 Le patch designe une CIBLE (le groupe A, la memoire 12), et PAS une tranche de
 la surface AKAI. C'est ce qui permet a un pupitre de piloter tout le rig alors
 qu'une seule page de layout est a l'ecran : la cible d'une tranche ne depend
-pas de la page, seuls les widgets — le fader affiche, le pad actif — sont lies
+pas de la page, seuls les widgets - le fader affiche, le pad actif - sont lies
 a la colonne visible. C'est la philosophie de `_sync_controls_to_state` : le
 rig est la source de verite, l'AKAI n'en est qu'une vue.
 
@@ -42,7 +42,7 @@ L'UNIVERS D'ENTREE EST LE 5e
 -----------------------------
 MyStrow emet jusqu'a QUATRE univers (`ArtNetDMX.universe` .. +3). Le cinquieme
 est donc le premier qui ne peut pas entrer en collision avec notre propre
-sortie — c'est la valeur par defaut, et il n'y a plus de reglage a comprendre.
+sortie - c'est la valeur par defaut, et il n'y a plus de reglage a comprendre.
 Si le pupitre emet malgre tout ailleurs, l'etat le dit (« des donnees arrivent
 sur l'univers 0 ») et un bouton bascule l'ecoute en un clic.
 
@@ -50,7 +50,7 @@ TROIS DECISIONS QUI NE SONT PAS EVIDENTES
 ------------------------------------------
 1. **La premiere trame ne pilote RIEN.** Elle sert de reference. Sans ca,
    cocher « activer » pendant un show enverrait d'un coup tout le parc sur les
-   valeurs du pupitre — c'est-a-dire au NOIR si ses faders sont en bas. On
+   valeurs du pupitre - c'est-a-dire au NOIR si ses faders sont en bas. On
    attend donc qu'un canal BOUGE pour lui obeir : le premier geste sur le
    pupitre prend la main, et la case a cocher ne casse jamais un show en cours.
 
@@ -120,7 +120,7 @@ _LETTRE_PAR_GROUPE = {
 FADER_VITESSE = 8
 
 # Sentinelle : « cette ligne n'a jamais eu de valeur », a distinguer d'un canal
-# absent (—) pour ne pas allumer toute la table au premier rafraichissement.
+# absent (-) pour ne pas allumer toute la table au premier rafraichissement.
 _MANQUANT = object()
 
 
@@ -169,7 +169,7 @@ def default_patch():
     suite, sans 106 clics prealables. Les groupes viennent en premier parce que
     ce sont les premiers faders qu'on monte en show ; les memoires suivent, dans
     l'ordre, comme les faders d'une console. Le reste (FX, PLAY, vitesse) se
-    patche a la main — et « Tout effacer » repart d'une table vide.
+    patche a la main - et « Tout effacer » repart d'une table vide.
     """
     patch = {i + 1: GROUPES[i] for i in range(GROUPES_DEFAUT)}
     patch.update({GROUPES_DEFAUT + i: f"MEM {i}" for i in range(1, MEM_MAX + 1)})
@@ -243,7 +243,7 @@ def normalize_patch(raw):
 
     Tolerant a dessein : une config abimee ne doit pas empecher l'entree DMX de
     fonctionner ni l'ouverture du dialogue. Les lignes illisibles sont jetees
-    une par une, et un canal ne pilote qu'UNE cible — le dictionnaire s'en
+    une par une, et un canal ne pilote qu'UNE cible - le dictionnaire s'en
     charge tout seul.
     """
     out = {}
@@ -285,7 +285,7 @@ def patch_from_legacy(cfg, window=None):
     La version precedente designait une TRANCHE (page + colonne) ; on relit donc
     le layout pour retrouver ce que cette tranche pilotait, et on garde la
     cible. Le mode Patch deroulait 20 pages : on ne reprend que la premiere,
-    c'est-a-dire les 8 premiers faders du pupitre, plus la vitesse — reproduire
+    c'est-a-dire les 8 premiers faders du pupitre, plus la vitesse - reproduire
     160 canaux dont la plupart pointent sur les memes cibles ne rendrait service
     a personne.
     """
@@ -344,7 +344,7 @@ def level_to_velocity(level):
     Passer par la meme porte que le MIDI vaut bien cet aller-retour, mais il
     faut l'ARRONDIR AU-DESSUS : `on_midi_fader` reconvertit avec un `int()`,
     qui tronque. Avec un arrondi au plus proche, le niveau 1 donnait une
-    velocite de 1, retronquee en 0 — le premier point de chaque fader etait
+    velocite de 1, retronquee en 0 - le premier point de chaque fader etait
     perdu, et un pupitre a 1 % laissait le projecteur eteint.
     """
     borne = max(0, min(100, int(level)))
@@ -360,7 +360,7 @@ class DmxInLink(QObject):
     status_changed = Signal(bool, str)
 
     def __init__(self, window=None):
-        # `window` sert de parent Qt quand c'en est un — mais les tests passent
+        # `window` sert de parent Qt quand c'en est un - mais les tests passent
         # une fenetre factice, et QObject refuserait un parent non-QObject.
         super().__init__(window if isinstance(window, QObject) else None)
         self._window = window
@@ -369,7 +369,7 @@ class DmxInLink(QObject):
         self.enabled = False
         self.port = DEFAULT_PORT
         self.universe = DEFAULT_UNIVERSE
-        # Patch d'usine, remplace par celui du disque des qu'il y en a un — y
+        # Patch d'usine, remplace par celui du disque des qu'il y en a un - y
         # compris un patch VIDE : « Tout effacer » doit tenir apres fermeture.
         self.patch = default_patch()      # canal (1-512) -> cible
 
@@ -436,7 +436,7 @@ class DmxInLink(QObject):
         return None
 
     def watched(self):
-        """[(canal, cible)] — le patch, canal croissant."""
+        """[(canal, cible)] - le patch, canal croissant."""
         for canal in sorted(self.patch):
             yield canal, self.patch[canal]
 
@@ -468,7 +468,7 @@ class DmxInLink(QObject):
         else:
             # Reglage d'avant la table plate : on recupere ce qu'on peut, et a
             # defaut on retombe sur le patch d'usine plutot que sur une table
-            # vide — l'utilisateur avait bien configure quelque chose.
+            # vide - l'utilisateur avait bien configure quelque chose.
             self.patch = patch_from_legacy(cfg, self._window) or default_patch()
 
     def load(self):
@@ -520,7 +520,7 @@ class DmxInLink(QObject):
 
     @staticmethod
     def _local_ips():
-        """IPs de ce PC — pour ne jamais rejouer notre propre sortie (larsen)."""
+        """IPs de ce PC - pour ne jamais rejouer notre propre sortie (larsen)."""
         try:
             from node_connection import _get_all_local_ips
             return _get_all_local_ips()
@@ -590,7 +590,7 @@ class DmxInLink(QObject):
     # ── etat ────────────────────────────────────────────────────────────────
 
     def status(self):
-        """(recoit, message) — la phrase que le dialogue affiche."""
+        """(recoit, message) - la phrase que le dialogue affiche."""
         if not self.enabled:
             return False, tr("dmxin_status_off")
         if self.receiver.error:
@@ -921,7 +921,7 @@ class DmxInDialog(QDialog):
         self._appliquer()
 
     def _ouvrir_sortie_dmx(self):
-        """Ouvre la fenetre « Sortie DMX » — c'est la qu'un port se bascule en
+        """Ouvre la fenetre « Sortie DMX » - c'est la qu'un port se bascule en
         entree, et sans ca rien n'arrivera jamais ici."""
         try:
             self._window.open_node_connection()

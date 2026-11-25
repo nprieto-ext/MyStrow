@@ -1,5 +1,5 @@
 """
-DMX Tester — 512 faders verticaux avec sélection multiple.
+DMX Tester - 512 faders verticaux avec sélection multiple.
 """
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -59,7 +59,7 @@ MIDI_FADERS   = 9
 MIDI_MUTE_PREV = 7    # index 0-based : MUTE du fader 8
 MIDI_PAGES    = (512 + MIDI_FADERS - 1) // MIDI_FADERS
 LED_TEST_BG   = 9     # orange (palette APC mini mk2)
-LED_TEST_BAR  = 37    # cyan — la couleur du testeur
+LED_TEST_BAR  = 37    # cyan - la couleur du testeur
 
 
 # ── Widget faders ─────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ class DmxFaderView(QWidget):
     """
 
     selection_changed = Signal(list)   # liste d'indices 0-based sélectionnés
-    value_changed     = Signal(int, int)  # (channel, value) — drag direct sur fader
+    value_changed     = Signal(int, int)  # (channel, value) - drag direct sur fader
 
     def __init__(self):
         super().__init__()
@@ -565,7 +565,7 @@ class DmxTesterDialog(QDialog):
         """)
         cl.addWidget(self.slider, 1)
 
-        self.lbl_val = QLabel("—")
+        self.lbl_val = QLabel("-")
         self.lbl_val.setFixedSize(56, 30)
         self.lbl_val.setAlignment(Qt.AlignCenter)
         self.lbl_val.setFont(QFont("Segoe UI", 12, QFont.Bold))
@@ -691,10 +691,10 @@ class DmxTesterDialog(QDialog):
     def _on_fader_drag(self, ch, val):
         """Appelé en temps réel quand l'utilisateur glisse un fader."""
         self._dmx.dmx_data[self._uni][ch] = val
-        # Pas de send_dmx() ici — le timer 25 Hz gère l'envoi sans surcharger
+        # Pas de send_dmx() ici - le timer 25 Hz gère l'envoi sans surcharger
         n = len(self.grid.selected())
         txt = tr("dmt3_072", a=ch+1) if n <= 1 else tr("dmt3_073", n=n)
-        self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")
+        self.lbl_sel_info.setText(f"{txt}  -  {val} / 255")
         self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:240px;")
         self._set_slider(val)
         self.slider.setEnabled(True)
@@ -705,7 +705,7 @@ class DmxTesterDialog(QDialog):
         if n == 0:
             self.lbl_sel_info.setText(tr("dt2_no_channel"))
             self.lbl_sel_info.setStyleSheet("color:#5a6069; min-width:240px;")
-            self.lbl_val.setText("—")
+            self.lbl_val.setText("-")
             self.slider.setEnabled(False)
         elif n == 1:
             ch  = sel[0]
@@ -734,7 +734,7 @@ class DmxTesterDialog(QDialog):
         self.lbl_val.setText(str(val))
         n   = len(sel)
         txt = tr("dmt3_072", a=sel[0]+1) if n == 1 else tr("dmt3_073", n=n)
-        self.lbl_sel_info.setText(f"{txt}  —  {val} / 255")
+        self.lbl_sel_info.setText(f"{txt}  -  {val} / 255")
         self.lbl_sel_info.setStyleSheet("color:#00d4ff; min-width:240px;")
 
     def _send_val(self, val):

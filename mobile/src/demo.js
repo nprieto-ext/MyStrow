@@ -22,13 +22,13 @@
   let rec = false;
 
   const seqItems = [
-    { type: "media", title: "Ouverture — Also sprach Zarathustra.mp3", dur: "01:42", vol: "80", dmx: "Play Lumiere" },
-    { type: "media", title: "Daft Punk — One More Time.mp3", dur: "05:20", vol: "90", dmx: "IA Lumiere" },
+    { type: "media", title: "Ouverture - Also sprach Zarathustra.mp3", dur: "01:42", vol: "80", dmx: "Play Lumiere" },
+    { type: "media", title: "Daft Punk - One More Time.mp3", dur: "05:20", vol: "90", dmx: "IA Lumiere" },
     { type: "pause", title: "PAUSE", dur: "--:--", vol: "--" },
     { type: "media", title: "Discours d'accueil.wav", dur: "03:05", vol: "70", dmx: "Manuel" },
     { type: "tempo", title: "Tempo 10 s", dur: "00:10", vol: "--" },
-    { type: "media", title: "Remise des prix — Jingle.mp3", dur: "00:18", vol: "85", dmx: "Programme" },
-    { type: "media", title: "Final — We Are The Champions.mp3", dur: "03:01", vol: "95", dmx: "Play Lumiere" },
+    { type: "media", title: "Remise des prix - Jingle.mp3", dur: "00:18", vol: "85", dmx: "Programme" },
+    { type: "media", title: "Final - We Are The Champions.mp3", dur: "03:01", vol: "95", dmx: "Play Lumiere" },
   ];
   let current = 1;
   let playing = true;

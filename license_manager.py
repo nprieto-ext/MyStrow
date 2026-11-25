@@ -1,7 +1,7 @@
 """
 Systeme de licence Firebase pour MyStrow.
-Comptes utilisateurs (email + mdp) — 2 machines max par compte.
-Zero dependance Qt — appelable depuis n'importe quel contexte.
+Comptes utilisateurs (email + mdp) - 2 machines max par compte.
+Zero dependance Qt - appelable depuis n'importe quel contexte.
 """
 
 import os
@@ -285,7 +285,7 @@ def get_machine_id() -> str:
     if platform.system() == "Windows":
         try:
             import winreg
-            # MachineGuid — généré à l'installation de Windows, stable
+            # MachineGuid - généré à l'installation de Windows, stable
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                                  r"SOFTWARE\Microsoft\Cryptography")
             machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
@@ -296,7 +296,7 @@ def get_machine_id() -> str:
 
         try:
             import winreg
-            # ProductId — lié à la licence Windows, résiste au renommage utilisateur/PC
+            # ProductId - lié à la licence Windows, résiste au renommage utilisateur/PC
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                                  r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
             product_id, _ = winreg.QueryValueEx(key, "ProductId")
@@ -482,7 +482,7 @@ def check_exe_integrity() -> bool:
             print("Hash exe ne correspond pas - fichier modifie")
             return False
 
-        # Hash OK — la signature est une verification supplementaire (non bloquante)
+        # Hash OK - la signature est une verification supplementaire (non bloquante)
         if signature and _VERIFY_AVAILABLE:
             if not _verify_signature(expected_hash.encode(), signature):
                 print("Avertissement: verification signature Ed25519 echouee (hash OK)")
@@ -645,7 +645,7 @@ def verify_license_cached() -> LicenseResult:
     démarrage : sur un réseau sans Internet (lien direct vers le node, Wi-Fi
     de salle), le test de connexion et le DNS peuvent dépasser le délai du
     splash. Conclure alors « non activé » refusait l'app à un client licencié
-    hors-ligne (client Alexander, Mac, 05/10/2026) — le délai de grâce de
+    hors-ligne (client Alexander, Mac, 05/10/2026) - le délai de grâce de
     7 jours n'était jamais atteint.
     """
     try:
@@ -667,7 +667,7 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
 
         # Test de connectivité rapide (1.5s max) avant d'essayer Firebase
         if not fc.has_internet():
-            print("Pas de connexion internet — mode hors-ligne immédiat")
+            print("Pas de connexion internet - mode hors-ligne immédiat")
             return _offline_fallback(account)
 
         token_data = fc.refresh_id_token(account["refresh_token"])
@@ -826,7 +826,7 @@ def _offline_fallback(account: dict) -> LicenseResult:
             return _result_not_activated()
 
     cached_expiry = account.get("cached_expiry_utc", 0)
-    print(f"Mode hors-ligne ({days_offline}j) — {cached_plan}")
+    print(f"Mode hors-ligne ({days_offline}j) - {cached_plan}")
     return _result_offline(cached_plan, cached_expiry, days_offline, auto_renew=cached_auto_renew)
 
 
@@ -834,7 +834,7 @@ def _offline_fallback(account: dict) -> LicenseResult:
 # ACTIONS COMPTE (login, register, logout)
 # ============================================================
 
-# Résultat construit lors du dernier login réussi — utilisé par _on_activation_success
+# Résultat construit lors du dernier login réussi - utilisé par _on_activation_success
 _pending_login_result: "LicenseResult | None" = None
 
 
@@ -881,7 +881,7 @@ def _finish_login(auth: dict, email: str, machine_id: str) -> tuple[bool, str]:
     uid = auth["uid"]
     id_token = auth["id_token"]
     refresh_token = auth["refresh_token"]
-    print(f"[LOGIN] sign_in OK — uid={uid}")
+    print(f"[LOGIN] sign_in OK - uid={uid}")
 
     # Verifier que le document de licence existe
     doc = fc.get_license_doc(uid, id_token)
@@ -1182,7 +1182,7 @@ def _get_fresh_token() -> str | None:
         # Ne jamais échouer en silence : un None ici est indiscernable d'un
         # « pas connecté », alors qu'il peut venir du réseau (erreur SSL
         # derrière un antivirus). L'appelant repart sans jeton et Firestore
-        # répond 403 — l'utilisateur voit « Erreur Firestore » et personne ne
+        # répond 403 - l'utilisateur voit « Erreur Firestore » et personne ne
         # remonte à la vraie cause (remontée du 12/08/2026).
         print(f"[TOKEN] rafraichissement impossible : {e}")
         return None

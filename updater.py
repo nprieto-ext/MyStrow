@@ -37,7 +37,7 @@ from i18n import tr
 
 # === SSL ===
 def _make_ssl_context():
-    """Contexte SSL de l'updater — délégué à core.make_ssl_context().
+    """Contexte SSL de l'updater - délégué à core.make_ssl_context().
 
     L'implémentation vivait ici, et c'est précisément le problème qu'elle a
     causé : les autres clients réseau (licence, Brevo, tutoriels) ont continué
@@ -95,12 +95,12 @@ def version_gt(remote, local):
 class _SplashTitle(QWidget):
     """Titre « MYSTROW » bicolore, centré au pixel près.
 
-    Historique de ce petit widget — deux tentatives ratées avant lui :
+    Historique de ce petit widget - deux tentatives ratées avant lui :
       1. deux QLabel côte à côte : décalés dès que la police de repli n'avait
          pas les mêmes métriques d'une plateforme à l'autre ;
       2. un QLabel unique en texte riche : sur macOS, Qt passe alors par un
          QTextDocument qui se centre sur SA largeur idéale, pas sur celle du
-         label — le titre partait ~20 px à gauche du logo et de la version.
+         label - le titre partait ~20 px à gauche du logo et de la version.
 
     On mesure donc le texte nous-mêmes et on le peint. Aucune dépendance à la
     résolution de police ni au moteur de texte riche : même rendu partout.
@@ -269,7 +269,7 @@ class SplashScreen(QWidget):
         Les libellés sont volontairement courts (« Art-Net · 2.0.0.15 ») pour
         tenir dans la largeur fixe du splash ; cette élision n'est qu'un
         garde-fou, pour un port ou une IP inhabituellement longs. On coupe au
-        milieu — le début (le type de sortie) et la fin (l'état) sont les deux
+        milieu - le début (le type de sortie) et la fin (l'état) sont les deux
         parties utiles. Le détail complet reste en infobulle.
         """
         valeur = row["value"]
@@ -347,7 +347,7 @@ class UpdateChecker(QThread):
 
     def _get_latest_version_redirect(self):
         """Récupère la dernière version via la redirection GitHub releases/latest.
-        Pas de rate limiting — aucun token requis.
+        Pas de rate limiting - aucun token requis.
         Retourne None en cas d'échec (fallback vers l'API dans run())."""
         try:
             req = urllib.request.Request(
@@ -536,7 +536,7 @@ class UpdateChecker(QThread):
 # UPDATE BAR
 # ============================================================
 class UpdateBar(QWidget):
-    """Barre de notification mise a jour — meme style que LicenseBanner."""
+    """Barre de notification mise a jour - meme style que LicenseBanner."""
 
     later_clicked  = Signal()
     update_clicked = Signal()
@@ -617,12 +617,12 @@ class UpdateBar(QWidget):
 # DOWNLOAD + INSTALL
 # ============================================================
 class _UpdateDialog(QDialog):
-    """Fenetre de telechargement — volontairement impossible a fermer par megarde.
+    """Fenetre de telechargement - volontairement impossible a fermer par megarde.
 
     Le telechargement tourne dans le THREAD PRINCIPAL (boucle read() +
     processEvents) : la fenetre est le seul retour visuel, et rien ne reprend
     la main si elle disparait. Sur macOS un simple clic a cote suffisait a la
-    faire passer derriere la fenetre principale — de l'avis de l'utilisateur,
+    faire passer derriere la fenetre principale - de l'avis de l'utilisateur,
     la mise a jour etait « perdue ».
 
     D'ou : modale applicative (les clics exterieurs ne l'atteignent plus),
@@ -677,7 +677,7 @@ def _open_download_target(update_dir, filename):
     denied) et AUCUNE mise a jour ne passe plus tant qu'il traine. On bascule
     dans ce cas sur un nom horodate au lieu d'echouer.
 
-    Retourne (handle, chemin, occupe) — occupe=True si le nom canonique etait
+    Retourne (handle, chemin, occupe) - occupe=True si le nom canonique etait
     verrouille, ce qui signale un installeur deja en cours."""
     target = update_dir / filename
     try:
@@ -913,7 +913,7 @@ def download_update(parent, version, exe_url, hash_url, sig_url=""):
         )
     elif is_installer:
         # L'installeur deploie MyStrow.exe ET MyStrow.exe.sig, mais il ne doit
-        # surtout PAS demarrer avant que MyStrow soit sorti — voir
+        # surtout PAS demarrer avant que MyStrow soit sorti - voir
         # _create_installer_batch pour ce que ca cassait.
         _bat = _create_installer_batch(str(new_file), os.getpid(),
                                        _langue_installeur())
@@ -963,7 +963,7 @@ def _confirmer_fermeture(parent, version) -> bool:
 
     Deux choses se jouent ici. D'abord l'accord : quelqu'un peut avoir lance la
     verification en plein show sans imaginer que l'installation ferme la
-    console. Ensuite le show en cours — la question « enregistrer avant de
+    console. Ensuite le show en cours - la question « enregistrer avant de
     quitter ? » de `closeEvent` ne peut PAS servir a ce moment-la : elle
     arriverait pendant que l'installeur attend derriere, et une fenetre modale
     oubliee suffit a bloquer toute la mise a jour. On la pose donc maintenant,
@@ -1181,7 +1181,7 @@ class AboutDialog(QDialog):
         btns_lay = QHBoxLayout()
         btns_lay.setSpacing(8)
 
-        # Page de telechargement du site — un vrai bouton, pas un lien : c'est
+        # Page de telechargement du site - un vrai bouton, pas un lien : c'est
         # le recours quand la mise a jour automatique ne peut pas aboutir
         # (integrite, droits, antivirus), et « A propos » est l'ecran ou
         # l'utilisateur vient chercher sa version, donc celui ou il doit
@@ -1301,7 +1301,7 @@ class AboutDialog(QDialog):
 
 
 # ============================================================
-# GEAR DIALOG — Matériel recommandé
+# GEAR DIALOG - Matériel recommandé
 # ============================================================
 # Fiche produit de la fenêtre « Matériel recommandé ».
 #
@@ -1314,24 +1314,24 @@ class AboutDialog(QDialog):
 #             personne ne l'emprunte, et c'est voulu : un fichier embarqué doit
 #             être déclaré dans les QUATRE configurations de build
 #             (MyStrow.spec, release.py, .github/workflows/release.yml,
-#             build_intel_mac.sh) — en oublier une donne une photo absente sur
-#             cette plateforme-là uniquement — et il fallait publier une
+#             build_intel_mac.sh) - en oublier une donne une photo absente sur
+#             cette plateforme-là uniquement - et il fallait publier une
 #             version pour changer une image. Les deux photos de contrôleurs
 #             qui passaient par là pesaient 1,07 Mo dans l'installeur.
 # `bandeau` : la ligne de positionnement, reprise de boutique.html pour que le
 #             site et le logiciel racontent la même chose. C'est aussi là que
-#             va le prix — et SEULEMENT quand il est stable. Les liens Amazon
+#             va le prix - et SEULEMENT quand il est stable. Les liens Amazon
 #             bougent en permanence : un tarif figé dans un exe installé serait
 #             faux la semaine suivante. Les ordres de grandeur des autres
 #             modèles vivent dans les tableaux de compatibilité, plus bas.
 _GEAR_IMG  = "https://mystrow.fr/img-interfaces/"
 # ⚠️ /img-shop/ et NON /shop/ : /shop est l'URL de la page boutique (une
-# réécriture), pas un dossier — /shop/<fichier> répond 500.
+# réécriture), pas un dossier - /shop/<fichier> répond 500.
 _GEAR_SHOP = "https://mystrow.fr/img-shop/"
 
 # Cache des photos produit. Une photo téléchargée une fois n'est plus jamais
 # redemandée : la fenêtre s'ouvre instantanément aux visites suivantes, et elle
-# reste illustrée hors ligne. Le nom du fichier est un hachage de l'URL —
+# reste illustrée hors ligne. Le nom du fichier est un hachage de l'URL -
 # changer la photo sur le site change l'URL de fait (nouveau contenu, même nom)
 # … donc on garde AUSSI la date : au-delà d'une semaine on revalide.
 _GEAR_CACHE_DIR = Path.home() / ".mystrow_cache" / "materiel"
@@ -1353,12 +1353,12 @@ def _gear_cache_perime(chemin: Path) -> bool:
 
 # Téléchargements en vol. Le thread n'est PAS rattaché à la fenêtre et n'est
 # pas attendu à la fermeture : fermer pendant le téléchargement détruisait un
-# QThread encore en train de tourner — « QThread: Destroyed while thread is
+# QThread encore en train de tourner - « QThread: Destroyed while thread is
 # still running », c'est-à-dire un process qui tombe. Attendre à la place
 # figeait la fermeture le temps de rapatrier un mégaoctet. Le thread vit donc
 # sa vie ici, écrit le cache pour la prochaine fois, et se retire de la liste
 # en finissant. Si la fenêtre est partie entre-temps, Qt a déjà coupé la
-# connexion vers son slot — il n'y a personne à prévenir, et c'est très bien.
+# connexion vers son slot - il n'y a personne à prévenir, et c'est très bien.
 _GEAR_LOADERS = []
 
 
@@ -1367,7 +1367,7 @@ class _GearImageLoader(QThread):
 
     Le signal ne porte que l'URL : c'est le thread qui écrit le fichier de
     cache, et la fenêtre le relit. Ainsi un téléchargement terminé après la
-    fermeture profite quand même à la prochaine ouverture — et on ne fabrique
+    fermeture profite quand même à la prochaine ouverture - et on ne fabrique
     aucun QPixmap hors du fil graphique, ce qui n'est pas permis.
     """
 
@@ -1418,8 +1418,8 @@ _GEAR = [
         "url": "https://amzn.to/4tQKRCM",
         "couleur": "#00d4ff", "fond": "#1a1a1a",
         "img_url": _GEAR_IMG + "ec-node.webp",
-        # Les trois bandeaux disent désormais la même chose — le nombre
-        # d'univers — pour que la rangée se compare d'un coup d'œil. Ils
+        # Les trois bandeaux disent désormais la même chose - le nombre
+        # d'univers - pour que la rangée se compare d'un coup d'œil. Ils
         # parlaient chacun d'un axe différent (usage, recommandation,
         # capacité), donc de rien de comparable.
         "bandeau": "gear_b_1univ", "prix": "~59 €",
@@ -1447,7 +1447,7 @@ _GEAR_PACK = {
     "url_1a": "https://www.amazon.fr/dp/B0HK5539BK",
 }
 
-# Contrôleurs recommandés — à choisir en mode "OU" (un seul suffit)
+# Contrôleurs recommandés - à choisir en mode "OU" (un seul suffit)
 _GEAR_CONTROLLERS = [
     _GEAR[0],
     {
@@ -1512,7 +1512,7 @@ class GearDialog(QDialog):
                                font-family: 'Segoe UI', sans-serif; }
             QLabel  { border: none; background: transparent; }
         """)
-        # {url: [QLabel, …]} — les vignettes qui attendent leur téléchargement.
+        # {url: [QLabel, …]} - les vignettes qui attendent leur téléchargement.
         self._img_attente = {}
         self._img_loader = None
         self._build_ui()
@@ -1561,7 +1561,7 @@ class GearDialog(QDialog):
     def _carte_produit(self, produit):
         """Une carte de la fenêtre matériel : bandeau, photo, nom, desc, CTA.
 
-        Les deux rangées — contrôleurs et sortie DMX — en construisaient chacune
+        Les deux rangées - contrôleurs et sortie DMX - en construisaient chacune
         une version, à cinquante lignes près identiques. Elles avaient déjà
         divergé : seule celle des contrôleurs affichait la photo, celle du DMX
         se contentait d'un emoji alors que les photos des boîtiers existaient.
@@ -1571,7 +1571,7 @@ class GearDialog(QDialog):
         # l'import : les listes `_GEAR*` sont construites au chargement du
         # module, donc un tr() posé là-bas figerait la langue du démarrage et
         # la fenêtre resterait dans l'ancienne langue après un changement.
-        # Le nom du produit, lui, ne se traduit pas — « AKAI APC mini mk2 »
+        # Le nom du produit, lui, ne se traduit pas - « AKAI APC mini mk2 »
         # s'écrit pareil partout, c'est ce qui est imprimé sur le boîtier.
         emoji   = produit["emoji"]
         name    = produit["nom"]
@@ -1585,7 +1585,7 @@ class GearDialog(QDialog):
 
         # Bordure teintée en rgba() et non en « #RRGGBB + 55 » : Qt ne lit pas
         # le canal alpha collé derrière un hexa à six chiffres, il relit les
-        # huit comme du #AARRGGBB — d'où les liserés ROUGES qu'affichaient les
+        # huit comme du #AARRGGBB - d'où les liserés ROUGES qu'affichaient les
         # cartes contrôleur (#E2CE16 + 55 se relisait en CE1655).
         _c = QColor(color)
         _bord = f"rgba({_c.red()},{_c.green()},{_c.blue()},0.34)"
@@ -1598,7 +1598,7 @@ class GearDialog(QDialog):
         card_lay.setContentsMargins(16, 12, 16, 14)
         card_lay.setSpacing(8)
 
-        # Bandeau de positionnement, comme sur boutique.html — le prix s'y
+        # Bandeau de positionnement, comme sur boutique.html - le prix s'y
         # accroche derrière un point médian, même forme que « 4 univers · 129 € »
         # sur le site. Le tilde n'est pas décoratif : ce sont des liens
         # affiliés Amazon, dont le tarif bouge d'une semaine à l'autre alors
@@ -1670,7 +1670,7 @@ class GearDialog(QDialog):
             em.setFont(QFont("Segoe UI", 22))
         card_lay.addWidget(em)
 
-        ds = QLabel(desc.replace("\n", " — "))
+        ds = QLabel(desc.replace("\n", " - "))
         ds.setFont(QFont("Segoe UI", 7))
         ds.setStyleSheet("color: #666; background: transparent; border: none;")
         ds.setAlignment(Qt.AlignCenter)
@@ -1952,7 +1952,7 @@ class GearDialog(QDialog):
                     price_lbl.setFont(QFont("Segoe UI", 8, QFont.Bold))
                     # rgba() et non « {color}99 » : Qt relit un hexa à huit
                     # chiffres comme du #AARRGGBB, donc la couleur changeait au
-                    # lieu de s'atténuer — même piège que la bordure des cartes.
+                    # lieu de s'atténuer - même piège que la bordure des cartes.
                     _pc = QColor(color)
                     price_lbl.setStyleSheet(
                         f"color: rgba({_pc.red()},{_pc.green()},{_pc.blue()},0.60);"
@@ -2184,7 +2184,7 @@ def _create_installer_batch(installer_path, pid, langue="english"):
     meme l'installeur, /CLOSEAPPLICATIONS servant alors de dernier recours.
 
     `/LANG` est indispensable : sans lui, Setup choisit sa langue tout seul et
-    un francais se retrouvait avec les messages d'Inno en anglais — a commencer
+    un francais se retrouvait avec les messages d'Inno en anglais - a commencer
     par celui, justement, des applications encore ouvertes.
     """
     batch_path = Path(tempfile.gettempdir()) / "mystrow_update" / "run_installer.bat"

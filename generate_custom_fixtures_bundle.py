@@ -1,5 +1,5 @@
 """
-Génère fixtures_bundle_custom.json.gz — les fixtures de la bibliothèque MyStrow
+Génère fixtures_bundle_custom.json.gz - les fixtures de la bibliothèque MyStrow
 (collection Firestore `gdtf_fixtures`), embarquées dans l'application.
 
 Existait en trois exemplaires divergents : un heredoc PowerShell dans le job
@@ -11,7 +11,7 @@ fixtures ajoutées depuis l'admin panel.
 `gdtf_fixtures` est en **lecture publique** (firestore.rules : `allow read: if
 true`), au même titre que `controller_profiles` : aucun identifiant n'est
 nécessaire. Le job Windows exigeait pourtant deux secrets et, s'ils manquaient,
-écrivait un bundle VIDE sans faire échouer le build — une release amputée de
+écrivait un bundle VIDE sans faire échouer le build - une release amputée de
 toute la bibliothèque, sans le moindre signal.
 
 Usage :  python generate_custom_fixtures_bundle.py [chemin_de_sortie]
@@ -40,7 +40,7 @@ def build(out_path=OUT_FILE, token=None):
         import firebase_client as fc
         fixtures = fc.fetch_all_gdtf_fixtures(token)
     except Exception as e:
-        print(f"AVERTISSEMENT: lecture de gdtf_fixtures échouée ({e}) — bundle vide généré.")
+        print(f"AVERTISSEMENT: lecture de gdtf_fixtures échouée ({e}) - bundle vide généré.")
         _write([], out_path)
         return 0
 

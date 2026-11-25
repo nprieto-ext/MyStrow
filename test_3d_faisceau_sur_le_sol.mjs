@@ -70,7 +70,7 @@ function cas(p) {
   if (ecart > pireEcartRayon) pireEcartRayon = ecart;
 
   // B. arrivée NETTE seulement sur le plancher dessiné ; ailleurs (faisceau
-  //    tourné vers la salle — FAISCEAUCOUPE.png, 24/09/2026) il continue
+  //    tourné vers la salle - FAISCEAUCOUPE.png, 24/09/2026) il continue
   //    mais son extrémité s'éteint. Et jamais au-delà du fond de scène.
   const surPlancher = bf.fy < 0.03 + 1e-6
       && bf.fx >= FLOOR_X0 - 1e-6 && bf.fx <= FLOOR_X1 + 1e-6
@@ -91,7 +91,7 @@ function cas(p) {
   return bf;
 }
 
-// `isMH` se décide sur `fixture_type === 'Moving Head'` — et sur rien d'autre.
+// `isMH` se décide sur `fixture_type === 'Moving Head'` - et sur rien d'autre.
 // Une lyre patchée « Lyre Spot » passe donc par la branche PAR : les deux
 // branches doivent tenir les mêmes invariants, c'est pourquoi on balaye les
 // deux ici.
@@ -144,8 +144,8 @@ verifie('longueur continue (pas de saut au franchissement)', pireSautY < 0.5,
 
 // ── La tache au sol suit le cône ─────────────────────────────────────────────
 //
-// Elle avait sa propre formule — (0.35 + 2.2*lvl) * bs * (wash ? 1.6 : 1) *
-// _angF — qui ignorait `_zoomF` et prenait 1.6 là où le cône prend 1.9 pour un
+// Elle avait sa propre formule - (0.35 + 2.2*lvl) * bs * (wash ? 1.6 : 1) *
+// _angF - qui ignorait `_zoomF` et prenait 1.6 là où le cône prend 1.9 pour un
 // wash. Mesuré sur le profil des deux shaders : tache 2,03× trop LARGE à zoom
 // mini, 0,29× (donc trop étroite) à zoom maxi. Dérivée de `base_r`, elle suit
 // le cône partout.
@@ -163,7 +163,7 @@ verifie('tache, gobo et prisme partagent le même poolR',
         && /^\s*poolR,\s*$/m.test(html),
         'poseFloorPool(obj.pool…poolR) · goboScaleFor(base_r, poolR) · _fx { poolR }');
 // Le halo est la pénombre autour de la tache, pas une nappe : à 2.8 un spot à
-// 7 m posait un disque de 14 m sur un plateau de 18 — c'est LUI qui faisait
+// 7 m posait un disque de 14 m sur un plateau de 18 - c'est LUI qui faisait
 // « la tache est plus large que le faisceau ».
 const halo = html.match(/poseFloorPool\(obj\.halo,[^)]*poolR \* ([\d.]+)\)/);
 verifie('le halo au sol reste une pénombre', !!halo && parseFloat(halo[1]) <= 2.0,

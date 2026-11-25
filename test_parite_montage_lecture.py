@@ -21,7 +21,7 @@ def src(nom):
 
 
 class AmplitudePanTilt(unittest.TestCase):
-    """Ecart 1 — l'amplitude des couches Pan/Tilt, x4 en 3.1.91.
+    """Ecart 1 - l'amplitude des couches Pan/Tilt, x4 en 3.1.91.
 
     3.1.91 avait porte le facteur de 8192 a 32768 : tout show monte avant
     balayait d'un coup 4x plus large que ce qui avait ete valide. Les 5 sites
@@ -34,9 +34,9 @@ class AmplitudePanTilt(unittest.TestCase):
     def _facteurs(self, nom):
         """Les facteurs du CODE, commentaires exclus.
 
-        Les commentaires citent l'expression exacte — c'est voulu, ils
+        Les commentaires citent l'expression exacte - c'est voulu, ils
         expliquent pourquoi elle ne bouge pas et renvoient d'un moteur a
-        l'autre — et les compter faisait echouer ce test a la premiere phrase
+        l'autre - et les compter faisait echouer ce test a la premiere phrase
         ajoutee (vu le 11/09/2026, en documentant le plafond AMP a 400).
         """
         code = '\n'.join(l for l in src(nom).splitlines()
@@ -60,7 +60,7 @@ class AmplitudePanTilt(unittest.TestCase):
 
 
 class VitesseDuClipDEffet(unittest.TestCase):
-    """Ecart 2 — la VIT du clip, ignoree au montage et appliquee en lecture.
+    """Ecart 2 - la VIT du clip, ignoree au montage et appliquee en lecture.
 
     `'speed_override': 50` etait ecrit en dur dans l'apercu pendant que la
     restitution lisait `effect_speed`. Consequence vue par le client : le
@@ -99,12 +99,12 @@ class VitesseDuClipDEffet(unittest.TestCase):
 
 
 class OrdreDesPistes(unittest.TestCase):
-    """Ecart 3 — priorite « piste projecteur > piste de groupe ».
+    """Ecart 3 - priorite « piste projecteur > piste de groupe ».
 
     La restitution trie pour que les pistes « un projecteur seul » soient
     ecrites en DERNIER (le rig repart d'une page blanche a chaque frame : la
     derniere piste ecrite gagne). L'apercu, lui, iterait les pistes dans
-    l'ordre d'affichage — identique tant que les pistes projecteur avaient ete
+    l'ordre d'affichage - identique tant que les pistes projecteur avaient ete
     creees en dernier, divergent des qu'une piste de groupe etait ajoutee
     apres elles.
     """

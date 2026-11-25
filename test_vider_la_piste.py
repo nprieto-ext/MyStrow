@@ -1,5 +1,5 @@
 """
-test_vider_la_piste.py — « Vider la piste » au clic droit (REC Lumiere).
+test_vider_la_piste.py - « Vider la piste » au clic droit (REC Lumiere).
 
 Demande apres le bug de la generation IA : une piste remplie par erreur ne se
 vidait qu'au lasso + Suppr, geste qui rate tout ce qui est hors de l'ecran.

@@ -1,5 +1,5 @@
 """
-node_connection.py — Paramétrer la sortie Node DMX
+node_connection.py - Paramétrer la sortie Node DMX
 Détecte et corrige automatiquement les problèmes de connexion Art-Net.
 Tous les boîtiers ElectroConcept sont sur 2.0.0.15.
 """
@@ -180,7 +180,7 @@ def _journaliser_scan(adapters):
 
 
 def _get_ethernet_adapters():
-    """Retourne [(nom, ip, description, connected)] — Windows et Mac."""
+    """Retourne [(nom, ip, description, connected)] - Windows et Mac."""
     for k in _DERNIER_SCAN:
         _DERNIER_SCAN[k] = None
     if platform.system() == "Darwin":
@@ -200,7 +200,7 @@ def _get_ethernet_adapters():
         # `ipconfig` ne montre que les interfaces qui ont une pile IP : une
         # carte dont TCP/IPv4 est décoché, ou qui vient d'énumérer et n'a pas
         # encore d'adresse, en est absente. Or « aucune carte » envoie le
-        # client vérifier un câble qui n'a rien — et sur un USB NODE il n'y a
+        # client vérifier un câble qui n'a rien - et sur un USB NODE il n'y a
         # même pas de câble réseau à vérifier. La couche pilote, elle, la voit.
         adapters = _get_adapters_via_driver()
         _DERNIER_SCAN["pilote"] = [a[0] for a in adapters]
@@ -219,7 +219,7 @@ def _get_ethernet_adapters():
 def _get_adapters_via_socket():
     """Cartes déduites des seules adresses locales, sans sous-processus.
 
-    On ne peut pas connaître le NOM Windows des interfaces par ce biais — mais
+    On ne peut pas connaître le NOM Windows des interfaces par ce biais - mais
     ce n'est pas ce qui compte ici : ce que le parcours doit savoir, c'est
     qu'une carte porte une adresse en 2.x, et laquelle. Le nom ne sert qu'à
     poser une IP statique, étape inutile quand l'adresse est déjà bonne.
@@ -252,7 +252,7 @@ def _get_adapters_via_socket():
 def _get_adapters_via_driver():
     """Cartes vues au niveau PILOTE, sans passer par la configuration IP.
 
-    Repli de `ipconfig` : renvoie la même forme, avec une IP vide — ce qui
+    Repli de `ipconfig` : renvoie la même forme, avec une IP vide - ce qui
     permet de dire « carte trouvée, mais sans adresse IPv4 » au lieu de nier
     son existence.
     """
@@ -342,7 +342,7 @@ def _get_ethernet_adapters_windows():
     if not adapters and (r.stdout or "").strip():
         # La commande a répondu, mais le parseur n'y a rien reconnu : locale
         # inattendue, ou sortie tronquée. C'est un bug chez nous, pas un câble
-        # chez le client — encore faut-il pouvoir le dire.
+        # chez le client - encore faut-il pouvoir le dire.
         _DERNIER_SCAN["err_ipconfig"] = (
             f"sortie non reconnue ({len(r.stdout.splitlines())} lignes)")
     return adapters
@@ -351,7 +351,7 @@ def _get_ethernet_adapters_windows():
 def _mac_hardware_ports():
     """Associe chaque interface BSD macOS à son nom lisible.
 
-    `ifconfig` ne connaît que en0, en1, en5… — des noms qui ne disent rien à
+    `ifconfig` ne connaît que en0, en1, en5… - des noms qui ne disent rien à
     l'utilisateur, et qui se ressemblent tous. `networksetup` donne le libellé
     du Réglage Système correspondant (« Wi-Fi », « Ethernet Thunderbolt »…).
     Retourne {"en0": "Wi-Fi", ...}, vide si la commande échoue.
@@ -584,7 +584,7 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
 
     Ne dit PAS « un node existe » mais « un node est à CETTE adresse ». La
     nuance a coûté cher : l'ArtPoll étant diffusé, accepter la première réponse
-    venue faisait valider `2.0.0.15` par un boîtier resté sur `2.0.0.1` — donc
+    venue faisait valider `2.0.0.15` par un boîtier resté sur `2.0.0.1` - donc
     « boîtier configuré ✓ » suivi d'un silence total sur la ligne DMX, MyStrow
     envoyant ses trames en unicast vers une adresse où personne n'écoute.
 
@@ -665,7 +665,7 @@ def _open_network_connections():
 
 
 # ============================================================
-# WORKER — tourne tous les checks en arrière-plan
+# WORKER - tourne tous les checks en arrière-plan
 # ============================================================
 
 class _DiagWorker(QThread):
@@ -786,7 +786,7 @@ _C_DIM  = "#555555"
 
 
 class NodeConnectionDialog(QDialog):
-    """Paramétrer la sortie Node DMX — détection et correction automatique."""
+    """Paramétrer la sortie Node DMX - détection et correction automatique."""
 
     def __init__(self, parent=None, target_ip: str = TARGET_IP):
         super().__init__(parent)
@@ -1075,7 +1075,7 @@ class NodeConnectionDialog(QDialog):
 
 
 # ============================================================
-# WIZARD — Configuration réseau pas à pas
+# WIZARD - Configuration réseau pas à pas
 # ============================================================
 
 _BTN_PRIMARY = """
@@ -1155,11 +1155,11 @@ class _NetworkSetup(QThread):
 
 
 def _ip_node_a_viser(dmx=None, timeout: float = 1.2) -> str:
-    """L'adresse à laquelle parler au boîtier — DÉCOUVERTE, pas supposée.
+    """L'adresse à laquelle parler au boîtier - DÉCOUVERTE, pas supposée.
 
     `TARGET_IP` n'est qu'un défaut historique : les boîtiers ne sortent pas
     tous d'usine à cette adresse, et rien n'oblige à les y déplacer. Viser une
-    constante quand le node est ailleurs, c'est émettre dans le vide — voyant
+    constante quand le node est ailleurs, c'est émettre dans le vide - voyant
     DMX éteint, projecteurs muets, et aucun message d'erreur puisque l'UDP ne
     se plaint jamais.
 
@@ -1186,13 +1186,13 @@ def _pointer_mystrow_sur(ip: str, dmx=None, usb_node: bool = False) -> bool:
     """Fait émettre MyStrow vers `ip` en Art-Net.
 
     On règle l'ÉMETTEUR, jamais le boîtier : ce modèle n'expose aucun moyen
-    standard de se laisser reprogrammer, et rien ne l'exige — l'Art-Net n'a
+    standard de se laisser reprogrammer, et rien ne l'exige - l'Art-Net n'a
     pas de notion d'adresse autorisée, le node exécute ce qu'il reçoit.
 
     ⚠️ `dmx` doit être passé explicitement. Le repli par `sys.modules` cherche
     un attribut `_dmx_instance` que SEUL le diagnostic injecte : appelé depuis
     l'assistant, il ne trouvait rien et renvoyait False sans bruit. L'écran
-    affichait « Connexion établie » pendant que la sortie restait sur l'USB —
+    affichait « Connexion établie » pendant que la sortie restait sur l'USB -
     un faux succès, le pire des retours.
     """
     from artnet_dmx import TRANSPORT_ARTNET
@@ -1256,7 +1256,7 @@ def _retenir(th):
     ⚠️ Un QThread détruit pendant qu'il tourne fait AVORTER le processus (Qt 6 :
     qFatal « QThread: Destroyed while thread is still running »). Or nos fils
     réseau vivaient sur la fenêtre qui les lançait : la fermer pendant une
-    détection — longue sur un Mac sans DNS, en lien direct avec le node —
+    détection - longue sur un Mac sans DNS, en lien direct avec le node -
     faisait planter toute l'app (piste du client Alexander, 05/10/2026).
     On purge à chaque appel ceux qui ont fini : pas besoin de signal de fin,
     que plusieurs de ces classes masquent d'ailleurs (`finished = Signal(bool)`).
@@ -1273,7 +1273,7 @@ _RE_IPV4 = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
 
 
 def _ip_saisie(texte: str) -> str:
-    """L'IPv4 contenue dans `texte` (« 2.0.0.15 — Node 4 » → « 2.0.0.15 »),
+    """L'IPv4 contenue dans `texte` (« 2.0.0.15 - Node 4 » → « 2.0.0.15 »),
     ou "" si elle est absente ou invalide."""
     m = _RE_IPV4.search(texte or "")
     if not m:
@@ -1289,7 +1289,7 @@ def _ip_saisie(texte: str) -> str:
 
 
 class _NodeLister(QThread):
-    """Liste TOUS les nodes Art-Net qui répondent — pour laisser l'utilisateur
+    """Liste TOUS les nodes Art-Net qui répondent - pour laisser l'utilisateur
     choisir. Prendre « le premier qui répond » choisissait au hasard sur un
     réseau à plusieurs appareils Art-Net (client Alexander, 05/10/2026)."""
     done = Signal(list)
@@ -1304,7 +1304,7 @@ class _NodeLister(QThread):
 
 
 class _QuickDetector(QThread):
-    """Le boîtier est-il là ? — et surtout : à QUELLE adresse.
+    """Le boîtier est-il là ? - et surtout : à QUELLE adresse.
 
     ⚠️ Sondait `TARGET_IP` uniquement. Un boîtier resté à son adresse d'usine
     était donc annoncé « non connecté » alors qu'il pilotait le spectacle,
@@ -1334,7 +1334,7 @@ class _QuickDetector(QThread):
 
 
 class NodeWiringAnim(QWidget):
-    """Le branchement du boîtier, joué en boucle — dessiné, pas filmé.
+    """Le branchement du boîtier, joué en boucle - dessiné, pas filmé.
 
     La page « Branchons le boîtier » décrivait DEUX câbles : un RJ45 pour les
     données, un USB pour l'alimentation. C'est vrai du NODE 1 (face `NET` +
@@ -1343,7 +1343,7 @@ class NodeWiringAnim(QWidget):
     ce modèle-là cherchait un câble réseau qui n'existe pas sur son boîtier.
 
     D'où deux variantes, choisies par l'utilisateur d'après ce qu'il voit sur
-    la face de son boîtier — la seule question à laquelle il peut répondre sans
+    la face de son boîtier - la seule question à laquelle il peut répondre sans
     rien connaître :
       • `rj45` : deux prises, deux câbles, deux rôles ;
       • `usb`  : une prise, un câble, les deux rôles à la fois.
@@ -1427,7 +1427,7 @@ class NodeWiringAnim(QWidget):
         t = self._t
         # Deux temps seulement : le câble entre (0 → 35 %), puis il est en place
         # et le boîtier est alimenté (35 % → fin). Il y avait un troisième temps
-        # `vie`, qui ne démarrait qu'à 50 % — l'alimentation semblait arriver un
+        # `vie`, qui ne démarrait qu'à 50 % - l'alimentation semblait arriver un
         # instant APRÈS le branchement, alors que c'est le branchement qui la
         # donne. Le voyant part maintenant à la seconde où la fiche s'engage.
         avance  = self._amorti(t / 0.35) if t < 0.35 else 1.0
@@ -1442,7 +1442,7 @@ class NodeWiringAnim(QWidget):
         """Créneau 0/1 pour un voyant qui clignote, depuis l'instant `depuis`.
 
         Un sinus donnait une respiration, pas un clignotement : l'œil y lit
-        « ça pulse ». Il faut un créneau — allumé net, éteint net — avec juste
+        « ça pulse ». Il faut un créneau - allumé net, éteint net - avec juste
         assez d'adoucissement sur les fronts pour ne pas scintiller.
         """
         u = self._t - depuis
@@ -1458,7 +1458,7 @@ class NodeWiringAnim(QWidget):
     # ── le boîtier ────────────────────────────────────────────
 
     def _dessiner_corps(self, p):
-        """Corps alu extrudé, dessus nervuré — la signature des ElectroConcept.
+        """Corps alu extrudé, dessus nervuré - la signature des ElectroConcept.
 
         C'est aux nervures qu'on reconnaît ces boîtiers sur les photos du
         guide, avant même de lire la sérigraphie. Sans elles on dessine « une
@@ -1535,7 +1535,7 @@ class NodeWiringAnim(QWidget):
         # ne parlait pas du sien.
         # POWER clignote en vert dès que la fiche est engagée : c'est le retour
         # que l'utilisateur doit aller chercher des yeux sur son propre boîtier
-        # pour savoir que le branchement a pris. CPU reste fixe à côté — deux
+        # pour savoir que le branchement a pris. CPU reste fixe à côté - deux
         # voyants qui clignotent ensemble ne signalent plus rien.
         power = self._clignote(0.35, 7.0) if branche else 0.0
         if self._variant == "usb":
@@ -1559,7 +1559,7 @@ class NodeWiringAnim(QWidget):
             p.setPen(QColor("#8a8a92"))
             p.drawText(QRectF(x, y + h - 16, w, 9), Qt.AlignCenter, "ELECTROCONCEPT")
         else:
-            # Les deux prises CÔTE À CÔTE, comme sur la face du vrai boîtier —
+            # Les deux prises CÔTE À CÔTE, comme sur la face du vrai boîtier -
             # empilées l'une sur l'autre, elles suggéraient un agencement qui
             # n'existe pas.
             self._marque_ce(p, x + 12, y + 12)
@@ -1592,7 +1592,7 @@ class NodeWiringAnim(QWidget):
     def _led(self, p, cx, cy, intensite, teinte, libelle):
         """Voyant de la plaque. `intensite` : 0 éteint, 1 allumé à fond.
 
-        L'appelant décide du régime — fixe ou clignotant — plutôt que le voyant
+        L'appelant décide du régime - fixe ou clignotant - plutôt que le voyant
         d'imposer sa propre pulsation à tout le monde : sur la plaque du USB
         NODE DMX, CPU doit rester fixe pendant que POWER clignote.
         """
@@ -1621,12 +1621,12 @@ class NodeWiringAnim(QWidget):
     def _prise_rj45(self, p, x, cy, branche):
         """Embase Ethernet, dessinée comme on la voit sur un boîtier.
 
-        La version précédente était un carré noir avec huit barres jaunes —
+        La version précédente était un carré noir avec huit barres jaunes -
         « une prise », sans plus. Ce qui fait reconnaître une RJ45 tient en
         trois choses, et les trois y sont maintenant : le **blindage métal**
         qui encadre l'ouverture, l'**encoche de l'ergot** en bas au centre (le
         cran où vient claquer la languette de la fiche), et les **huit contacts
-        dorés suspendus au plafond** de la cavité — pas posés au fond.
+        dorés suspendus au plafond** de la cavité - pas posés au fond.
         """
         glow = QColor(self._CYAN); glow.setAlphaF(0.16 * branche)
         p.setPen(QPen(glow, 5)); p.setBrush(Qt.NoBrush)
@@ -1715,8 +1715,8 @@ class NodeWiringAnim(QWidget):
         """La fiche engagée dans l'embase : c'est elle qui dit « branché »."""
         if branche <= 0.01:
             return
-        # Fiche grise translucide, sa languette VERS LE BAS — elle doit tomber
-        # dans l'encoche de l'embase, qui est en bas — et la gaine derrière.
+        # Fiche grise translucide, sa languette VERS LE BAS - elle doit tomber
+        # dans l'encoche de l'embase, qui est en bas - et la gaine derrière.
         p.setPen(QPen(QColor("#15151a"), 1.0))
         p.setBrush(QBrush(QColor("#a2a2ac")))
         p.drawRoundedRect(QRectF(x - 2, cy - 12, 28, 24), 2, 2)
@@ -1758,7 +1758,7 @@ class NodeSetupWizard(QDialog):
         self._selected_adapter_ip = ""
         self._adapter_buttons = []
         # Modèle de boîtier déclaré sur la page câbles. Sur un USB NODE DMX la
-        # carte réseau est PORTÉE par le boîtier lui-même — ce n'est pas une
+        # carte réseau est PORTÉE par le boîtier lui-même - ce n'est pas une
         # prise RJ45 qu'il faut chercher dans la liste.
         self._cable_variant = "rj45"
         self._net_came_from_method = False
@@ -1904,14 +1904,14 @@ class NodeSetupWizard(QDialog):
         lay.addStretch(); return w
 
     def _pg_cables(self):
-        """Branchement — le boîtier d'abord, les câbles ensuite.
+        """Branchement - le boîtier d'abord, les câbles ensuite.
 
         L'ancienne page réclamait toujours « les 2 connexions » : un RJ45 pour
         les données, un USB pour l'alimentation. Le USB NODE DMX n'a qu'une
         prise USB-C, qui porte le courant ET l'Art-Net : son propriétaire
         cherchait un câble réseau absent de son boîtier, à la première étape de
-        l'assistant. On demande donc d'abord ce qu'on voit sur la face — la
-        seule question à laquelle on peut répondre sans rien connaître — et
+        l'assistant. On demande donc d'abord ce qu'on voit sur la face - la
+        seule question à laquelle on peut répondre sans rien connaître - et
         l'animation et le bouton suivent.
         """
         w, lay = self._make_page()
@@ -1985,7 +1985,7 @@ class NodeSetupWizard(QDialog):
         lay.addWidget(self._big_icon("🌐")); lay.addSpacing(8)
         lay.addWidget(self._title_lbl(tr("nc3_042"))); lay.addSpacing(4)
         # Le libellé dépend du boîtier : sur un USB NODE DMX, la carte à choisir
-        # n'est reliée à rien — c'est le boîtier lui-même, qui se présente à
+        # n'est reliée à rien - c'est le boîtier lui-même, qui se présente à
         # Windows comme une carte réseau (« Electroconcept USB Node »).
         self._adapters_hint = self._sub_lbl(
             tr("nc3_043"))
@@ -2140,7 +2140,7 @@ class NodeSetupWizard(QDialog):
     # énumérer le périphérique, charger le pilote NCM, puis le bail DHCP arrive
     # (c'est le boîtier qui sert l'adresse). Cela prend couramment plus de cinq
     # secondes. Scanner UNE fois et conclure « aucune carte » accuse un boîtier
-    # parfaitement branché — on réessaie donc avant de rendre un verdict.
+    # parfaitement branché - on réessaie donc avant de rendre un verdict.
     _SCAN_ESSAIS = 6
     _SCAN_PAUSE_MS = 2000
 
@@ -2149,7 +2149,7 @@ class NodeSetupWizard(QDialog):
             self._scan_tries = 0
         if getattr(self, "_adapters_hint", None) is not None:
             # Sur un USB NODE DMX le boîtier EST la carte : Windows le nomme
-            # selon le pilote qui le prend en charge — « Electroconcept USB
+            # selon le pilote qui le prend en charge - « Electroconcept USB
             # Node » ou « UsbNcm Host Device » selon la source. On ne promet
             # donc pas un nom exact, on dit où regarder.
             self._adapters_hint.setText(
@@ -2187,7 +2187,7 @@ class NodeSetupWizard(QDialog):
             # un câble RJ45 qui n'existe pas sur ce boîtier le renvoie chercher
             # une panne imaginaire. Sur un USB NODE, la carte réseau EST le
             # boîtier, et elle met quelques secondes à apparaître après le
-            # branchement — c'est ce qu'il faut dire.
+            # branchement - c'est ce qu'il faut dire.
             lbl = QLabel(tr("nc_no_ethernet_usb")
                          if self._cable_variant == "usb" else tr("nc_no_ethernet"))
             lbl.setStyleSheet("color: #fbbf24; background: #2a2000; border: 1px solid #554400; "
@@ -2374,7 +2374,7 @@ class NodeSetupWizard(QDialog):
 
 
 # ============================================================
-# DIALOG UNIFIÉ — Paramétrer la sortie DMX
+# DIALOG UNIFIÉ - Paramétrer la sortie DMX
 # ============================================================
 
 from PySide6.QtCore import Signal as _Signal
@@ -2546,7 +2546,7 @@ class DmxOutputDialog(QDialog):
         On suivait aveuglément le champ `transport` de ~/.mystrow_dmx.json. Or
         ce champ est écrit par tout `connect()`, y compris ceux des scripts de
         diagnostic : une seule session de test USB, et le dialogue s'ouvrait
-        pour toujours sur « Sortie DMX USB » — même boîtier débranché, même sur
+        pour toujours sur « Sortie DMX USB » - même boîtier débranché, même sur
         une installation Art-Net. Même effet si l'utilisateur range son boîtier
         USB après l'avoir utilisé une fois.
 
@@ -2602,7 +2602,7 @@ class DmxOutputDialog(QDialog):
         content.addLayout(toggle_row)
 
 
-        # Bandeau guide — en haut de la fenêtre, façon bibliothèque de fixtures.
+        # Bandeau guide - en haut de la fenêtre, façon bibliothèque de fixtures.
         # En pied de fenêtre il passait sous la barre de tâches sur certaines
         # configs et personne ne le voyait.
         hint = QLabel(
@@ -2625,7 +2625,7 @@ class DmxOutputDialog(QDialog):
         sep.setStyleSheet("QFrame { border: none; border-top: 1px solid #222; }")
         content.addWidget(sep)
 
-        # Pages — dans une zone défilante. La fenêtre était figée à 490 px de
+        # Pages - dans une zone défilante. La fenêtre était figée à 490 px de
         # haut alors que la page Node en réclame ~660 avec l'aiguillage des
         # sorties : Qt écrasait la carte et la tronquait en plein milieu des
         # combos. Ici la fenêtre s'ouvre à la bonne hauteur, et si l'écran est
@@ -2725,8 +2725,8 @@ class DmxOutputDialog(QDialog):
 
         # Le bouton qui regle le probleme est place LA, juste sous le statut
         # reseau, plutot qu'une consigne texte renvoyant vers un bouton en bas
-        # de page. Il reste visible en permanence — reconfigurer le reseau est
-        # utile meme quand tout va bien — et passe en orange quand la carte
+        # de page. Il reste visible en permanence - reconfigurer le reseau est
+        # utile meme quand tout va bien - et passe en orange quand la carte
         # n'est pas en 2.x (voir _set_net_hint).
         cfg_btn = QPushButton(tr("nc_config_net_conn"))
         self._node_cfg_btn = cfg_btn
@@ -2949,7 +2949,7 @@ class DmxOutputDialog(QDialog):
         self._node_scan_btn.setEnabled(False)
         self._node_list_hint.setText(tr("nc_node_scanning"))
         # Sans parent, et retenu au niveau du module jusqu'à sa fin : fermer la
-        # fenêtre pendant le balayage détruirait sinon un QThread en marche —
+        # fenêtre pendant le balayage détruirait sinon un QThread en marche -
         # plantage net de l'app.
         th = _retenir(_NodeLister())
         th.done.connect(self._on_nodes_listed)
@@ -2970,7 +2970,7 @@ class DmxOutputDialog(QDialog):
         ips = [n["ip"] for n in nodes]
         for n in nodes:
             nom = n.get("long") or n.get("court") or ""
-            combo.addItem(f"{n['ip']}  —  {nom}" if nom else n["ip"], userData=n["ip"])
+            combo.addItem(f"{n['ip']}  -  {nom}" if nom else n["ip"], userData=n["ip"])
         # L'adresse en service reste proposée même muette : le node peut être
         # éteint au moment du balayage, ce n'est pas une raison de l'oublier.
         if actuelle and actuelle not in ips:
@@ -2994,7 +2994,7 @@ class DmxOutputDialog(QDialog):
                 ip_combo.removeItem(1)
             for n in nodes:
                 nom = n.get("long") or n.get("court") or ""
-                ip_combo.addItem(f"{n['ip']}  —  {nom}" if nom else n["ip"],
+                ip_combo.addItem(f"{n['ip']}  -  {nom}" if nom else n["ip"],
                                  userData=n["ip"])
             ip_combo.blockSignals(False)
             if garder_principal:
@@ -3027,7 +3027,7 @@ class DmxOutputDialog(QDialog):
             # souvent depuis son adresse d'usine.
             ip = getattr(self.sender(), "found_ip", "")
             self._node_status_lbl.setText(
-                tr("nc_device_connected") + (f"  —  {ip}" if ip else ""))
+                tr("nc_device_connected") + (f"  -  {ip}" if ip else ""))
             self._node_status_lbl.setStyleSheet(
                 "color: #4ade80; font-weight: 700; background: transparent; border: none;")
         else:
@@ -3043,7 +3043,7 @@ class DmxOutputDialog(QDialog):
                 # Deux adresses en 2.x se côtoient dans cette fenêtre : celle du
                 # PC et celle du boîtier. Sans dire laquelle est laquelle, on
                 # lit « 2.0.0.2 » en croyant voir le node.
-                etiquette = "" if (not name or ip in name) else f"{name} — "
+                etiquette = "" if (not name or ip in name) else f"{name} - "
                 self._node_net_lbl.setText(
                     tr("nc_adapter_this_pc").format(carte=f"{etiquette}{ip}"))
                 self._node_net_lbl.setStyleSheet(
@@ -3125,7 +3125,7 @@ class DmxOutputDialog(QDialog):
         port_row.addWidget(port_lbl)
 
         # La liste prend toute la largeur libre : à 200 px fixes, le nom du
-        # périphérique (« COM13 — Périphérique série USB ») était coupé.
+        # périphérique (« COM13 - Périphérique série USB ») était coupé.
         self._port_combo = ComboSansMolette(fleche=True)
         self._port_combo.setMinimumWidth(200)
         self._port_combo.setCursor(Qt.PointingHandCursor)
@@ -3268,7 +3268,7 @@ class DmxOutputDialog(QDialog):
 
         Choisi dans la liste : pas de port COM à régler, on explique et on
         propose la bascule. Sinon, un USB NODE qui a répondu à l'ArtPoll est
-        signalé — c'est exactement le client qui cherche son boîtier ici.
+        signalé - c'est exactement le client qui cherche son boîtier ici.
         """
         carte = getattr(self, '_carte_usb_node', None)
         if carte is None:
@@ -3343,12 +3343,12 @@ class DmxOutputDialog(QDialog):
             import serial.tools.list_ports as _lp
             from artnet_dmx import ports_serie_dmx
             # Pseudo-ports macOS retirés, boîtier MyStrow / FTDI en tête : le
-            # premier de la liste — présélectionné — est le bon par défaut.
+            # premier de la liste - présélectionné - est le bon par défaut.
             ports = ports_serie_dmx(list(_lp.comports()))
             current_com = self._dmx.com_port if self._dmx else None
             for p in ports:
                 desc = p.description if p.description and p.description != "n/a" else ""
-                label = f"{p.device}  —  {desc}" if desc else p.device
+                label = f"{p.device}  -  {desc}" if desc else p.device
                 self._port_combo.addItem(label, p.device)
                 if p.device == current_com:
                     self._port_combo.setCurrentIndex(self._port_combo.count() - 1)
@@ -3572,7 +3572,7 @@ class DmxOutputDialog(QDialog):
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(tr("nc_f_usb_applied", proto_label=proto_label, com=com))
             # Vaut aussi pour la branche « déjà ouvert » : l'utilisateur a cliqué
-            # « Connecter », le journal doit confirmer l'état obtenu — pas
+            # « Connecter », le journal doit confirmer l'état obtenu - pas
             # rester muet sous prétexte qu'aucun port n'a été rouvert.
             self._journal(
                 tr("nc3_088", a=iface_nom, com=com, proto_label=proto_label),

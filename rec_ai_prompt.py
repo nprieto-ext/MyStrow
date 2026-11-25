@@ -7,8 +7,8 @@ assistant, puis recolle ici la réponse.
 
 La difficulté, c'est la musique : toutes les IA ne l'écoutent pas (Claude ne
 prend pas d'audio, ChatGPT l'analyse à peu près). MyStrow analyse donc le
-morceau LUI-MÊME — tempo, grille des mesures, sections, énergie, impacts,
-silences — et met le résultat dans le prompt. L'IA n'a plus besoin d'entendre
+morceau LUI-MÊME - tempo, grille des mesures, sections, énergie, impacts,
+silences - et met le résultat dans le prompt. L'IA n'a plus besoin d'entendre
 le morceau : elle écrit le show sur une grille de temps déjà juste.
 
 La réponse n'est jamais propre (texte autour, pistes ou effets inventés, blocs
@@ -223,7 +223,7 @@ def _features_from_waveform(waveform, duration_s):
 
 def _vocal_frames(F, cancel_check=None):
     """Indice de voix trame par trame, sous forme de 4 descripteurs bruts
-    (centre, harmonique, part dans le mix, mouvement) — combinés par mesure
+    (centre, harmonique, part dans le mix, mouvement) - combinés par mesure
     dans `_vocal_bars`.
 
     1. HPSS (Fitzgerald 2010) sur la bande 250-3500 Hz du milieu : médiane le
@@ -697,7 +697,7 @@ def _mood(F, bpm, e_frames, fps, pulse=0.0):
                           "bpm": bpm, "mode_conf": conf}
 
     # Seuils étalonnés sur une bibliothèque réelle (≈ 50 titres, percentiles
-    # 33 / 66) : cf. _MOOD_CAL. Le mode ne compte que s'il est net — la
+    # 33 / 66) : cf. _MOOD_CAL. Le mode ne compte que s'il est net - la
     # tonalité d'un mix complet se trompe vite (basse, percussions accordées).
     c = _MOOD_CAL
     v_mode = 0.0
@@ -808,7 +808,7 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
              "(Detected automatically from the audio.)")
     m = a.get("mood")
     if m:
-        L.append(f"- Musical mood (rough estimate from the audio — trust your own "
+        L.append(f"- Musical mood (rough estimate from the audio - trust your own "
                  f"knowledge of the song first): {', '.join(m['words'])}. "
                  f"Key {m['key']}, {m['brightness']} sound. Use it to choose the palette "
                  "(e.g. dark/melancholic → deep blues, purples, slow fades; joyful/festive "
@@ -831,12 +831,12 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
     L.append("| # | from | to | bars | energy 0-9 |" + (" vocals |" if has_v else "") + " likely role |")
     L.append("|---|---|---|---|---|" + ("---|" if has_v else "") + "---|")
     if a["bars"] and a["bars"][0]["t"] > 0.5:
-        L.append(f"| 0 | 0.00 s | {a['bars'][0]['t']:.2f} s | — | — |" + (" — |" if has_v else "")
+        L.append(f"| 0 | 0.00 s | {a['bars'][0]['t']:.2f} s | - | - |" + (" - |" if has_v else "")
                  + " before the first bar |")
     for i, s in enumerate(a["sections"], 1):
         role = s["role"]
         if s.get("like"):
-            role += f" — sounds like section {s['like']}: give it the same look"
+            role += f" - sounds like section {s['like']}: give it the same look"
         vc = ""
         if has_v:
             v = s.get("vocal", 0)
@@ -845,7 +845,7 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
                  f"| {s['bar_from']}-{s['bar_to']} | {round(s['energy'] * 9)} |{vc} {role} |")
     L.append("")
 
-    L.append("BAR GRID — bar number @ bar start time in seconds : energy 0-9"
+    L.append("BAR GRID - bar number @ bar start time in seconds : energy 0-9"
              + (" (+ « v » = vocals in this bar)" if has_v else ""))
     L.append("(Beat times inside a bar = bar start + 1, 2 or 3 × "
              f"{a['beat_s']:.3f} s.)")
@@ -860,7 +860,7 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
     L.append("")
 
     if a["hits"]:
-        L.append("STRONG HITS (big accents — good for a flash, a strobe burst or a "
+        L.append("STRONG HITS (big accents - good for a flash, a strobe burst or a "
                  "colour change): " + ", ".join(f"{h:.2f}" for h in a["hits"]))
     if a["silences"]:
         L.append("SILENCES / STOPS (good for a blackout): " + ", ".join(
@@ -873,11 +873,11 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
             L.append(f"VOCALS (detected from the audio, {conf}): " + ", ".join(
                 f"{s:.2f}-{e:.2f}" for s, e in a["vocals"]))
         else:
-            L.append(f"VOCALS: none detected ({conf}) — probably an instrumental.")
+            L.append(f"VOCALS: none detected ({conf}) - probably an instrumental.")
     if a["hits"] or a["silences"] or has_v:
         L.append("")
 
-    L.append("LIGHTING RIG — the tracks you can write on")
+    L.append("LIGHTING RIG - the tracks you can write on")
     L.append("Colour tracks: one block lights every fixture of the group in that colour.")
     for g in context["groups"]:
         notes = []
@@ -898,7 +898,7 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
             L.append('Position track "POS" (moving heads aim): presets = ' + ", ".join(
                 f'"{p}"' for p in context["positions"]))
         else:
-            L.append('Position track "POS": no position preset saved yet — do not use it.')
+            L.append('Position track "POS": no position preset saved yet - do not use it.')
     L.append("")
 
     keys = [g["key"] for g in context["groups"]]
@@ -941,7 +941,7 @@ def build_prompt(analysis, context, mood="", media_name="") -> str:
              "hits. Change colours on section changes and on hits, not randomly; keep "
              "a coherent palette per section, and contrast between sections.")
     if has_v:
-        L.append("4b. Vocals: while someone sings, the performer must be visible — keep "
+        L.append("4b. Vocals: while someone sings, the performer must be visible - keep "
                  "the FRONT group lit, in a flattering colour (warm white, amber, soft "
                  "tints), and keep effects light. When the voice stops (instrumental "
                  "parts, breaks between verses), that is the moment for effects, chases, "
@@ -1085,7 +1085,7 @@ def parse_ai_response(text, context, analysis):
     report = {"fixed": 0, "dropped": []}
 
     def snap(t):
-        """Cale sur le temps le plus proche (≤ 150 ms) — l'IA arrondit."""
+        """Cale sur le temps le plus proche (≤ 150 ms) - l'IA arrondit."""
         if not beats:
             return t
         import bisect
@@ -1404,7 +1404,7 @@ class RecAIDialog(QDialog):
             self._status.setText(str(e))
             return
         tracks = sorted({c["track"] for c in clips})
-        msg = tr("rai_summary", title=title or "—", n=rep["ok"],
+        msg = tr("rai_summary", title=title or "-", n=rep["ok"],
                  tracks=", ".join(tracks))
         if rep["fixed"]:
             msg += "\n" + tr("rai_summary_fixed", n=rep["fixed"])

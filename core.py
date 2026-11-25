@@ -41,7 +41,7 @@ except ImportError:
 # divergé avec le temps : un ALAC (.m4a) ou un AIFF (.aif) n'apparaissait pas
 # dans la moitié des dialogues, alors que le lecteur les décode très bien
 # (backend Qt/FFmpeg embarqué). L'utilisateur en concluait « format non
-# supporté » — il ne l'était que dans la boîte d'ouverture.
+# supporté » - il ne l'était que dans la boîte d'ouverture.
 # Toutes ces extensions ont été vérifiées : QMediaPlayer les charge et rend
 # leur durée correctement.
 AUDIO_EXTENSIONS = (
@@ -72,12 +72,12 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.20"
+VERSION = "3.2.21"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
 # après un passage dans le testeur DMX, et le parc restait à 25 fps pour tout
-# le reste de la session — « le DMX rame, un redémarrage corrige ».
+# le reste de la session - « le DMX rame, un redémarrage corrige ».
 DMX_FRAME_MS = 25
 
 
@@ -98,7 +98,7 @@ _timer_period_set = False
 def enable_high_res_timers():
     """Passe la granularité des timers à 1 ms (Windows). No-op ailleurs.
 
-    Rendu : True si la résolution a bien été relevée. Idempotent — chaque
+    Rendu : True si la résolution a bien été relevée. Idempotent - chaque
     `timeBeginPeriod` réussi doit être équilibré par un `timeEndPeriod`, on ne
     l'appelle donc qu'une fois.
     """
@@ -126,8 +126,8 @@ class MediaClock:
     `QMediaPlayer.position()` n'avance pas régulièrement. Mesuré le 08/09/2026
     sur une vidéo 1080p/25 fps : le temps réel avançait d'un pas constant de
     46,9 ms pendant que `position()` faisait des bonds de 0 à 116 ms (en audio
-    seul, par paquets de 26 ms). Tout ce qui se calcule DIRECTEMENT dessus —
-    trajectoires pan/tilt, mouvements automatiques, fondus, fondus enchaînés —
+    seul, par paquets de 26 ms). Tout ce qui se calcule DIRECTEMENT dessus -
+    trajectoires pan/tilt, mouvements automatiques, fondus, fondus enchaînés -
     avance donc tantôt à 0x, tantôt à 2,5x la vitesse réelle. C'est exactement
     ça, une lyre qui saccade.
 
@@ -146,7 +146,7 @@ class MediaClock:
         self.reset()
 
     def reset(self):
-        """Oublie l'estimation — au démarrage d'un média, après une pause, un seek."""
+        """Oublie l'estimation - au démarrage d'un média, après une pause, un seek."""
         self._est  = None
         self._wall = None
 
@@ -168,12 +168,12 @@ class MediaClock:
 
 
 def make_precise_timer(parent=None):
-    """QTimer en `Qt.PreciseTimer` — à utiliser pour toute cadence temps réel.
+    """QTimer en `Qt.PreciseTimer` - à utiliser pour toute cadence temps réel.
 
     Le type par défaut de QTimer est `Qt.CoarseTimer`, que Qt arrondit sur
     Windows au multiple supérieur de 15,625 ms : demander 25 ms donnait 31,2 ms
     (mesuré), soit 32 fps là où le code croyait en produire 40. C'est
-    systématique, pas de la charge — la machine la plus rapide du monde n'y
+    systématique, pas de la charge - la machine la plus rapide du monde n'y
     changerait rien. `PreciseTimer` ramène la moyenne sur la valeur demandée
     (25,0 / 40,0 / 50,0 ms mesurés).
 
@@ -197,7 +197,7 @@ def restore_timer_resolution():
         pass
     _timer_period_set = False
 
-# === FIREBASE (clé publique Web — identique à compte.html) ===
+# === FIREBASE (clé publique Web - identique à compte.html) ===
 FIREBASE_API_KEY    = "AIzaSyAQjGJXGCSWzOE-wvKXh6sbZy6JDhL8tqA"
 FIREBASE_PROJECT_ID = "mystrow-907be"
 
@@ -208,7 +208,7 @@ BREVO_SENDER_EMAIL = "hello@mystrow.io"  # Domaine à vérifier dans Brevo
 BREVO_SENDER_NAME  = "MyStrow"
 BREVO_LIST_ID      = 3                  # ID de la liste newsletter (entier, 0 = sans liste)
 try:
-    # Surcharge locale optionnelle (dev only) — ignorée si la clé est vide
+    # Surcharge locale optionnelle (dev only) - ignorée si la clé est vide
     import firebase_config as _fc
     if getattr(_fc, "FIREBASE_API_KEY", ""):
         FIREBASE_API_KEY = _fc.FIREBASE_API_KEY
@@ -224,7 +224,7 @@ except ImportError:
     pass
 
 # === MIDI SUPPORT ===
-# Détection via find_spec (sans importer le module — évite le scan MIDI au démarrage)
+# Détection via find_spec (sans importer le module - évite le scan MIDI au démarrage)
 import importlib.util as _iutil
 MIDI_AVAILABLE = False
 midi_lib = None
@@ -409,7 +409,7 @@ def create_icon(icon_type, color="#ffffff"):
         points = [QPoint(16, 18), QPoint(16, 46), QPoint(42, 32)]
         painter.drawPolygon(QPolygon(points))
     elif icon_type == "tap":
-        # Cercle plein centré — représente un tap/impulsion
+        # Cercle plein centré - représente un tap/impulsion
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(color))
         painter.drawEllipse(16, 16, 32, 32)
@@ -427,6 +427,18 @@ def create_icon(icon_type, color="#ffffff"):
         points = [QPoint(16, 16), QPoint(16, 48), QPoint(43, 32)]
         painter.drawPolygon(QPolygon(points))
         painter.drawRoundedRect(45, 16, 5, 32, 2, 2)
+    elif icon_type == "loop":
+        # 🔁 deux demi-boucles, une flèche à chaque bout (lecture en boucle)
+        painter.setPen(QPen(QColor(color), 5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(20, 20, 42, 20)
+        painter.drawArc(34, 20, 20, 24, 90 * 16, -180 * 16)
+        painter.drawLine(44, 44, 22, 44)
+        painter.drawArc(10, 20, 20, 24, 270 * 16, -180 * 16)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawPolygon(QPolygon([QPoint(40, 11), QPoint(40, 29), QPoint(50, 20)]))
+        painter.drawPolygon(QPolygon([QPoint(24, 35), QPoint(24, 53), QPoint(14, 44)]))
 
     painter.end()
     return QIcon(pixmap)
@@ -440,7 +452,7 @@ def create_icon(icon_type, color="#ffffff"):
 # ⚠️ Il était écrit EN DUR à trois endroits, et pas avec la même valeur :
 #   - la 3D supposait 360° de pan  (`plan_3d_web.html`, deux sites)
 #   - le moteur d'effets supposait 540°, via `PAN_ANGULAR_RATIO = 0.5`
-# Sur une lyre 540° la 3D montrait donc une lyre qui ne tournait qu'à moitié —
+# Sur une lyre 540° la 3D montrait donc une lyre qui ne tournait qu'à moitié -
 # d'où « la 3D ne correspond pas à la réalité », sans que rien ne l'explique.
 # Les défauts ci-dessous reprennent EXACTEMENT ce que le moteur d'effets
 # supposait déjà : la sortie DMX ne bouge pas, c'est l'affichage qui vient
@@ -633,7 +645,7 @@ def laser_pattern_count(labels, profile):
     """Nombre de motifs du laser, lu dans le nom du canal `Gobo1`.
 
     Convention des fixtures integrees : « Choix du motif (51) ». Rend None si
-    le nom ne le dit pas — le menu retombe alors sur des pas de DMX bruts.
+    le nom ne le dit pas - le menu retombe alors sur des pas de DMX bruts.
     """
     import re
     if not labels or not profile or "Gobo1" not in profile:
@@ -652,7 +664,7 @@ def laser_pattern_index(dmx, n):
 
 
 def laser_pattern_dmx(i, n):
-    """Valeur DMX au MILIEU de la bande du motif i — loin des deux bords, la
+    """Valeur DMX au MILIEU de la bande du motif i - loin des deux bords, la
     ou un arrondi constructeur ne fait pas tomber sur le voisin."""
     return min(255, int((int(i) % n + 0.5) * 256 / n))
 
@@ -718,7 +730,7 @@ def pan_angular_ratio(proj):
     d'angle que le tilt : un « cercle » se projetterait en « 8 » aplati. On
     réduit donc l'amplitude pan d'autant.
 
-    Vaut 0,5 sur une 540°/270° — exactement l'ancienne constante en dur
+    Vaut 0,5 sur une 540°/270° - exactement l'ancienne constante en dur
     `PAN_ANGULAR_RATIO`, d'où une sortie DMX inchangée pour les lyres qui
     gardent les valeurs par défaut.
     """
@@ -745,9 +757,9 @@ def pt_shape_pan_ratio(proj, tilt_forme):
 # de vérité, sinon les deux divergeraient et l'aperçu mentirait sur le rendu.
 
 SPREAD_MODES = [
-    ("lineaire",    "Linéaire",         "1, 2, 3, 4… — chenillard classique"),
+    ("lineaire",    "Linéaire",         "1, 2, 3, 4… - chenillard classique"),
     ("miroir",      "Miroir (centre)",  "Part du centre vers les extrémités"),
-    ("miroir_in",   "Miroir (bords)",   "1&8, puis 2&7, puis 3&6 — paires symétriques"),
+    ("miroir_in",   "Miroir (bords)",   "1&8, puis 2&7, puis 3&6 - paires symétriques"),
     ("pair_impair", "Pair / impair",    "Une fixture sur deux, en alternance"),
     ("aleatoire",   "Aléatoire",        "Ordre dispersé, mais reproductible"),
 ]
@@ -760,7 +772,7 @@ def spread_rank(i, n, mode="lineaire"):
     C'est ce rang que le « Décalage » transforme en déphasage. En linéaire il
     suit l'ordre de patch (1, 2, 3…), d'où le chenillard classique. Les autres
     modes rendent le même rang à plusieurs fixtures, qui s'allument alors
-    ensemble — « miroir (bords) » donne 1&8, puis 2&7, puis 3&6.
+    ensemble - « miroir (bords) » donne 1&8, puis 2&7, puis 3&6.
 
     Vaut pour des projecteurs classiques comme pour les pixels d'une barre :
     un pixel est une fixture parmi les autres.
@@ -848,7 +860,7 @@ def position_wave_fraction(elapsed, rank, move, spread):
 def position_preset_values(preset, lyres):
     """{id(lyre): (pan, tilt)} d'un preset de position, apparié aux lyres présentes.
 
-    Appariement en trois passes — adresse DMX (clé la plus sûre : unique par
+    Appariement en trois passes - adresse DMX (clé la plus sûre : unique par
     fixture et insensible aux renommages), puis nom, puis rang dans la liste.
     Trois passes et non un test à trois branches par lyre : sinon une lyre
     appariée par nom pouvait manger l'entrée qu'une lyre suivante réclamait par
@@ -861,7 +873,7 @@ def position_preset_values(preset, lyres):
     à la même adresse tombaient toutes les deux sur la dernière entrée.
 
     Une lyre sans correspondance est absente du résultat : à l'appelant de lui
-    laisser la position qu'elle a déjà — et de prévenir l'utilisateur, car un
+    laisser la position qu'elle a déjà - et de prévenir l'utilisateur, car un
     preset enregistré quand le rig comptait moins de lyres laisse sinon les
     nouvelles immobiles, sans le moindre message.
 
@@ -947,7 +959,7 @@ def chase_slot(pos_cycles, n, direction=1):
 
     `pos_cycles` = position exprimée en NOMBRE DE CYCLES (`freq*t` + départ) :
     un cycle entier fait défiler la cible une fois de bout en bout. La fonction
-    ne rend qu'UN seul rang — c'est là toute l'exclusivité : les autres fixtures
+    ne rend qu'UN seul rang - c'est là toute l'exclusivité : les autres fixtures
     sont éteintes, sans dépendre du DÉCALAGE ni de la largeur d'une forme d'onde.
 
     Les formes classiques ne peuvent pas donner ça : « Flash » est allumé la
@@ -961,7 +973,7 @@ def chase_slot(pos_cycles, n, direction=1):
     if n == 1:
         return 0
     # `// 1` plutôt qu'int() : il faut un plancher, y compris sur un départ
-    # négatif — int() tronquerait vers zéro et ferait bégayer le rang 0.
+    # négatif - int() tronquerait vers zéro et ferait bégayer le rang 0.
     p = int((float(pos_cycles) * n) // 1)
     if direction == 0:
         m = 2 * n - 2
@@ -977,7 +989,7 @@ def block_index(i, n, block):
 
     C'est la colonne GROUPER de l'éditeur d'effets : au lieu d'une phase par
     fixture, une phase par PAQUET. Avec 25 projecteurs et block=5, les 5
-    premiers partagent l'index 0, les 5 suivants l'index 1… soit 5 phases —
+    premiers partagent l'index 0, les 5 suivants l'index 1… soit 5 phases -
     la rangée entière s'allume d'un coup et c'est la rangée qui défile.
 
     Retourne (index de paquet, nombre de paquets), à passer tels quels à
@@ -1018,6 +1030,22 @@ def fx_fader_mult(value):
     return lo + (v - FX_FADER_KNEE) / (100.0 - FX_FADER_KNEE) * (FX_FADER_MAX_MULT - lo)
 
 
+def quick_fx_fader_mult(value):
+    """Multiplicateur du fader FX (fader 9) pour les effets RAPIDES du plan de feu.
+
+    Ils ignoraient le fader : un DJ qui lançait un cercle depuis le plan 2D et
+    poussait le fader 9 pour suivre la musique ne voyait rien changer
+    (FuraxX / Djch28, 21/11/2026). Même courbe que `fx_fader_mult`, ramenée à
+    ×1 à la position par défaut (80) pour que rien ne change sans toucher au
+    fader : ×3,1 au sommet, plus lent en dessous. Plancher ×0,1 (le minimum du
+    curseur VITESSE du plan 2D) : un fader oublié en bas ne fige pas tout.
+
+    ⚠️ `MainWindow._quick_move_layers` en dépend : un mouvement enregistré sur
+    un pad doit tourner à la même vitesse que l'effet rapide.
+    """
+    return max(0.1, fx_fader_mult(value) / fx_fader_mult(FX_FADER_KNEE))
+
+
 def layer_frequency(speed, mult=1.0, fader_mult=1.0):
     """Cycles par seconde d'une couche d'effet, depuis sa VITESSE 0-100.
 
@@ -1028,12 +1056,12 @@ def layer_frequency(speed, mult=1.0, fader_mult=1.0):
     finit par prendre pour une dérive de l'application.
 
     Vitesse 0 rend donc 0.0 : la couche est FIGÉE. Elle n'est pas éteinte pour
-    autant — la forme reste évaluée à sa position de départ, décalage et
+    autant - la forme reste évaluée à sa position de départ, décalage et
     RÉPARTITION compris, ce qui donne une pose statique étalée sur les
     fixtures. C'est la seule lecture cohérente de « vitesse nulle ».
 
     `mult` est le multiplicateur de vitesse d'un axe (trajectoires Pan/Tilt),
-    appliqué à la VITESSE, donc avant le plancher — comme dans le code d'origine.
+    appliqué à la VITESSE, donc avant le plancher - comme dans le code d'origine.
     `fader_mult` est le fader FX général, appliqué à la fréquence finale : à 0
     il gelait déjà tout, ce comportement est conservé.
 
@@ -1064,7 +1092,7 @@ def effect_cycle_seconds(layers, n_fixtures=1):
     paquets (GROUPER).
 
     `layers` = dicts sérialisés (`EffectLayer.to_dict`). Rend 0.0 si rien
-    n'est animé — l'appelant choisit alors son repli.
+    n'est animé - l'appelant choisit alors son repli.
     """
     longest = 0.0
     n = max(1, int(n_fixtures or 1))
@@ -1092,7 +1120,7 @@ def effect_cycle_seconds(layers, n_fixtures=1):
 # canal du profil : le prisme d'une lyre, la rotation Z d'un laser, le débit
 # d'une machine à étincelles. Sa valeur 0-255 part dans `proj.effect_channels`
 # ({n° de canal, 1 = premier : valeur}), que la sortie DMX lit AVANT tout le
-# reste le temps de l'effet — le mute excepté.
+# reste le temps de l'effet - le mute excepté.
 #
 # Deux façons de désigner le canal :
 #  · par TYPE (`channel_type`) : tous les appareils qui ont ce type, sur tous
@@ -1159,7 +1187,7 @@ def channel_layer_indices(layer, proj):
 
 
 def _channel_wave(forme, x):
-    """Formes d'onde des couches — mêmes courbes que le moteur du show."""
+    """Formes d'onde des couches - mêmes courbes que le moteur du show."""
     import math as _math
     if forme == "Sinus":
         return (_math.sin(2 * _math.pi * x) + 1) / 2
@@ -1187,7 +1215,7 @@ def channel_layer_outputs(layers, projectors, t, allowed_groups=None):
     Retourne {id(proj): {n° de canal (1 = premier): 0-255}}.
 
     ⚠️ Point UNIQUE : le moteur du show (`MainWindow._update_effect_from_layers`)
-    et l'aperçu de l'éditeur appellent tous deux cette fonction — l'aperçu ne
+    et l'aperçu de l'éditeur appellent tous deux cette fonction - l'aperçu ne
     peut donc pas diverger du show sur ces couches.
 
     Mêmes réglages que les autres couches : cible (Tous, Pair/Impair, groupe,
@@ -1299,7 +1327,7 @@ def gradient_layer_spec(layer):
         spec = GradientSpec.from_dict(g)
         # La colonne VITESSE de la couche était IGNORÉE dès qu'un `grad`
         # existait : la pousser à fond dans l'éditeur ne changeait rien, et
-        # l'effet plafonnait à grad.speed × 2,5 (fader FX) — 0,4 → 1 tour/s,
+        # l'effet plafonnait à grad.speed × 2,5 (fader FX) - 0,4 → 1 tour/s,
         # dix fois moins qu'un effet classique (« Enrouge&noir », 18/11/26).
         # Elle sert désormais de MULTIPLICATEUR : 50 (défaut, tous les effets
         # déjà enregistrés) = ×1, 100 = ×4, 0 = figé.
@@ -1323,15 +1351,15 @@ def gradient_layer_outputs(layers, projectors, all_projectors, t):
 
     Chaque fixture prend la couleur du dégradé à SA POSITION sur le plan 2D
     (`canvas_x`/`canvas_y`), ramenée à l'étendue des fixtures visées par la
-    couche — pas à son rang dans le patch. C'est ce qui en fait un « LED
+    couche - pas à son rang dans le patch. C'est ce qui en fait un « LED
     mapper » et pas un chenillard.
 
     ⚠️ Point UNIQUE : le moteur du show (`MainWindow._update_effect_from_layers`)
-    et l'aperçu de l'éditeur appellent tous deux cette fonction — parité
+    et l'aperçu de l'éditeur appellent tous deux cette fonction - parité
     aperçu/show garantie, comme `channel_layer_outputs`.
 
     `projectors`     = fixtures candidates (déjà filtrées par le moteur : sans
-                       machines, groupes du clip) — leur ORDRE sert à Pair/Impair.
+                       machines, groupes du clip) - leur ORDRE sert à Pair/Impair.
     `all_projectors` = le patch complet, pour les clés de la cible « Sélection ».
     """
     from pixel_map import spec_positions, output_for, is_wheel_fixture
@@ -1404,7 +1432,7 @@ def displayed_strobe_speed(proj):
     Une couche « Canal » visant le type Strobe écrit la valeur brute dans
     `effect_channels`, sans toucher `strobe_speed` : le rig strobait, les
     plans restaient fixes. Cette valeur passe devant `strobe_speed` sur le
-    fil — même ordre ici."""
+    fil - même ordre ici."""
     v = effect_channel_value(proj, "Strobe", None)
     if v is not None:
         return strobe_speed_from_dmx(v)
@@ -1422,9 +1450,9 @@ def clear_effect_channels(projectors):
             p.effect_channels = {}
 
 
-# Canaux dont une valeur déclenche une ACTION de l'appareil — reset, extinction
+# Canaux dont une valeur déclenche une ACTION de l'appareil - reset, extinction
 # de lampe, programme interne, blackout d'un laser dont le canal de mode sort de
-# sa plage « DMX » — plutôt qu'un réglage visible. Proposés quand même à la
+# sa plage « DMX » - plutôt qu'un réglage visible. Proposés quand même à la
 # couche « Canal » (c'est parfois le seul moyen d'animer un laser), mais signalés.
 SENSITIVE_CHANNEL_TYPES = frozenset({
     "Mode", "Reset", "Preset1", "Preset2", "Preset3", "Preset4",
@@ -1437,7 +1465,7 @@ def patch_channel_choices(projectors):
     Liste de dicts {key, channel_type, channel_num, channel_sig, label, count,
     pyro} :
       · un choix par TYPE présent dans le patch (hors Unused), qui vise tous les
-        appareils ayant ce type — sur une machine, seul son canal de sortie ;
+        appareils ayant ce type - sur une machine, seul son canal de sortie ;
       · un choix par NUMÉRO pour ce qu'un type ne suffit pas à désigner :
         « Unused » (un laser en aligne 18), type répété dans un même profil
         (quatre « Prism »), et les réglages d'une machine (durée, mode).
@@ -1488,7 +1516,7 @@ def random_wave(freq, t, index):
     """Valeur 0-1 de la forme « Aléatoire », renouvelée une fois par cycle.
 
     « Aléatoire » était la seule forme dont la VITESSE ne servait à rien : les
-    trois moteurs tiraient un nombre au hasard à une cadence codée en dur —
+    trois moteurs tiraient un nombre au hasard à une cadence codée en dur -
     à chaque frame DMX en live (25 Hz), 15 Hz dans l'aperçu, 12 Hz dans la
     vignette de courbe. VIT restait réglable dans le tableau mais n'agissait
     sur rien, VIT 0 ne figeait pas, et le show scintillait plus vite et plus
@@ -1501,7 +1529,7 @@ def random_wave(freq, t, index):
     laisser grésiller.
 
     `index` est le rang de la fixture (ou le pixel, dans la vignette) : les
-    fixtures changent ensemble mais chacune vers sa propre valeur — c'est ce
+    fixtures changent ensemble mais chacune vers sa propre valeur - c'est ce
     qui fait le scintillement plutôt qu'un flash commun.
 
     ⚠️ Point UNIQUE, au même titre que `layer_frequency` : le live, l'aperçu de
@@ -1515,19 +1543,19 @@ def effect_dim_base_color(proj, current):
     """Couleur que module un effet DIMMER SEUL sur cette fixture.
 
     Une couche Dimmer sans couche couleur ne fait qu'atténuer la couleur déjà
-    posée sur le projecteur. Sur un spot dont la couleur vient de sa ROUE — un
-    profil sans canal R/G/B — cette couleur RGB est une fiction : le faisceau
+    posée sur le projecteur. Sur un spot dont la couleur vient de sa ROUE - un
+    profil sans canal R/G/B - cette couleur RGB est une fiction : le faisceau
     sort blanc dès que le Dim s'ouvre, quelle que soit la valeur RGB gardée
     côté application.
 
     Or `base_color` est remis à NOIR par tous les chemins d'extinction
     (blackout, rappel de mémoire sans projecteur actif, reset de cue). Noir ×
     dimmer restait noir : la lyre s'affichait éteinte dans le plan de feu, la
-    3D et l'aperçu de l'éditeur — alors que le canal Dim sortait bien et que le
+    3D et l'aperçu de l'éditeur - alors que le canal Dim sortait bien et que le
     vrai projecteur pulsait. D'où le réflexe d'ajouter une couche RGB blanche
     qui ne servait qu'à réparer l'image.
 
-    Rend donc la couleur de la ROUE quand la fixture en a une — jamais noire,
+    Rend donc la couleur de la ROUE quand la fixture en a une - jamais noire,
     une roue étant toujours posée sur un slot (position 0 = « Open », blanc) :
     le problème d'origine reste réglé, et la lyre garde à l'écran la couleur
     qu'elle sort VRAIMENT. Rendre du blanc en dur affichait une lyre blanche
@@ -1596,7 +1624,7 @@ def cw_slot_for_color(slots, color):
 
 # Roue de couleurs generique, utilisee quand la fixture ne declare pas ses slots
 # (c'est le cas de toutes les fixtures de builtin_fixtures.py : elles ont le
-# canal ColorWheel dans leur profil, mais pas de table de slots — celle-ci ne
+# canal ColorWheel dans leur profil, mais pas de table de slots - celle-ci ne
 # vient que d'un import OFL/QLC+ ou de l'assistant de calibration).
 # Position 0 = « Open » : une roue est toujours sur un slot, elle ne peut pas
 # etre noire.
@@ -1638,7 +1666,7 @@ def color_wheel_display_color(proj, brightness=None):
     Dimmer seul module la fixture (cf. `effect_dim_base_color`) : s'y fier
     affichait une lyre BLANCHE alors qu'elle sort du rouge.
 
-    Renvoie None si la fixture n'est pas concernee — l'affichage suit alors le
+    Renvoie None si la fixture n'est pas concernee - l'affichage suit alors le
     modele `color`/`level`, comme avant.
 
     ⚠️ Point UNIQUE : le plan de feu 2D (`PlanDeFeuCanvas._get_fill_color`) et la
@@ -1667,7 +1695,7 @@ def emitted_brightness(proj) -> float:
     (cf. `MainWindow._update_effect_from_layers`). Sur une fixture RVB ca se
     voit quand meme, l'affichage lisant `proj.color`. Sur une fixture a ROUE de
     couleurs, non : sa teinte vient de `color_wheel`, et la brillance cachee
-    dans `proj.color` etait purement et simplement jetee — une couche RVB (ou
+    dans `proj.color` etait purement et simplement jetee - une couche RVB (ou
     Permut) faisait sauter la roue de slot en slot a intensite CONSTANTE, alors
     que le vrai projecteur, lui, pulsait.
 
@@ -1706,13 +1734,13 @@ def emitted_brightness(proj) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Roue de gobos symbolique — 16 slots
+# Roue de gobos symbolique - 16 slots
 # ─────────────────────────────────────────────────────────────────────────────
 # Faute de connaître les motifs réels de chaque appareil, les deux plans
 # représentent le canal Gobo par des motifs conventionnels : le slot vaut
 # `gobo // GOBO_SLOT_STEP`, même découpage des deux côtés.
 #
-# ⚠️ CET ORDRE FAIT FOI. Il est dessiné DEUX fois, avec des moyens différents —
+# ⚠️ CET ORDRE FAIT FOI. Il est dessiné DEUX fois, avec des moyens différents -
 # `plan_de_feu._draw_gobo_pattern` au QPainter dans la tache au sol, et
 # `_createGoboTexture` au canvas dans `plan_3d_web.html`. Les deux listes
 # étaient DIVERGENTES (le slot 3 montrait une croix × en 2D et trois cercles en
@@ -1722,7 +1750,7 @@ def emitted_brightness(proj) -> float:
 # ⚠️ POURQUOI LES NOUVEAUX MOTIFS SONT EN POSITIONS IMPAIRES. La roue est passée
 # de 8 à 16 slots. Les 8 motifs d'origine occupaient les valeurs DMX 0, 32, 64…
 # 224 ; en les reposant simplement dans l'ordre, un show existant qui envoie 64
-# serait passé de « Étoile 4 branches » à « Trois palmes » — le même fichier ne
+# serait passé de « Étoile 4 branches » à « Trois palmes » - le même fichier ne
 # se serait plus affiché pareil. Les huit anciens gardent donc leur valeur DMX
 # (index pair = ancien index × 2) et les huit nouveaux se glissent entre eux.
 # L'ordre paraît décousu ; il est le prix de la compatibilité, et une vraie roue
@@ -1732,22 +1760,22 @@ def emitted_brightness(proj) -> float:
 # `int(niveau * (GOBO_SLOT_COUNT - 1)) * GOBO_SLOT_STEP`, donc elle balaie
 # exactement ces seize slots.
 GOBO_SLOT_NAMES = (
-    "Ouvert",              #  0 — pas de motif        (DMX   0)
-    "Barre",               #  1 — nouveau             (DMX  16)
-    "Anneau",              #  2 — ex-slot 1           (DMX  32)
-    "Logo MyStrow",        #  3 — nouveau             (DMX  48)
-    "Étoile 4 branches",   #  4 — ex-slot 2           (DMX  64)
-    "Gouttes",             #  5 — nouveau             (DMX  80)
-    "Trois cercles",       #  6 — ex-slot 3           (DMX  96)
-    "Feuillage",           #  7 — nouveau             (DMX 112)
-    "Trois palmes",        #  8 — ex-slot 4           (DMX 128)
-    "Vitrail",             #  9 — nouveau             (DMX 144)
-    "Breakup",             # 10 — ex-slot 5           (DMX 160)
-    "Spirale",             # 11 — nouveau             (DMX 176)
-    "Six rayons",          # 12 — ex-slot 6           (DMX 192)
-    "Triangles",           # 13 — nouveau             (DMX 208)
-    "Bull's-eye",          # 14 — ex-slot 7           (DMX 224)
-    "Nuages",              # 15 — nouveau             (DMX 240)
+    "Ouvert",              #  0 - pas de motif        (DMX   0)
+    "Barre",               #  1 - nouveau             (DMX  16)
+    "Anneau",              #  2 - ex-slot 1           (DMX  32)
+    "Logo MyStrow",        #  3 - nouveau             (DMX  48)
+    "Étoile 4 branches",   #  4 - ex-slot 2           (DMX  64)
+    "Gouttes",             #  5 - nouveau             (DMX  80)
+    "Trois cercles",       #  6 - ex-slot 3           (DMX  96)
+    "Feuillage",           #  7 - nouveau             (DMX 112)
+    "Trois palmes",        #  8 - ex-slot 4           (DMX 128)
+    "Vitrail",             #  9 - nouveau             (DMX 144)
+    "Breakup",             # 10 - ex-slot 5           (DMX 160)
+    "Spirale",             # 11 - nouveau             (DMX 176)
+    "Six rayons",          # 12 - ex-slot 6           (DMX 192)
+    "Triangles",           # 13 - nouveau             (DMX 208)
+    "Bull's-eye",          # 14 - ex-slot 7           (DMX 224)
+    "Nuages",              # 15 - nouveau             (DMX 240)
 )
 
 GOBO_SLOT_COUNT = len(GOBO_SLOT_NAMES)          # 16
@@ -1766,7 +1794,7 @@ def gobo_slot_index(dmx) -> int:
 
     Point de passage unique : le plan 2D, le plan 3D et le sélecteur doivent
     découper le canal EXACTEMENT pareil, sinon le même show ne se lit pas de la
-    même façon selon la fenêtre ouverte — c'est très précisément le bug qui
+    même façon selon la fenêtre ouverte - c'est très précisément le bug qui
     avait fait diverger les deux listes de motifs.
     """
     try:
@@ -1798,7 +1826,7 @@ def gobo_display_slot(proj, dmx) -> int:
     peut être à DMX 40, là où le plan dessinait « Anneau ». L'éditeur de roue
     de gobos laisse donc choisir une forme par slot (`"shape"` dans
     `gobo_wheel_slots`), et c'est elle qui l'emporte : on prend le slot calibré
-    le plus PROCHE de la valeur — les slots importés (OFL, QLC+) notent le
+    le plus PROCHE de la valeur - les slots importés (OFL, QLC+) notent le
     milieu de leur plage, ceux du logiciel le bas, le plus proche couvre les
     deux conventions.
 
@@ -1840,15 +1868,15 @@ def fixture_projects_gobo(proj) -> bool:
     `ColorWheel`, a ouvrir un editeur de presets nommes : qui veut des presets
     sur un canal de MODE / PROGRAMME declare son canal en `Gobo1` puis le
     renomme. Resultat : un PAR LED se couvrait de motifs de gobo des le premier
-    preset clique, et le renommage n'y changeait rien — l'affichage lit le type,
+    preset clique, et le renommage n'y changeait rien - l'affichage lit le type,
     jamais le nom.
 
     Un PAR LED, une barre, un strobe n'ont pas d'optique de projection : ils ne
     PEUVENT pas faire de gobo, quelle que soit la valeur du canal. Le motif est
     donc rendu aux seules fixtures qui en portent une :
 
-    - `Moving Head` — le type de toutes les lyres spot / beam ;
-    - `Laser` — il dessine son motif par `Gobo1` ;
+    - `Moving Head` - le type de toutes les lyres spot / beam ;
+    - `Laser` - il dessine son motif par `Gobo1` ;
     - toute fixture dont le profil contient `Gobo1Rot` ou `Gobo2`. Ces canaux
       n'existent QUE sur un appareil a vraie roue de gobos, et ils rattrapent le
       projecteur de gobos FIXE (sans Pan/Tilt), que `_detect_fixture_type`
@@ -1873,7 +1901,7 @@ def fixture_projects_gobo(proj) -> bool:
 # Ces appareils ne font pas de LUMIÈRE. Leur « niveau » ne commande pas un
 # dimmer mais un DÉBIT (fumée, brume) ou un DÉCLENCHEMENT (étincelles, flamme) :
 # les envoyer dans un chenillard ou dans l'IA reviendrait à faire cracher une
-# machine au rythme de la musique — spectaculaire sur une machine à fumée,
+# machine au rythme de la musique - spectaculaire sur une machine à fumée,
 # inacceptable sur un lance-flamme.
 #
 # La fumée s'était déjà gagné cette exclusion, mais écrite SEIZE fois en dur
@@ -1889,7 +1917,7 @@ FX_MACHINE_TYPES = frozenset({
 })
 
 # Canal de SORTIE de chaque machine : celui que pilote `proj.level`. Ils sont
-# mutuellement exclusifs — une machine a un débit, pas trois.
+# mutuellement exclusifs - une machine a un débit, pas trois.
 FX_MACHINE_OUTPUT_CHANNELS = ("Smoke", "Spark", "Flame")
 
 
@@ -1981,7 +2009,7 @@ FX_MACHINE_OUTPUT_FOR_TYPE = {
 # Lecture du NOM de canal d'une machine (bibliothèques QLC+, GDTF…). QLC+ n'a
 # pas de groupe « fumée » : le débit arrive en « Effect », « Intensity » ou
 # « Maintenance » selon l'auteur du profil. Sans cette lecture, les 57 machines
-# QLC+ arrivaient SANS canal Smoke — débit mort, curseur compris (Stairville
+# QLC+ arrivaient SANS canal Smoke - débit mort, curseur compris (Stairville
 # AFH-600, Discord 16/10/2026).
 _MACHINE_FAN_WORDS = ("fan", "blower", "ventil")
 _MACHINE_TIMING_WORDS = ("duration", "interval", "time", "delay", "sleep",
@@ -2019,7 +2047,7 @@ def fix_machine_profile(fixture_type, profile, labels=None):
 
     Une machine sans `Smoke`/`Spark`/`Flame` a un débit MORT : la sortie DMX
     (`artnet_dmx`) ne pilote que ces canaux-là. On désigne donc le canal de
-    sortie — et le ventilateur s'il est nommé :
+    sortie - et le ventilateur s'il est nommé :
       * avec les noms de canaux : le premier qui parle de fumée/débit ;
       * sans noms : seulement si la machine n'a qu'UN canal, qui est alors
         forcément le débit. Sur plusieurs canaux sans nom, on ne devine pas.
@@ -2049,7 +2077,7 @@ def projector_selection_keys(projectors):
     par groupe. C'est l'identité utilisée par la cible « Sélection » d'un effet
     pour viser des projecteurs PRÉCIS, indépendamment de leur groupe. Doit rester
     identique entre l'aperçu de l'éditeur (_compute_preview) et le moteur de
-    restitution (_update_effect_from_layers) — sinon l'aperçu diverge du show.
+    restitution (_update_effect_from_layers) - sinon l'aperçu diverge du show.
     """
     keys = []
     counters = {}
@@ -2061,19 +2089,44 @@ def projector_selection_keys(projectors):
     return keys
 
 
+def layer_rec_centers(layer, projectors):
+    """{id(lyre): (pan, tilt)} : centre ENREGISTRÉ avec une couche Pan/Tilt.
+
+    Un mouvement enregistré sur un pad (REC → pad FX, effet rapide du plan 2D)
+    garde le point autour duquel chaque lyre tournait (`centers`, clé
+    « groupe|index » de `projector_selection_keys`). Sans lui, en séquence
+    (REC Lumière, éditeur, show), le mouvement tournait autour de la position
+    du moment - souvent le repos - et « ne balayait pas comme prévu »
+    (artifice81, 20/11/2026). `layer` : dict ou objet couche. {} si absent.
+    """
+    centres = (layer.get("centers") if isinstance(layer, dict)
+               else getattr(layer, "centers", None)) or {}
+    if not centres:
+        return {}
+    out = {}
+    for p, (g, i) in zip(projectors, projector_selection_keys(projectors)):
+        c = centres.get(f"{g}|{i}")
+        if c and len(c) >= 2:
+            try:
+                out[id(p)] = (int(c[0]), int(c[1]))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def projector_track_key(group_display, local_index):
     """Cle stable de la piste dediee a UN projecteur dans le REC Lumiere.
 
-    Volontairement construite sur (groupe, index LOCAL au groupe) — la meme
+    Volontairement construite sur (groupe, index LOCAL au groupe) - la meme
     convention que le plan de feu et que la cible « Selection » d'un effet
-    (`projector_selection_keys`) — et NON sur l'index global du patch : ajouter
+    (`projector_selection_keys`) - et NON sur l'index global du patch : ajouter
     une fixture a un autre groupe ne doit pas deplacer les blocs deja poses.
 
     Le prefixe « @ » garantit qu'aucune cle ne peut entrer en collision avec un
     nom de piste de groupe (« A », « Lyres », « Public »…) ni avec les pistes
     speciales (« Effet », « Sequence », « Position », « Gobo », « Audio »).
 
-    Cette cle est le `name` de la piste, donc ce qui part dans le .tui — elle ne
+    Cette cle est le `name` de la piste, donc ce qui part dans le .tui - elle ne
     doit jamais dependre du NOM de la fixture, qui se renomme librement dans le
     patch. Le libelle affiche, lui, suit le nom (cf. `_projector_track_entries`).
     """
@@ -2144,7 +2197,7 @@ def channel_label(ch):
 #
 # `Effects` et `Gobo1Rot` étaient les plus touchés : aucune des deux
 # bibliothèques ne les écrivait sous ce nom, donc ces deux branches de
-# `artnet_dmx` étaient du code mort — 3654 canaux « Effect » et 56 « GoboRot »
+# `artnet_dmx` étaient du code mort - 3654 canaux « Effect » et 56 « GoboRot »
 # dans la base, tous muets.
 CHANNEL_ALIASES = {
     "A":        "Ambre",     # QLC+ : LED ambre
@@ -2170,19 +2223,19 @@ def canonical_profile(profile):
 
 # ─── Noms de fabricants : un seul vocabulaire ─────────────────────────────────
 # Même histoire que les canaux, un cran plus haut. Quatre bibliothèques
-# alimentent la liste — 196 fixtures natives, la collection locale de
-# l'utilisateur (perso + Firestore), 627 fixtures OFL, 1710 fixtures QLC+ — et
+# alimentent la liste - 196 fixtures natives, la collection locale de
+# l'utilisateur (perso + Firestore), 627 fixtures OFL, 1710 fixtures QLC+ - et
 # aucune ne s'accorde sur l'orthographe du fabricant. `FIXTURE_LIBRARY` groupe
 # sur la chaîne BRUTE : « cameo » (88 fixtures) et « Cameo » (87) formaient donc
 # deux rubriques distinctes, et le tri étant sensible à la casse, elles se
-# retrouvaient aux deux BOUTS de la liste — « cameo » et « beamZ » après
+# retrouvaient aux deux BOUTS de la liste - « cameo » et « beamZ » après
 # « lightmaXX », loin de leurs jumelles. 23 fabricants étaient ainsi éclatés en
 # 2 à 4 rubriques, dont American DJ (274 fixtures) et Eurolite (223).
 #
 # ⚠️ La normalisation est faite à L'AFFICHAGE, jamais dans les données. Réécrire
 # le champ `manufacturer` de ~/.mystrow_fixtures.json serait pire que le mal :
 # le bouton Actualiser déduplique sur la clé `(nom, fabricant)` et remplace en
-# bloc ce qui vient de la bibliothèque — un renommage local serait écrasé pour
+# bloc ce qui vient de la bibliothèque - un renommage local serait écrasé pour
 # les fixtures Firestore, et ferait REVENIR la copie distante en double pour les
 # fixtures perso (cf. `fixture_packs.vient_de_la_bibliotheque`).
 
@@ -2234,7 +2287,7 @@ def canonical_manufacturer(nom):
 
     Un fabricant absent de la table garde son orthographe exacte : on ne
     fusionne que ce qui a été vérifié à la main. Ajouter une marque, c'est
-    ajouter une ligne à `_MFR_CANONIQUES` — ou à `_MFR_ALIAS` si la variante
+    ajouter une ligne à `_MFR_CANONIQUES` - ou à `_MFR_ALIAS` si la variante
     n'est pas une simple question de casse.
     """
     nom = (nom or "").strip()
@@ -2242,7 +2295,7 @@ def canonical_manufacturer(nom):
 
 
 def build_fixture_library(all_fixtures):
-    """{fabricant: [fixtures]} — « Générique » en tête, puis l'ordre alphabétique.
+    """{fabricant: [fixtures]} - « Générique » en tête, puis l'ordre alphabétique.
 
     Ce bloc était recopié à L'IDENTIQUE en trois endroits de `main_window`
     (construction initiale, retour d'import, retour d'Actualiser). C'est
@@ -2272,11 +2325,11 @@ def make_ssl_context():
     """Contexte SSL compatible Mac / Windows / PyInstaller.
 
     On fait confiance à l'UNION des racines :
-      1. magasin système — sur Windows il inclut les racines injectées par les
+      1. magasin système - sur Windows il inclut les racines injectées par les
          antivirus à scan HTTPS (Avast, Kaspersky, ESET…) et les proxys
          d'entreprise. Sans elles, leur MITM TLS casse la vérification (alors
          que le navigateur, lui, passe par le magasin système) ;
-      2. bundle certifi — indispensable sur macOS où Python n'embarque pas de
+      2. bundle certifi - indispensable sur macOS où Python n'embarque pas de
          racines système, et complément utile sur Windows.
     La vérification reste ACTIVE : aucun downgrade de sécurité.
 
@@ -2296,7 +2349,7 @@ def make_ssl_context():
     # comme Chrome/Edge) via `truststore`. Lire le magasin système depuis
     # Python ne suffit pas toujours : Windows télécharge certaines racines à la
     # demande, et un antivirus/réseau filtrant peut présenter une chaîne que
-    # seul CryptoAPI sait valider. Symptôme : « CERTIFICATE_VERIFY_FAILED —
+    # seul CryptoAPI sait valider. Symptôme : « CERTIFICATE_VERIFY_FAILED -
     # unable to get local issuer certificate » à la mise à jour ET au
     # téléchargement du modèle de l'assistant, alors que le navigateur passe
     # (client FuraxX, 3.2.16, 13/11/2026). En cas d'absence ou d'échec, on
@@ -2353,7 +2406,7 @@ SHOP_URLS = {
 
 # Point d'entrée officiel du téléchargement : la Cloud Function du site, qui
 # redirige vers l'asset GitHub de la dernière version ET enregistre la
-# statistique de téléchargement. On ne code donc PAS l'URL GitHub en dur — le
+# statistique de téléchargement. On ne code donc PAS l'URL GitHub en dur - le
 # dialogue d'erreur d'intégrité pointait ainsi sur « MyStrow_Installer.dmg »,
 # un nom d'asset qui n'existe plus : bouton en 404 pour tous les utilisateurs
 # Mac, précisément au moment où l'application refuse de démarrer.
@@ -2366,7 +2419,7 @@ def message_erreur_reseau(exc) -> str:
 
     Ce qu'on remplace : `<urlopen error [Errno 11001] getaddrinfo failed>`,
     affiché tel quel à un utilisateur en plein show. C'est de l'anglais, c'est
-    un numéro, et surtout ça ne dit pas quoi faire — alors que ce cas précis a
+    un numéro, et surtout ça ne dit pas quoi faire - alors que ce cas précis a
     une cause très concrète et très fréquente en salle : **le nom de domaine ne
     se résout pas**, typiquement un portail Wi-Fi qu'il faut encore valider.
 
@@ -2437,7 +2490,7 @@ class ComboSansMolette(QComboBox):
 
     Presque toutes nos listes vivent dans une fenêtre défilante. Avec un
     QComboBox standard, faire défiler la page en passant au-dessus d'une liste
-    en change la valeur au lieu de scroller — et la liste avale en plus le
+    en change la valeur au lieu de scroller - et la liste avale en plus le
     défilement, donc la page ne bouge pas : l'utilisateur insiste, et modifie un
     réglage à chaque cran, sans le moindre retour visuel. Sur l'aiguillage des
     sorties DMX ça réaffecte un univers, sur le patch ça change le profil d'une
@@ -2446,7 +2499,7 @@ class ComboSansMolette(QComboBox):
     `ignore()` laisse l'événement remonter à la zone défilante : la page scrolle
     normalement. La valeur reste réglable au clic et au clavier.
 
-    À utiliser pour TOUTE nouvelle liste déroulante — le seul cas où un
+    À utiliser pour TOUTE nouvelle liste déroulante - le seul cas où un
     QComboBox nu se justifie est une liste hors de toute zone défilante, et ça
     ne coûte rien de prendre celle-ci quand même.
 
@@ -2480,7 +2533,7 @@ class ComboSansMolette(QComboBox):
 # Deux couleurs de la palette REC Lumière ne désignent pas une teinte à
 # reconstituer en RVB mais une LED DÉDIÉE de la fixture : « Black Light » = la
 # LED UV, « Ambre » = la LED ambre. Poser ces blocs doit piloter CE canal seul,
-# à 100 %, et laisser le RVB à zéro — un violet RVB n'excite aucun pigment
+# à 100 %, et laisser le RVB à zéro - un violet RVB n'excite aucun pigment
 # fluorescent, et l'ambre reconstitué en RVB donne un jaune sale à côté de la
 # vraie LED. Même logique que les curseurs du plan de feu : ces canaux ne sont
 # jamais dérivés du RVB (cf. artnet_dmx, Ambre/Orange pilotés au boost seul).
@@ -2488,11 +2541,11 @@ class ComboSansMolette(QComboBox):
 # Chaque bloc liste PLUSIEURS canaux candidats, par ordre de préférence : une
 # même LED physique n'a pas le même nom d'un patch à l'autre. La LED ambre d'un
 # par 6-en-1 (RVB + Blanc + Ambre + UV) s'appelle « Ambre » dans un profil
-# custom, mais « Orange » dans le profil intégré RGBWOUV — et l'import de
+# custom, mais « Orange » dans le profil intégré RGBWOUV - et l'import de
 # bibliothèque range aussi les emitters ambrés sous « Orange » quand leur teinte
 # déclarée penche vers #ff8800. Ne chercher que « Ambre » faisait échouer le
 # bloc sur ces fixtures : il retombait sur l'approximation RVB, et le moteur DMX
-# extrait alors min(R,V,B) vers le canal W — la LED ambre restait éteinte et
+# extrait alors min(R,V,B) vers le canal W - la LED ambre restait éteinte et
 # c'est la BLANCHE qui s'allumait (« l'ambre sort du blanc », remonté en 3.1.79,
 # la version qui a introduit ces blocs).
 SPECIAL_BLOCK_COLORS = {
@@ -2542,13 +2595,13 @@ def special_block_channel(color, profile=None):
 def apply_special_block(proj, color, intensity):
     """Applique un bloc « canal dédié » (UV / Ambre) sur `proj`.
 
-    Retourne True si le bloc a été traité comme canal dédié — l'appelant ne doit
+    Retourne True si le bloc a été traité comme canal dédié - l'appelant ne doit
     alors PAS poser la couleur RVB. Retourne False si la fixture n'a pas ce
     canal : on retombe sur le rendu RVB d'origine (approximation), sinon poser
     un bloc UV sur un PAR RVB l'éteindrait purement et simplement.
 
     Le niveau du bloc est conservé : sur une fixture à canal Dim, la LED dédiée
-    passe DERRIÈRE le master (Dim = proj.level dans le moteur DMX) — la mettre à
+    passe DERRIÈRE le master (Dim = proj.level dans le moteur DMX) - la mettre à
     255 avec un dimmer fermé ne donnerait rien.
     """
     spec = special_block_channel(color, getattr(proj, 'dmx_profile', None) or [])
@@ -2570,7 +2623,7 @@ def clear_special_blocks(proj):
     couleur de la fenêtre EXT, raccourcis clavier) : ces boutons se remplacent
     l'un l'autre, et sans ça « BLACK LIGHT puis ROUGE » sortait rouge **avec**
     l'UV encore allumé. Couvre TOUS les canaux qu'un bloc peut viser, y compris
-    `orange_boost` — sur les profils où la LED ambre s'appelle « Orange », c'est
+    `orange_boost` - sur les profils où la LED ambre s'appelle « Orange », c'est
     lui que le bloc Ambre a allumé. Le boost Blanc n'est jamais touché : aucun
     bloc ne le pilote, il reste purement additif.
     """
@@ -2629,7 +2682,7 @@ def guide_banner(texte: str, url: str) -> QLabel:
 
 
 # Variante encadrée verte, à poser EN HAUT de la fenêtre. Le bandeau discret
-# ci-dessus se fait oublier — précisément ce qu'on ne veut pas quand le réglage
+# ci-dessus se fait oublier - précisément ce qu'on ne veut pas quand le réglage
 # se joue pour moitié dans un AUTRE logiciel (le node DMX, OBS, vMix) et que
 # rien dans la fenêtre ne peut le montrer. En pied de fenêtre il passait en
 # prime sous la barre des tâches sur certaines configurations.
@@ -2695,10 +2748,10 @@ def send_report_email(parent, subject, report, intro=""):
     body = report
     truncated = len(body) > _MAILTO_BODY_MAX
     if truncated:
-        body = body[:_MAILTO_BODY_MAX] + "\n\n[…rapport tronqué — le rapport complet est dans votre presse-papiers, faites Coller ici…]"
+        body = body[:_MAILTO_BODY_MAX] + "\n\n[…rapport tronqué - le rapport complet est dans votre presse-papiers, faites Coller ici…]"
 
     head = intro or "Bonjour,\n\nVoici le rapport de diagnostic généré par MyStrow."
-    full = f"{head}\n\nMyStrow {VERSION} — {sys.platform}\n\n--- RAPPORT ---\n{body}\n"
+    full = f"{head}\n\nMyStrow {VERSION} - {sys.platform}\n\n--- RAPPORT ---\n{body}\n"
 
     url = QUrl("mailto:{}?subject={}&body={}".format(
         SUPPORT_EMAIL,

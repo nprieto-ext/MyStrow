@@ -3,7 +3,7 @@ Parseur de fichiers fixture pour MyStrow.
 
 Formats supportes :
   - GrandMA2/3 XML (.xml)
-  - MyStrow fixture (.mystrow) — JSON natif
+  - MyStrow fixture (.mystrow) - JSON natif
 
 Usage :
     from fixture_parser import parse_file, export_mystrow
@@ -68,7 +68,7 @@ _MA_MAP = {
     "Color Wheel":     "ColorWheel",
     "Color":           "ColorWheel",
     # CTO/CTB : canaux propres, PAS la roue de couleurs. Les confondre les
-    # gangait avec elle — un correcteur de temperature faisait tourner la roue.
+    # gangait avec elle - un correcteur de temperature faisait tourner la roue.
     "CTO":             "CTO",
     "CTB":             "CTB",
     "CTC":             "CTB",
@@ -92,7 +92,7 @@ _QLC_COLOUR_MAP = {
     "Amber": "Ambre", "UV": "UV", "UV Violet": "UV", "Indigo": "UV",
     "Orange": "Orange", "Pink": "R",
     # Trichromie et lime : canaux propres depuis qu'ils existent. Les rabattre
-    # sur R/G/Orange envoyait carrement la mauvaise valeur — l'intensite du VERT
+    # sur R/G/Orange envoyait carrement la mauvaise valeur - l'intensite du VERT
     # partait sur le drapeau cyan d'un spot CMY. Le moteur distingue ensuite
     # additif et soustractif selon la presence de R/G/B dans le profil.
     "Cyan": "C", "Magenta": "M", "Yellow": "Y", "Lime": "Lime",
@@ -175,7 +175,7 @@ _MA3_ATTR_MAP = {
     "IRIS":               "Iris",
     # Frost / roue d'animation. Ces attributs existent en toutes lettres dans
     # les fichiers constructeur (l'ACME PIXEL LINE porte FROST sur son CH5) et
-    # tombaient sur « Unused » faute de type d'accueil — donc muets à jamais.
+    # tombaient sur « Unused » faute de type d'accueil - donc muets à jamais.
     "FROST":              "Frost",
     "FROST1":             "Frost",
     "ANIMATIONWHEEL":     "Anim",
@@ -218,7 +218,7 @@ _MA3_ATTR_MAP = {
     # (V_OR_x = Object Rotation), qu'on déplace (V_OP_x = Object Position) et
     # qu'on redimensionne (V_OS_x = Object Scale). Aucun de ces attributs
     # n'était dans la table : sur un Laserworld CS-12000 (14 canaux), 13 canaux
-    # sortaient « Unused » — donc le laser était totalement muet, y compris son
+    # sortaient « Unused » - donc le laser était totalement muet, y compris son
     # canal de mode. Et ce n'est pas un fichier exotique : c'est ainsi que MA
     # exporte TOUS les lasers.
     #
@@ -250,7 +250,7 @@ _MA3_ATTR_MAP = {
 
     # ⚠️ Entrées « Unused » DÉLIBÉRÉES : leur rôle est de BLOQUER le repli par
     # préfixe. `COLOR1WHEELSELECTBLINK` commence par `COLOR1` et se faisait donc
-    # mapper sur « ColorWheel » — alors que c'est une vitesse de CLIGNOTEMENT.
+    # mapper sur « ColorWheel » - alors que c'est une vitesse de CLIGNOTEMENT.
     # Sur le CS-12000 c'était le seul canal « reconnu » du fichier, et il l'était
     # à tort : MyStrow pilotait le clignotement en croyant tourner une roue,
     # pendant que la vraie sélection de couleur restait muette. Un faux positif
@@ -289,7 +289,7 @@ _LIBELLES_MA = {
 # Résolution des LED de couleur (« emitters ») MA2/MA3
 #
 # ⚠️ COLORRGB<n> n'est PAS un code couleur : c'est le n-ième emitter de la
-# fixture. Les bibliothèques MA numérotent librement — la Contest irLED64 SIX
+# fixture. Les bibliothèques MA numérotent librement - la Contest irLED64 SIX
 # déclare son BLANC en COLORRGB5 et son AMBRE en COLORRGB4, l'inverse de
 # _MA3_ATTR_MAP. La vraie couleur est portée par l'attribut color="ffffff" du
 # ChannelType et/ou par subattribute_user_name="White". On s'en sert d'abord,
@@ -306,7 +306,7 @@ _EMITTER_NAMES = {
     "uv": "UV", "ultraviolet": "UV",
     "orange": "Orange",
 }
-# NB : ni « yellow » ni « cyan »/« magenta » ici — sur un spot ce sont les
+# NB : ni « yellow » ni « cyan »/« magenta » ici - sur un spot ce sont les
 # drapeaux CMY (soustractifs, 0 = ouvert), pas des LED. Les traiter comme des
 # emitters mettait le jaune d'une CMY sur le canal Orange de MyStrow.
 
@@ -544,7 +544,7 @@ def _joli_attribut(attr: str) -> str:
     """« LASERPATTERNSIZE » -> « Laser Pattern Size ». Rend '' si illisible.
 
     Les attributs MA de matériel exotique (lasers surtout) sont écrits collés en
-    majuscules. Recomposés en mots, ils font de très bons libellés — bien
+    majuscules. Recomposés en mots, ils font de très bons libellés - bien
     meilleurs que le type MyStrow, qui vaut « Unused » pour la moitié d'entre eux.
     """
     reste = (attr or "").upper().strip()
@@ -570,11 +570,11 @@ def _libelle_canal(ct, attr: str) -> str:
     """Nom lisible d'un canal, depuis ce que le fichier constructeur porte.
 
     Priorité au nom écrit par l'auteur du fichier (`subattribute_user_name` et
-    consorts) — c'est lui qui parle la langue de la fiche technique. On ne
+    consorts) - c'est lui qui parle la langue de la fiche technique. On ne
     retombe sur l'attribut recomposé que lorsque ce nom est un mot passe-partout.
 
     Exception : les attributs de `_LIBELLES_MA` passent AVANT le nom du fichier.
-    Ce sont ceux dont le nom « utilisateur » ne distingue rien — deux canaux
+    Ce sont ceux dont le nom « utilisateur » ne distingue rien - deux canaux
     « Position », deux paires « X »/« Y » sur un même laser. Un nom ambigu vaut
     à peine mieux que pas de nom quand il s'agit de savoir quel curseur on tire.
     """
@@ -591,11 +591,11 @@ def _libelle_canal(ct, attr: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Repli par LIBELLÉ — quand l'attribut du fichier ne dit rien
+# Repli par LIBELLÉ - quand l'attribut du fichier ne dit rien
 # ---------------------------------------------------------------------------
 # Les tables ci-dessus traduisent l'ATTRIBUT du fichier constructeur. Quand le
-# fabricant sort du vocabulaire GrandMA — ce que font tous les chinois sur leur
-# couronne LED — l'attribut n'est mappé nulle part et le canal tombe en
+# fabricant sort du vocabulaire GrandMA - ce que font tous les chinois sur leur
+# couronne LED - l'attribut n'est mappé nulle part et le canal tombe en
 # « Unused », donc muet à jamais. Le NOM du canal, lui, dit tout : sur un
 # BETOPPER LM120, les dix canaux inconnus s'appellent « Light strip »,
 # « Light strip strobe », « Light reddish », « Strip Speed »… c'est la couronne
@@ -626,8 +626,8 @@ _RING_EQUIV = {
 def _type_depuis_libelle(libelle: str, deja: set) -> str | None:
     """Type de canal déduit du NOM du canal. `None` = on ne devine rien.
 
-    `deja` : les types déjà posés dans ce mode. Il sert au seul cas ambigu —
-    un mot de couleur sans mot de couronne (« Light reddish ») — pour trancher
+    `deja` : les types déjà posés dans ce mode. Il sert au seul cas ambigu -
+    un mot de couleur sans mot de couronne (« Light reddish ») - pour trancher
     entre le faisceau et la deuxième source.
 
     Règle de conduite : dans le doute, rendre `None`. Un canal « Unused » ne
@@ -678,7 +678,7 @@ def _type_depuis_libelle(libelle: str, deja: set) -> str | None:
         # Ce type est déjà pris dans ce mode. Le moteur GANGE les canaux de même
         # type sur un scalaire unique (`proj.speed`, `proj.mode_value`…) : poser
         # un second « Speed » ferait bouger la vitesse des effets en réglant
-        # celle du pan/tilt. On laisse « Unused » — le libellé, lui, est
+        # celle du pan/tilt. On laisse « Unused » - le libellé, lui, est
         # conservé, et le canal reste joignable par son NUMÉRO dans les canaux
         # avancés. Une déduction n'est pas assez sûre pour valoir un gangage.
         return None
@@ -798,12 +798,12 @@ def _parse_ma_modes(fixture_el) -> tuple:
                 "channelCount": len(profile),
                 "profile":      profile,
                 # Sections de couleur détectées (couronne, LED déco, cellules).
-                # Absente quand l'appareil n'en a qu'une — c'est le cas courant,
+                # Absente quand l'appareil n'en a qu'une - c'est le cas courant,
                 # et une fixture à section unique ne doit surtout pas être
                 # dépliée en projecteurs enfants.
                 **({"sections": sections} if sections else {}),
                 # Noms lisibles portés par le fichier constructeur. C'est la
-                # seule information qui distingue deux canaux du même type — et
+                # seule information qui distingue deux canaux du même type - et
                 # sur un laser, la seule qui distingue tout court, la moitié des
                 # canaux n'ayant pas de type connu.
                 "labels":       labels,
@@ -846,13 +846,13 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
     Retourne (profile_list, channel_defaults_dict).
     Gère les canaux fine (PanFine/TiltFine).
 
-    Le dict de défauts ne reçoit QUE les canaux de type « Mode » — voir la note
+    Le dict de défauts ne reçoit QUE les canaux de type « Mode » - voir la note
     dans la boucle. Pour tous les autres types il reste vide, et c'est ce qui
     empêche un `default="255"` sur R/G/B de rendre le noir impossible.
     """
     items = []       # [(ch_index, ch_type, libelle)]
-    defaults = {}    # {ch_type: dmx_8bit} — voir la note plus bas
-    # Types déjà posés dans ce mode — lu par le repli sur le libellé, qui a
+    defaults = {}    # {ch_type: dmx_8bit} - voir la note plus bas
+    # Types déjà posés dans ce mode - lu par le repli sur le libellé, qui a
     # besoin de savoir si le faisceau a déjà sa couleur pour trancher entre
     # « le rouge du projecteur » et « le rouge de la couronne ».
     deja_poses = set()
@@ -871,7 +871,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         # (49 modules), 48 des 165 ChannelType sont dans ce cas : tous
         # atterrissaient à l'index 0, s'entassaient en tête du profil et
         # DÉCALAIENT les 117 vrais canaux. La fixture sortait à 165 canaux au
-        # lieu des 117 annoncés par son propre mode — donc un patch qui mord sur
+        # lieu des 117 annoncés par son propre mode - donc un patch qui mord sur
         # la fixture suivante et des sorties fausses d'un bout à l'autre.
         if coarse is None:
             continue
@@ -880,7 +880,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         except ValueError:
             continue
 
-        # Résolution du type de canal — la couleur déclarée prime sur le
+        # Résolution du type de canal - la couleur déclarée prime sur le
         # numéro d'emitter (cf. _resolve_emitter)
         mapped = _resolve_emitter(ct) if _is_emitter_attr(attr, ct) else None
         if mapped is None:
@@ -890,7 +890,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
             #
             # ⚠️ Le chiffre qui suit le préfixe ne veut pas dire la même chose
             # partout, et c'est tout l'enjeu :
-            #   - sur un ÉMETTEUR, il EST l'identité — COLORRGB15 est le 15e
+            #   - sur un ÉMETTEUR, il EST l'identité - COLORRGB15 est le 15e
             #     émetteur, surtout pas COLORRGB1 (rouge). Il doit bloquer.
             #   - partout ailleurs, c'est un simple numéro de section :
             #     SHUTTER1/SHUTTER2 sont deux obturateurs, SPEED1 une vitesse.
@@ -906,7 +906,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
                 mapped = val
                 break
         # Dernière chance avant l'abandon : le NOM du canal. Voir
-        # `_type_depuis_libelle` — c'est ce qui récupère les couronnes LED, dont
+        # `_type_depuis_libelle` - c'est ce qui récupère les couronnes LED, dont
         # l'attribut ne ressemble à rien mais dont le nom dit « Light strip ».
         if mapped is None:
             mapped = _type_depuis_libelle(libelle, deja_poses)
@@ -915,7 +915,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         # jusqu'ici sur « Mode », qui est tout sauf inoffensif : le moteur gange
         # les canaux de même type sur `proj.mode_value`, et sur beaucoup de
         # lyres ce canal porte les PROGRAMMES INTERNES. Une seule valeur de Mode
-        # non nulle lançait donc le programme automatique de l'appareil — vécu
+        # non nulle lançait donc le programme automatique de l'appareil - vécu
         # sur un Betopper LM1915R, dont la ring light RGB non reconnue se
         # retrouvait mappée en Mode aux côtés de ses canaux MODEL / MODEL-A.
         # « Unused » sort 0 en toutes circonstances, et se voit dans l'éditeur.
@@ -940,14 +940,14 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         # Un canal de mode à 0 rend l'appareil inerte. Le Laserworld CS-12000
         # porte son mode sur le canal 1 : 0-49 Blackout, 59-99 Audio, 100-149
         # Stand-alone, 150-255 DMX control. Sorti à 0, le laser est en blackout
-        # et IGNORE ses treize autres canaux — la fixture s'importait sans
+        # et IGNORE ses treize autres canaux - la fixture s'importait sans
         # erreur et ne faisait rien. Le fichier porte pourtant
         # `default="149.756"`, soit exactement le début de « DMX control ».
         #
         # C'est le seul type où la valeur de repos du constructeur et le
         # PLANCHER de MyStrow veulent dire la même chose : « si personne ne
         # pilote ce canal, mets l'appareil en mode DMX ». Restreindre à « Mode »
-        # est essentiel — voir juste en dessous pourquoi le moissonnage général
+        # est essentiel - voir juste en dessous pourquoi le moissonnage général
         # a été retiré.
         #
         # `round` et non `int` : 149.756 tronqué donne 149, qui retombe dans la
@@ -979,7 +979,7 @@ def _parse_ma3_channels(channel_type_elements) -> tuple:
         #
         # Confondre les deux cassait la couleur : le fichier Betopper porte
         # `default="255"` sur R1/G1/B1, ce qui produisait
-        # {"R":255,"G":255,"B":255} — donc tout canal rouge/vert/bleu qui
+        # {"R":255,"G":255,"B":255} - donc tout canal rouge/vert/bleu qui
         # devait sortir 0 était remonté à 255. Un rouge pur virait au blanc et
         # le noir devenait blanc plein : la fixture ne pouvait plus s'éteindre.
         #
@@ -1050,7 +1050,7 @@ def _extract_ma3_wheels(fixture_el) -> dict:
         slot_dmx.setdefault(attr, {})
         for cf in ct.findall("ChannelFunction"):
             sub = (cf.get("subattribute") or "").upper()
-            # Ignorer les fonctions de rotation/spin — ne prendre que la sélection statique
+            # Ignorer les fonctions de rotation/spin - ne prendre que la sélection statique
             if any(k in sub for k in ("SPIN", "ROT", "INDEX")):
                 continue
             for cs in cf.findall("ChannelSet"):
@@ -1088,7 +1088,7 @@ def _extract_ma3_wheels(fixture_el) -> dict:
             dmx_val = dmx_map.get(slot_i, slot_i * 32)
 
             if is_color:
-                # Attributs r/g/b — absent = 255 (canal plein)
+                # Attributs r/g/b - absent = 255 (canal plein)
                 r = int(slot_el.get("r", 255))
                 g = int(slot_el.get("g", 255))
                 b = int(slot_el.get("b", 255))
@@ -1289,7 +1289,7 @@ def parse_qlcplus_xml(data: bytes) -> dict:
     # Mapping type QLC+ -> fixture_type MyStrow
     # ⚠️ "Moving Head" et NON "Lyre" : c'est le libellé utilisé partout ailleurs
     # (builtin_fixtures, _detect_fixture_type, admin). Avec "Lyre", une lyre
-    # importée de QLC+ n'était reconnue comme lyre nulle part — ni par le
+    # importée de QLC+ n'était reconnue comme lyre nulle part - ni par le
     # curseur de couleur (_is_cw_only), ni par la proposition de calibration,
     # ni par la piste Position du séquenceur.
     _TYPE_MAP = {
@@ -1440,7 +1440,7 @@ def _decompress_xmlp(data: bytes) -> bytes:
             return gzip.decompress(data)
         except Exception:
             pass
-    # gzip avec header propriétaire devant (MA3 / MA2) — cherche le magic n'importe où
+    # gzip avec header propriétaire devant (MA3 / MA2) - cherche le magic n'importe où
     idx = data.find(b'\x1f\x8b')
     if idx > 0:
         try:
@@ -1468,7 +1468,7 @@ def _decompress_xmlp(data: bytes) -> bytes:
 #
 # Un appareil moderne n'a plus une seule couleur : couronne (« ring »), LED de
 # déco, cellules d'une barre pixel. Les fichiers constructeur le disent déjà,
-# de deux façons — relevées sur quatre fichiers réels :
+# de deux façons - relevées sur quatre fichiers réels :
 #
 #   A) attributs NUMÉROTÉS sur un module unique
 #      MX 19-rs      : RED, RED1, RED2, RED3…      (25 sections)
@@ -1489,7 +1489,7 @@ def _base_et_section(attr: str):
     """« RED2 » → ('RED','2') ; « R-A » → ('R','A') ; « RED » → ('RED','').
 
     Rend (None, None) si l'attribut ne désigne pas un émetteur de couleur, ou
-    s'il appartient à la famille COLORRGB — dont le suffixe est l'émetteur.
+    s'il appartient à la famille COLORRGB - dont le suffixe est l'émetteur.
     """
     a = (attr or "").upper().strip()
     if not a or a.startswith(("COLORRGB", "COLORADD")):
@@ -1512,7 +1512,7 @@ def detect_sections(channel_type_elements) -> list:
     """Sections de couleur déduites d'un fichier MA.
 
     Retourne une liste de dicts `{"name": str, "channels": [n° de canal]}`,
-    triée par premier canal. Liste VIDE quand il n'y a qu'une section — le cas
+    triée par premier canal. Liste VIDE quand il n'y a qu'une section - le cas
     de l'immense majorité des projecteurs, qu'il ne faut surtout pas déplier.
 
     Deux indices, dans cet ordre :
@@ -1555,7 +1555,7 @@ def detect_sections(channel_type_elements) -> list:
         # ⚠️ Une section doit être un BLOC D'ADRESSES CONTIGU : c'est ce qu'un
         # projecteur enfant occupe. Sur la MX 19-rs, les blancs sont numérotés
         # indépendamment des RGB (WHITE1 est au canal 34, loin de RED1/GREEN1/
-        # BLUE1 en 18-20) — le suffixe les regroupe donc à tort. Plutôt que de
+        # BLUE1 en 18-20) - le suffixe les regroupe donc à tort. Plutôt que de
         # découper de travers, on renonce : mieux vaut une fixture non découpée
         # qu'un découpage faux, que l'utilisateur ne pourrait pas deviner.
         for s in sections:

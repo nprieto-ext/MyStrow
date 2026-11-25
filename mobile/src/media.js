@@ -93,7 +93,7 @@
   // ── Cartouches : un son chacune, appui = lecture, réappui = stop ──────────
   const cartPlayers = [0, 1, 2, 3].map((idx) => {
     const a = new Audio();
-    const msg = () => emit({ type: "cart", idx, title: lib.carts[idx] ? lib.carts[idx].title : "—", state: !a.paused && !a.ended ? 1 : 0 });
+    const msg = () => emit({ type: "cart", idx, title: lib.carts[idx] ? lib.carts[idx].title : "-", state: !a.paused && !a.ended ? 1 : 0 });
     a.addEventListener("play", msg); a.addEventListener("pause", msg); a.addEventListener("ended", msg);
     a._msg = msg;
     return a;
@@ -250,7 +250,7 @@
   // sauter dans le morceau.
   const prog = document.createElement("div");
   prog.id = "media-prog";
-  prog.innerHTML = '<span class="t">0:00</span><div class="bar"><div class="fill"></div></div><span class="d">—</span>';
+  prog.innerHTML = '<span class="t">0:00</span><div class="bar"><div class="fill"></div></div><span class="d">-</span>';
   document.getElementById("now-playing").appendChild(prog);
   const bar = prog.querySelector(".bar"), fill = prog.querySelector(".fill");
   const tEl = prog.querySelector(".t"), dEl = prog.querySelector(".d");
@@ -259,7 +259,7 @@
     const ok = current >= 0 && isFinite(d) && d > 0;
     fill.style.width = ok ? Math.min(100, (t / d) * 100) + "%" : "0";
     tEl.textContent = ok ? fmt(t) || "0:00" : "0:00";
-    dEl.textContent = ok ? "-" + (fmt(d - t) || "0:00") : "—";
+    dEl.textContent = ok ? "-" + (fmt(d - t) || "0:00") : "-";
   }
   ["timeupdate", "loadedmetadata", "ended", "emptied"].forEach((e) => player.addEventListener(e, paintProg));
   function seek(e) {

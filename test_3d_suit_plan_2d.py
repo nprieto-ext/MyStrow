@@ -4,7 +4,7 @@ Scénario remonté le 27/08/2026 : 25 lyres placées en 2D et en 3D, on en
 supprime 20, et les 5 restantes se déplacent en 2D sans bouger d'un pouce en
 3D. Seul remède trouvé : supprimer les 5 et les repatcher.
 
-Cause : la provenance de la position 3D (`_pos3d_src`) a TROIS états — un tuple
+Cause : la provenance de la position 3D (`_pos3d_src`) a TROIS états - un tuple
 (déduite du plan 2D), None (posée à la main) et ABSENT (jamais affichée en 3D,
 à migrer). La sauvegarde du patch écrivait `null` pour l'absent, que le
 chargement relisait en None : toute fixture jamais passée par la 3D était donc
@@ -49,7 +49,7 @@ def _charger(fd):
 
 
 def _pos_3d_affichee(p):
-    """Position réellement envoyée à Three.js — comme dans `_to_data`."""
+    """Position réellement envoyée à Three.js - comme dans `_to_data`."""
     _sync_pos3d_with_canvas(p, p.canvas_x, p.canvas_y)
     dx, dz = _pos3d_from_canvas(p.canvas_x, p.canvas_y)
     x = getattr(p, 'pos_3d_x', None)

@@ -152,8 +152,8 @@ _T = {
                             "in the light REC, on the tablet…"},
     "pxm_save_title": {"fr": "Enregistrer l'effet", "en": "Save the effect"},
     "pxm_save_label": {"fr": "Nom de l'effet :", "en": "Effect name:"},
-    "pxm_saved":     {"fr": "✓  « {name} » enregistré — dans la bibliothèque d'effets",
-                      "en": "✓  “{name}” saved — in the effects library"},
+    "pxm_saved":     {"fr": "✓  « {name} » enregistré - dans la bibliothèque d'effets",
+                      "en": "✓  “{name}” saved - in the effects library"},
     "pxm_ok":        {"fr": "OK", "en": "OK"},
     "pxm_ok_tip":    {"fr": "L'effet continue de tourner", "en": "The effect keeps running"},
     "pxm_pick":      {"fr": "Choisir la couleur", "en": "Pick the colour"},
@@ -562,7 +562,7 @@ class PixelMapDialog(QDialog):
         """Phase (en tours) des vignettes.
 
         ACCUMULÉE image par image (`vitesse × dt`) et non `vitesse × temps
-        écoulé` : sinon accélérer faisait sauter tous les motifs d'un coup —
+        écoulé` : sinon accélérer faisait sauter tous les motifs d'un coup -
         d'autant plus loin que le panneau était ouvert depuis longtemps.
         Même principe que l'horloge de phase du moteur d'effets.
         """
@@ -666,7 +666,7 @@ class PixelMapDialog(QDialog):
         cbox.addWidget(lbl)
         crow = QHBoxLayout(); crow.setSpacing(10)
         # UNE pastille par couleur de la palette (avant : la 1re et la
-        # dernière seulement — « Police » s'affichait rouge → noir, son bleu
+        # dernière seulement - « Police » s'affichait rouge → noir, son bleu
         # était invisible et inéditable ; remontée de Nico, 04/11/26). Chaque
         # pastille ne change QUE sa couleur ; ↺ rend celles de la palette.
         self._sw_lay = QHBoxLayout(); self._sw_lay.setSpacing(4)
@@ -763,8 +763,8 @@ class PixelMapDialog(QDialog):
     _TILES_MIN_H = 2 * 74 + 4
 
     def fit_height(self, avail_h):
-        """Petits écrans (portable 768 px) : la grille de vignettes — qui
-        défile — rétrécit pour que toute la fenêtre tienne à l'écran."""
+        """Petits écrans (portable 768 px) : la grille de vignettes - qui
+        défile - rétrécit pour que toute la fenêtre tienne à l'écran."""
         self._tiles_scroll.setFixedHeight(self._TILES_H)
         self.adjustSize()
         excess = self.sizeHint().height() - (avail_h - 40)

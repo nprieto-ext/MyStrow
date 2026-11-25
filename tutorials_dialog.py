@@ -1,5 +1,5 @@
 """
-TutorialsDialog — playlist YouTube MyStrow chargée en live via flux RSS.
+TutorialsDialog - playlist YouTube MyStrow chargée en live via flux RSS.
 Pas d'API key requise. Vignettes chargées de façon asynchrone.
 """
 import json

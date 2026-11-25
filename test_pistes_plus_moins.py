@@ -4,8 +4,8 @@
 Contexte (02/09/2026) : la release 3.1.89 a supprime les deux lignes de boutons
 « + Piste Effet » / « + Piste Sequence » posees sous les pistes (elles
 meublaient la timeline en permanence). Les actions ont bien survecu au menu
-Edition et au clic droit, mais plus personne ne les trouvait — « ya plus les
-multi ligne » — et le « x » de suppression d'une piste ajoutee, lui, n'a ete
+Edition et au clic droit, mais plus personne ne les trouvait - « ya plus les
+multi ligne » - et le « x » de suppression d'une piste ajoutee, lui, n'a ete
 remplace par RIEN : on pouvait empiler des pistes sans jamais en enlever.
 
 On teste la geometrie et le comportement, pas le pixel : qui porte quelle

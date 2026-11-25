@@ -3,7 +3,7 @@ prestations de service et achat-revente, calculé depuis les factures Axonaut.
 
 Lancée le 1er de chaque mois par la tâche `declaration_mensuelle` (main.py) :
   1. calcule chaque mois de l'année encore absent de Firestore
-     (`declarations/{AAAA-MM}`) — au premier lancement, ça rattrape janvier
+     (`declarations/{AAAA-MM}`) - au premier lancement, ça rattrape janvier
      à fin du mois écoulé ;
   2. écrit le Google Sheet `DECLARATION_SHEET_ID` : un onglet « Récap »
      (une ligne par mois) et un onglet de détail par mois ;
@@ -12,7 +12,7 @@ Lancée le 1er de chaque mois par la tâche `declaration_mensuelle` (main.py) :
 Classement d'une ligne de facture :
   - produit fixe « Interface » (AXONAUT_PRODUCT_INTERFACE) ou libellé
     « Interface USB-DMX … » hors pack                → achat-revente ;
-  - ancienne ligne unique « Pack MyStrow — … »       → coupée comme les
+  - ancienne ligne unique « Pack MyStrow - … »       → coupée comme les
     nouvelles factures (69 € TTC sur le prix catalogue du pack) ;
   - tout le reste (licences, abonnements, presta)    → prestation de service.
 Les avoirs (quantité négative) viennent en déduction de leur catégorie.
@@ -21,7 +21,7 @@ Montant retenu : le HT (`total_pre_tax_amount`), comme la colonne N du
 tableau URSSAF tenu à la main.
 
 Mois de rattachement : la DATE D'ENCAISSEMENT (`paid_date`), règle de la
-micro-entreprise (CA encaissé) — choix de Nicolas le 02/11/2026. Les ventes
+micro-entreprise (CA encaissé) - choix de Nicolas le 02/11/2026. Les ventes
 Stripe sont payées le jour même ; seules les factures payées plus tard
 (Tui France…) se décalent. Une facture partiellement payée ne compte qu'une
 fois soldée (Axonaut ne pose `paid_date` qu'à ce moment-là).
@@ -264,7 +264,7 @@ def mail_html(m: dict, cumul_service: float, cumul_revente: float,
         alerte = (f"<p style='color:#c0392b'><b>⚠ Prestations : {pct_s:.0f} % du "
                   f"plafond annuel ({_eur(PLAFOND_SERVICE)}) atteint.</b></p>")
     return f"""
-<h2>Déclaration URSSAF — {mois_label(y, mo)}</h2>
+<h2>Déclaration URSSAF - {mois_label(y, mo)}</h2>
 <table cellpadding="6" style="border-collapse:collapse;font-size:15px">
 <tr><td>Prestations de service (HT)</td><td align="right"><b>{_eur(m['service_ht'])}</b></td></tr>
 <tr><td>Achat-revente (HT)</td><td align="right"><b>{_eur(m['revente_ht'])}</b></td></tr>

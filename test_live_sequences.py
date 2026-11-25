@@ -3,11 +3,11 @@
 
 Trois volets :
 
-  A. Le panneau  — un 7e onglet a cote de MOUVEMENT/DIMMER/COULEURS/GOBO/
+  A. Le panneau  - un 7e onglet a cote de MOUVEMENT/DIMMER/COULEURS/GOBO/
      STROB/SPECIAL, une grille de memoires, un POOL (comme les mouvements),
      purge des references mortes.
-  B. La source   — ce sont les memoires de PADS, pas les captures REC Lumiere.
-  C. Le moteur   — enchainement a deux niveaux (cues d'une memoire, puis
+  B. La source   - ce sont les memoires de PADS, pas les captures REC Lumiere.
+  C. Le moteur   - enchainement a deux niveaux (cues d'une memoire, puis
      memoires du pool) et ordre d'ecriture d'une image LIVE :
         moteur IA -> memoire du pool -> restauration des groupes GELES
      Ce qui doit donner : la memoire prime sur l'IA, mais ne deborde jamais
@@ -44,7 +44,7 @@ import sequencer
 
 # La config du panneau vit dans ~/.mystrow_live_panel.json : on la detourne
 # vers un fichier temporaire AVANT toute instanciation, sinon le test lirait
-# — et le timer de sauvegarde pourrait ecraser — les reglages reels de la
+# - et le timer de sauvegarde pourrait ecraser - les reglages reels de la
 # machine.
 _tmp_cfg = os.path.join(tempfile.gettempdir(), "test_live_panel_cfg.json")
 sequencer.LiveModePanel._LIVE_PANEL_CFG = _tmp_cfg
@@ -91,7 +91,7 @@ panel.set_sequences_getter(lambda: _dispo)
 recu = []
 # Piege Qt : un Signal(list) convertit les tuples imbriques en LISTES a la
 # traversee. Le recepteur cote main_window doit donc re-tupler avant de s'en
-# servir comme cle — c'est ce que fait `_on_live_sequences_changed`.
+# servir comme cle - c'est ce que fait `_on_live_sequences_changed`.
 panel.sequences_changed.connect(lambda refs: recu.append([tuple(r) for r in refs]))
 
 verifie(len(panel._seq_tiles) == 3, "les 3 memoires de pads ont une tuile")
@@ -231,7 +231,7 @@ bleu = dict(look, base_color="#0000ff")
 jaune = dict(look, base_color="#ffff00")
 
 # Colonne 0 : une memoire simple et une SEQUENCE de 3 cues minutee.
-# Colonne 50 : une capture REC Lumiere — elle ne vit pas sur les pads.
+# Colonne 50 : une capture REC Lumiere - elle ne vit pas sur les pads.
 memoires = [
     [{"cues": [{"projectors": [look, look, look], "duration": 0}],
       "name": "Ambiance salle"},
@@ -272,7 +272,7 @@ def derouler(mw, duree_ms, pas=50):
     """Fait tourner le moteur comme le fait le LIVE : une image tous les 50 ms.
 
     Rend la liste des BASCULES (t, ref, cue). L'etat n'avance que d'un cran par
-    image — c'est le meme principe que le cycle des mouvements — donc sauter
+    image - c'est le meme principe que le cycle des mouvements - donc sauter
     dans le temps ne testerait rien de reel.
     """
     bascules, precedent = [], None
@@ -294,7 +294,7 @@ verifie(derouler(seule, 7000) == [(0,    ((0, 1), 0)),
 verifie(seule.seq.live_panel.courante == (0, 1),
         "le panneau est tenu au courant de la memoire jouee")
 
-# Pool de DEUX memoires : la sequence se deroule, puis la main passe au look —
+# Pool de DEUX memoires : la sequence se deroule, puis la main passe au look -
 # qui n'a aucune duree propre et tient donc le temps du curseur DUREE (7 s).
 duo = FauxMW(memoires, projs, pool=[(0, 1), (0, 0)])
 verifie(derouler(duo, 14000) == [(0,     ((0, 1), 0)),
@@ -305,7 +305,7 @@ verifie(derouler(duo, 14000) == [(0,     ((0, 1), 0)),
         "sequence deroulee -> look du pool (duree du curseur) -> retour")
 
 # Le curseur DUREE est en SECONDES : deux looks sans minutage alternent
-# exactement a cette cadence, quel que soit le BPM detecte — c'est tout
+# exactement a cette cadence, quel que soit le BPM detecte - c'est tout
 # l'interet du passage aux secondes.
 looks = [[{"cues": [{"projectors": [vert]}],  "name": "Look A"},
           {"cues": [{"projectors": [jaune]}], "name": "Look B"}]]
@@ -464,7 +464,7 @@ verifie(projs[1].strobe_speed == 180 and projs[1].channel_extras == {5: 200},
 print()
 # L'invariant qui justifie tout l'interrupteur : si l'onglet MOUVEMENT pouvait
 # etre vide, il suffirait de tout decocher pour rendre les positions a la
-# memoire. Il ne peut pas — ce test le verifie sur le vrai panneau.
+# memoire. Il ne peut pas - ce test le verifie sur le vrai panneau.
 mov = sequencer.LiveModePanel()
 for cle, _icone, _lbl in sequencer.LiveModePanel._MOVEMENTS:
     mov._on_movement_selected(cle)      # tout decocher
@@ -545,7 +545,7 @@ MainWindow._live_seq_state(vide2, 0)
 verifie(vide2.seq.live_panel.overrides == set(),
         "pool vide : le marquage est efface")
 
-# Cote panneau : le marquage passe par la COULEUR, jamais par le libelle —
+# Cote panneau : le marquage passe par la COULEUR, jamais par le libelle -
 # sinon la barre s'allonge et deborde du QScrollArea sans defilement.
 pan2 = sequencer.LiveModePanel()
 libelles_avant = {l: b.text() for l, b in pan2._effect_tab_btns.items()}

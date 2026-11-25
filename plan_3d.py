@@ -1,5 +1,5 @@
 """
-Plan de feu 3D — rendu QPainter, aucune dépendance externe.
+Plan de feu 3D - rendu QPainter, aucune dépendance externe.
 Fenêtre flottante avec projection perspective et orbite souris.
 
 Interactions :
@@ -69,7 +69,7 @@ def _transform(mat, x, y, z):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Lighting helpers — Lambertian model
+# Lighting helpers - Lambertian model
 # ─────────────────────────────────────────────────────────────────────────────
 
 _KL = (0.461, 0.769, 0.307)   # key light direction (normalised from 0.6, 1.0, 0.4)
@@ -173,7 +173,7 @@ def _mh_geometry(p):
     beam_dz = math.cos(pan_angle) * math.sin(theta)
     arm_y  = hang_y - 0.52
     lens_y = arm_y - 0.20
-    # Floor intersection — capped to visible area
+    # Floor intersection - capped to visible area
     if abs(beam_dy) > 0.05:
         t = min(lens_y / (-beam_dy), 8.0)
     else:
@@ -205,7 +205,7 @@ def _draw_human(painter, pt_fn, x, z, tint=None):
     if total_h < 7:          # trop petit pour être lisible
         return
 
-    # ── Contour du corps (dx en m, y en m) — sens horaire depuis tête ──
+    # ── Contour du corps (dx en m, y en m) - sens horaire depuis tête ──
     # Côté droit d'abord, puis côté gauche en remontant
     _O = [
         # Tête
@@ -213,27 +213,27 @@ def _draw_human(painter, pt_fn, x, z, tint=None):
         ( 0.128, 1.660), ( 0.088, 1.575),
         # Cou → épaule droite
         ( 0.064, 1.552), ( 0.235, 1.458),
-        # Bras droit — extérieur
+        # Bras droit - extérieur
         ( 0.408, 1.278), ( 0.434, 1.038), ( 0.398, 0.848),
-        # Bras droit — intérieur (remontée du poignet)
+        # Bras droit - intérieur (remontée du poignet)
         ( 0.272, 0.828), ( 0.210, 0.948),
         # Flanc droit + hanche
         ( 0.190, 0.928),
-        # Jambe droite — extérieur
+        # Jambe droite - extérieur
         ( 0.208, 0.524), ( 0.198, 0.008),
-        # Jambe droite — intérieur
+        # Jambe droite - intérieur
         ( 0.076, 0.008), ( 0.054, 0.504),
         # Entrejambe
         ( 0.000, 0.868),
-        # Jambe gauche — intérieur
+        # Jambe gauche - intérieur
         (-0.054, 0.504), (-0.076, 0.008),
-        # Jambe gauche — extérieur
+        # Jambe gauche - extérieur
         (-0.198, 0.008), (-0.208, 0.524),
         # Flanc gauche + hanche
         (-0.190, 0.928), (-0.210, 0.948),
-        # Bras gauche — intérieur
+        # Bras gauche - intérieur
         (-0.272, 0.828), (-0.398, 0.848),
-        # Bras gauche — extérieur
+        # Bras gauche - extérieur
         (-0.434, 1.038), (-0.408, 1.278),
         # Épaule gauche → cou
         (-0.235, 1.458), (-0.064, 1.552),
@@ -263,7 +263,7 @@ def _draw_human(painter, pt_fn, x, z, tint=None):
         painter.setBrush(QBrush(sg))
         painter.drawEllipse(p_sh, sw, sw * 0.20)
 
-    # ── 2. Corps — path rempli ───────────────────────────────────────────
+    # ── 2. Corps - path rempli ───────────────────────────────────────────
     body = QPainterPath()
     body.moveTo(pts[0])
     for p in pts[1:]:
@@ -290,7 +290,7 @@ def _draw_human(painter, pt_fn, x, z, tint=None):
     painter.setBrush(Qt.NoBrush)
     painter.drawPath(body)
 
-    # ── 4. Tête — sphère séparée plus lumineuse ──────────────────────────
+    # ── 4. Tête - sphère séparée plus lumineuse ──────────────────────────
     if p_hc and head_r > 2.5:
         hg = QRadialGradient(
             QPointF(p_hc.x() - head_r * 0.22,
@@ -551,7 +551,7 @@ class _Canvas3D(QWidget):
             if p1 and p2:
                 painter.setPen(QPen(QColor(col), w)); painter.drawLine(p1, p2)
 
-        # ── Stage cyc — fond de scène ─────────────────────────────────────
+        # ── Stage cyc - fond de scène ─────────────────────────────────────
         _cyc = [pt(-10,0,-5), pt(10,0,-5), pt(10,9.5,-5), pt(-10,9.5,-5)]
         if all(_cyc):
             _gc = QLinearGradient(_cyc[0], _cyc[2])
@@ -569,7 +569,7 @@ class _Canvas3D(QWidget):
             if _top_l and _top_r:
                 painter.setPen(QPen(QColor(35,28,52), 1.5)); painter.drawLine(_top_l, _top_r)
 
-        # ── Sol scène — parquet bois chaud ────────────────────────────────
+        # ── Sol scène - parquet bois chaud ────────────────────────────────
         _sf = [pt(-9,0,-5), pt(9,0,-5), pt(9,0,6), pt(-9,0,6)]
         if all(_sf):
             _gf = QLinearGradient(_sf[0], _sf[2])
@@ -628,7 +628,7 @@ class _Canvas3D(QWidget):
             BFL=_c(xa-_pdx,hy-DY,za-_pdz); BFR=_c(xb-_pdx,hy-DY,zb-_pdz)
             BBL=_c(xa+_pdx,hy-DY,za+_pdz); BBR=_c(xb+_pdx,hy-DY,zb+_pdz)
 
-            # Face du dessus (top plate) — aluminium brossé
+            # Face du dessus (top plate) - aluminium brossé
             if all([TFL,TFR,TBR,TBL]):
                 _gt = QLinearGradient(TFL, TBL)
                 _gt.setColorAt(0.0, QColor(110,110,150))
@@ -637,7 +637,7 @@ class _Canvas3D(QWidget):
                 painter.setBrush(QBrush(_gt)); painter.setPen(Qt.NoPen)
                 painter.drawPolygon(QPolygonF([TFL,TFR,TBR,TBL]))
 
-            # Face avant — avec entretoisement en X
+            # Face avant - avec entretoisement en X
             if all([TFL,TFR,BFL,BFR]):
                 _gf = QLinearGradient(TFL, TFR)
                 _gf.setColorAt(0.0, QColor(60,60,98)); _gf.setColorAt(0.5, QColor(82,82,128))
@@ -702,7 +702,7 @@ class _Canvas3D(QWidget):
                  pt(tb2.get('x_r', 9.),tb2['height'],tb2['z']),cc,1.2)
 
         # ── Precompute ────────────────────────────────────────────────────
-        prjs = list(self._projectors)  # snapshot — safe if set_projectors() fires mid-paint
+        prjs = list(self._projectors)  # snapshot - safe if set_projectors() fires mid-paint
         # Tri back-to-front par distance caméra (algorithme du peintre correct
         # quelle que soit l'orientation de la caméra).
         _ex, _ey, _ez = self._camera_pos()
@@ -749,7 +749,7 @@ class _Canvas3D(QWidget):
                     return -bdz / dist_f, bdx / dist_f
             return 1.0, 0.0  # PAR LED : étalement horizontal par défaut
 
-        # ── Pass A — taches au sol (blending additif) ─────────────────────
+        # ── Pass A - taches au sol (blending additif) ─────────────────────
         painter.setCompositionMode(QPainter.CompositionMode_Plus)
         for p in sorted_prjs:
             if p.get('_skip_3d'): continue
@@ -757,7 +757,7 @@ class _Canvas3D(QWidget):
             if lvl < 0.03: continue
             r,g,b = _strobe_rgb(p)
             _,_,_, (fx,fz) = _src(p)
-            # Tache étendue — halo de diffusion au sol
+            # Tache étendue - halo de diffusion au sol
             pool_r2 = 1.2 + 4.0*lvl
             pool_pts2 = [pp for pp in
                          (pt(fx+pool_r2*math.cos(math.radians(a)), 0.01,
@@ -773,7 +773,7 @@ class _Canvas3D(QWidget):
                 rg2.setColorAt(1.00, QColor(r,g,b, 0))
                 painter.setBrush(QBrush(rg2)); painter.setPen(Qt.NoPen)
                 painter.drawPolygon(QPolygonF(pool_pts2))
-            # Tache principale — centre chaud
+            # Tache principale - centre chaud
             pool_r = 0.35 + 1.9*lvl
             pool_pts = [pp for pp in
                         (pt(fx+pool_r*math.cos(math.radians(a)), 0.01,
@@ -790,7 +790,7 @@ class _Canvas3D(QWidget):
                 painter.setBrush(QBrush(rg)); painter.setPen(Qt.NoPen)
                 painter.drawPolygon(QPolygonF(pool_pts))
 
-        # ── Pass B+C — faisceaux volumétriques multi-couches (additif) ────
+        # ── Pass B+C - faisceaux volumétriques multi-couches (additif) ────
         # 5 couches du plus large/transparent au plus étroit/lumineux :
         # brume externe → glow → faisceau principal → inner glow → cœur
         _BEAM_LAYERS = [
@@ -848,7 +848,7 @@ class _Canvas3D(QWidget):
                     spd  = (gdmx-128)/128.0*120.0 if gdmx else 0.0
                     _draw_gobo_on_beam(painter, tip, bl_g, br_g, slot_idx, (now*spd)%360.0, lvl)
 
-            # Rayon central — cœur très lumineux
+            # Rayon central - cœur très lumineux
             if lvl > 0.05 and bc:
                 _ca = int(min(255, 180*lvl))
                 painter.setPen(QPen(
@@ -858,7 +858,7 @@ class _Canvas3D(QWidget):
 
         painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
-        # ── Pass D — corps de fixture ──────────────────────────────────────
+        # ── Pass D - corps de fixture ──────────────────────────────────────
         for p in sorted_prjs:
             if p.get('_skip_3d'): continue
             x, z = p['x'], p['z']
@@ -891,7 +891,7 @@ class _Canvas3D(QWidget):
                 bar_attach_y = hang_y - BAR_H
                 pivot_y      = bar_attach_y - YAL
 
-                # Bar corners — rotated by body_rotation around vertical axis
+                # Bar corners - rotated by body_rotation around vertical axis
                 _br  = math.radians(p.get('body_rotation', 0.0))
                 _bdx = math.cos(_br) * BAR_W
                 _bdz = math.sin(_br) * BAR_W
@@ -900,7 +900,7 @@ class _Canvas3D(QWidget):
                 bar_bl = pt(x - _bdx, bar_attach_y, z - _bdz)
                 bar_br = pt(x + _bdx, bar_attach_y, z + _bdz)
 
-                # Yoke arm 3-D positions — rotate with pan around Y axis
+                # Yoke arm 3-D positions - rotate with pan around Y axis
                 lx = x - YW * cp;  lz = z - YW * sp2
                 rx = x + YW * cp;  rz = z + YW * sp2
 
@@ -930,7 +930,7 @@ class _Canvas3D(QWidget):
                     painter.setPen(QPen(gc.darker(175), 0.8))
                     painter.drawPolygon(QPolygonF([bar_tl, bar_tr, bar_br, bar_bl]))
 
-                # ── Yoke arms — shadow + corps + reflet tubulaire ─────────────
+                # ── Yoke arms - shadow + corps + reflet tubulaire ─────────────
                 arm_w  = max(4.5, scale_px * 0.12)
                 for at, ab in [(arm_l_top, arm_l_bot), (arm_r_top, arm_r_bot)]:
                     if at and ab:
@@ -979,7 +979,7 @@ class _Canvas3D(QWidget):
                                         Qt.SolidLine, Qt.RoundCap))
                     painter.drawLine(pivot_pt, hp)
 
-                # ── Head — cylindre 3D Lambertian (16 faces) ─────────────────
+                # ── Head - cylindre 3D Lambertian (16 faces) ─────────────────
                 _rx, _ry, _rz = cp, 0.0, sp2
                 _fx_h, _fy_h, _fz_h = bd[0], bd[1], bd[2]
                 _ux_h = _ry*_fz_h - _rz*_fy_h
@@ -987,7 +987,7 @@ class _Canvas3D(QWidget):
                 _uz_h = _rx*_fy_h - _ry*_fx_h
                 _ul = math.sqrt(_ux_h**2 + _uy_h**2 + _uz_h**2) or 1e-9
                 _ux_h /= _ul; _uy_h /= _ul; _uz_h /= _ul
-                _N_SEG = 16          # segments du barrel — lisse
+                _N_SEG = 16          # segments du barrel - lisse
                 _HR    = 0.155       # rayon barrel (m)
                 _HDA   = 0.09        # demi-profondeur côté lentille
                 _HDB   = 0.155       # demi-profondeur côté moteur
@@ -1032,7 +1032,7 @@ class _Canvas3D(QWidget):
                     painter.setBrush(QBrush(QColor(_sr,_sg,_sb)))
                     painter.setPen(QPen(QColor(max(0,_sr-18),max(0,_sg-18),max(0,_sb-14)), 0.5))
                     painter.drawPolygon(QPolygonF(_pts))
-                # Gorge médiane — logement gobos/couleurs
+                # Gorge médiane - logement gobos/couleurs
                 _mid_pts3d = []
                 for _i in range(_N_SEG):
                     _a2 = 2*math.pi*_i/_N_SEG
@@ -1051,7 +1051,7 @@ class _Canvas3D(QWidget):
                     painter.setBrush(Qt.NoBrush)
                     painter.setPen(QPen(QColor(0, 212, 255, 220), 2.5))
                     painter.drawEllipse(hp, max(10.0, scale_px*0.27), max(10.0, scale_px*0.27))
-                # Face avant — lentille + bezel (dessinée par-dessus le barrel)
+                # Face avant - lentille + bezel (dessinée par-dessus le barrel)
                 _lens_visible = _can_see(_fx_h,_fy_h,_fz_h,
                                          hx+_fx_h*_HDA, hy+_fy_h*_HDA, hz+_fz_h*_HDA,
                                          _ex,_ey,_ez)
@@ -1065,7 +1065,7 @@ class _Canvas3D(QWidget):
                         painter.setBrush(QBrush(QColor(_sr2,_sg2,_sb2)))
                         painter.setPen(QPen(QColor(max(0,_sr2-25),max(0,_sg2-25),max(0,_sb2-20)), 0.7))
                         painter.drawPolygon(QPolygonF(_fps))
-                        # Bezel — anneau de séparation optique
+                        # Bezel - anneau de séparation optique
                         painter.setBrush(Qt.NoBrush)
                         painter.setPen(QPen(QColor(12, 12, 20), max(2.2, scale_px * 0.058)))
                         painter.drawPolygon(QPolygonF(_fps))
@@ -1100,7 +1100,7 @@ class _Canvas3D(QWidget):
                                 _hl, _hl * 0.70)
 
             else:
-                # PAR / wash — boîtier avec épaisseur (face avant + face sup + face côté)
+                # PAR / wash - boîtier avec épaisseur (face avant + face sup + face côté)
                 HW = 0.20; HTOP = hang_y - 0.01; HBOT = hang_y - 0.46; LY = hang_y - 0.52
                 _br  = math.radians(p.get('body_rotation', 0.0))
                 _ydx = math.cos(_br) * HW
@@ -1131,7 +1131,7 @@ class _Canvas3D(QWidget):
                         _sf = _min_dp / _dpx
                         btl_b = QPointF(btl.x() + _ddx*_sf, btl.y() + _ddy*_sf)
                         btr_b = QPointF(btr.x() + _ddx*_sf, btr.y() + _ddy*_sf)
-                # Face supérieure (top) — visible depuis l'angle caméra par défaut
+                # Face supérieure (top) - visible depuis l'angle caméra par défaut
                 if btl_b and btr_b:
                     _gtop = QLinearGradient(btl, btl_b)
                     _gtop.setColorAt(0.0, QColor(62, 62, 92))
@@ -1141,7 +1141,7 @@ class _Canvas3D(QWidget):
                     # Bord supérieur arrière (ligne de séparation)
                     painter.setPen(QPen(QColor(22, 22, 38), 0.8))
                     painter.drawLine(btl_b, btr_b)
-                # Corps métallique — dégradé cylindrique
+                # Corps métallique - dégradé cylindrique
                 _gb = QLinearGradient(btl, btr)
                 _gc3 = QColor(52,52,82)
                 _gb.setColorAt(0.00, _gc3.darker(162)); _gb.setColorAt(0.12, _gc3.lighter(134))
@@ -1153,7 +1153,7 @@ class _Canvas3D(QWidget):
                 _cmx = (btl.x()+btr.x())/2
                 painter.setPen(QPen(QColor(30,30,50,130),0.7))
                 painter.drawLine(QPointF(_cmx,btl.y()), QPointF(_cmx,bbl.y()))
-                # Bras du joug (yoke) — U-bracket reliant le collier au corps
+                # Bras du joug (yoke) - U-bracket reliant le collier au corps
                 _yoke_col = QColor(58, 58, 90)
                 _yw = max(1.8, bw_px * 0.048)
                 _ya_l = pt(x - _ydx * 1.05, hang_y - 0.04, z - _ydz * 1.05)
@@ -1176,7 +1176,7 @@ class _Canvas3D(QWidget):
                     painter.setBrush(QBrush(QColor(74,74,112)))
                     painter.setPen(QPen(QColor(36,36,58),0.8))
                     painter.drawEllipse(_cpt, max(2.5, bw_px*0.085), max(2.5, bw_px*0.085))
-                # Face optique — lentille fresnel
+                # Face optique - lentille fresnel
                 _lpt = pt(x, LY, z)
                 if _lpt:
                     _lr = max(4.5, bw_px*0.43); _lry = _lr*0.62
@@ -1214,7 +1214,7 @@ class _Canvas3D(QWidget):
             label = ', '.join(names[:3]) + ('…' if len(names) > 3 else '')
             painter.setPen(QPen(QColor("#00d4ff"), 1))
             painter.drawText(6, H-18,
-                f"  {label}  —  Ctrl+clic: multi-sélection  |  Échap: désélectionner")
+                f"  {label}  -  Ctrl+clic: multi-sélection  |  Échap: désélectionner")
         painter.setPen(QPen(QColor("#33334a"), 1))
         painter.drawText(6, H-6, "drag: orbiter  |  scroll: zoom  |  clic fixture: sélectionner")
         painter.end()
@@ -1810,7 +1810,7 @@ class Plan3DWindow(QMainWindow):
                 r, g, b = _t.red(), _t.green(), _t.blue()
             cx, cy = self._norm_pos(projectors, i)
             fh = getattr(p, 'fixture_height', None)
-            # Positions 3D indépendantes — fallback sur coordonnées du plan 2D
+            # Positions 3D indépendantes - fallback sur coordonnées du plan 2D
             p3x = getattr(p, 'pos_3d_x', None)
             p3z = getattr(p, 'pos_3d_z', None)
             x_world = p3x if p3x is not None else (cx - 0.5) * 18.0
@@ -1838,7 +1838,7 @@ class Plan3DWindow(QMainWindow):
         # pixels. On garde toutes les entrées (l'index doit rester aligné sur
         # mw.projectors pour le clic), mais on marque les membres non
         # représentants `_skip_3d` et on colore le représentant par la moyenne
-        # des pixels allumés — même principe que le bloc du plan 2D.
+        # des pixels allumés - même principe que le bloc du plan 2D.
         self._collapse_matrices_3d(out)
         return out
 

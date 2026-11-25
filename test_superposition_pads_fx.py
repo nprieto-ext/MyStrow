@@ -1,5 +1,5 @@
 """
-test_superposition_pads_fx.py — Les pads FX ignoraient « Superposition d'effets ».
+test_superposition_pads_fx.py - Les pads FX ignoraient « Superposition d'effets ».
 
 Avec la case cochee, les boutons d'effet (colonne de droite de l'AKAI)
 s'empilaient, mais `_toggle_fx_pad` restait exclusif : appuyer sur un pad FX
@@ -113,6 +113,9 @@ class FauxWin:
     def _snapshot_effect_state(self):
         for p in self.projectors:
             self.effect_saved_colors[id(p)] = (QColor(p.base_color), QColor(p.color), p.level)
+
+    def _show_error_toast(self, msg):
+        pass
 
     def _log_message(self, msg, kind=""):
         pass

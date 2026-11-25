@@ -38,7 +38,7 @@ from i18n import tr, tr_name
 
 
 def _ffmpeg_exe():
-    """Chemin de l'exécutable ffmpeg — voir core.ffmpeg_exe().
+    """Chemin de l'exécutable ffmpeg - voir core.ffmpeg_exe().
 
     Conservé comme alias : l'IA Lumière en a besoin aussi, la logique a donc
     déménagé dans core plutôt que d'être recopiée.
@@ -94,7 +94,7 @@ except ImportError:
     HAS_QAUDIO_DECODER = False
 
 
-# Cache pour BUILTIN_EFFECTS — évite l'import répété dans le paintEvent
+# Cache pour BUILTIN_EFFECTS - évite l'import répété dans le paintEvent
 _builtin_effects_cache = None
 
 def _get_builtin_effects():
@@ -114,7 +114,7 @@ def _get_builtin_effects():
 # REC restent donc invisibles sur le contrôleur, tout en réutilisant l'infra
 # mémoire (snapshot, résolution memory_ref, persistance, parité aperçu/show).
 # La classification biblio (section « REC ») repose sur le tag mem["_rec"], pas
-# sur la colonne — robuste même si l'utilisateur a des mémoires dans cette plage.
+# sur la colonne - robuste même si l'utilisateur a des mémoires dans cette plage.
 REC_MEM_COL_START = 50
 REC_MEM_COL_END   = 98   # inclus → 49 colonnes × 8 = 392 slots
 
@@ -124,7 +124,7 @@ _REC_NAME_RE = re.compile(r'^REC \d')
 
 def _is_rec_memory(mem) -> bool:
     """Vrai si la mémoire est une capture REC. Reconnue par le tag `_rec` (posé à
-    l'enregistrement) OU, en repli auto-réparant, par un nom « REC n » — ainsi les
+    l'enregistrement) OU, en repli auto-réparant, par un nom « REC n » - ainsi les
     anciennes captures (créées avant le tag) restent classées dans la section REC."""
     if not isinstance(mem, dict):
         return False
@@ -225,11 +225,11 @@ def resolve_memory_projectors(mem_ref, cue_index, memories):
 
 # Canaux de faisceau restitués par une mémoire en piste Séquence, avec leur
 # valeur de REPOS. Le repos sert de test « la mémoire a-t-elle vraiment réglé ce
-# canal ? » — voir le raisonnement dans `apply_seq_memories_htp`.
+# canal ? » - voir le raisonnement dans `apply_seq_memories_htp`.
 # ⚠️ Le shutter est ouvert à 255 : son repos n'est pas 0.
 # ⚠️ Défini AVANT `SequenceInfoDialog` : le tableau « Contenu séquence » s'en
 # sert pour décider si une mémoire règle vraiment un canal. Deux listes de repos
-# finiraient par diverger — la fenêtre mentirait sur ce que la restitution fait.
+# finiraient par diverger - la fenêtre mentirait sur ce que la restitution fait.
 _REPOS_FAISCEAU = {
     "gobo": 0, "gobo_rotation": 0, "gobo2": 0,
     "zoom": 0, "focus": 0, "iris": 0,
@@ -292,12 +292,12 @@ def memory_state_is_set(ps):
     Une mémoire capture l'état de TOUT le rig, y compris les projecteurs qu'elle
     ne vise pas (niveau 0, pan/tilt au centre, canaux au repos) : les lister tous
     noierait l'information. Le test suit exactement ce que la restitution
-    applique — niveau, pan/tilt hors centre, canaux bruts, et tout canal de
+    applique - niveau, pan/tilt hors centre, canaux bruts, et tout canal de
     faisceau hors repos.
 
     ⚠️ Les canaux de faisceau font partie du test. Sans eux, une mémoire « juste
     un gobo » (rig éteint, `level` 0 partout) était déclarée vide et la fenêtre
-    affichait « n'allume ni ne bouge aucun projecteur » — on en concluait que le
+    affichait « n'allume ni ne bouge aucun projecteur » - on en concluait que le
     REC n'avait rien enregistré, alors que le gobo était bien là et bien rejoué
     par un clip Séquence.
     """
@@ -458,7 +458,7 @@ class MemoryChannelsDialog(QDialog):
     Deuxième étage du tableau « Contenu séquence » : ses colonnes Faisceau et
     Divers résument des dizaines de canaux, impossible de les éditer en ligne.
     Ici chaque canal a son curseur, y compris ceux que la mémoire laisse au
-    repos — c'est aussi comme ça qu'on AJOUTE un gobo à un projecteur que la
+    repos - c'est aussi comme ça qu'on AJOUTE un gobo à un projecteur que la
     mémoire ne réglait pas.
 
     Les canaux bruts (`channel_extras`) sont éditables et supprimables : ils
@@ -599,15 +599,15 @@ class MemoryChannelsDialog(QDialog):
 
 class SequenceInfoDialog(QDialog):
     """Fenêtre « Contenu séquence » d'une mémoire : ce qu'elle impose,
-    projecteur par projecteur — et son ÉDITION.
+    projecteur par projecteur - et son ÉDITION.
 
-    UNE seule implémentation pour les deux portes d'entrée — le clic droit sur
+    UNE seule implémentation pour les deux portes d'entrée - le clic droit sur
     un clip Séquence de REC Lumière, et le clic droit sur un pad mémoire de
     l'AKAI. C'est la même mémoire qu'on regarde : deux tableaux séparés
     finiraient par diverger sur les critères de filtrage ou sur ce que
     « supprimer un projecteur » veut dire.
 
-    Volontairement limitée à CE QUE LA MÉMOIRE IMPOSE — pas au résultat final
+    Volontairement limitée à CE QUE LA MÉMOIRE IMPOSE - pas au résultat final
     sur le câble, qui dépend de ce qui est posé en même temps ailleurs (fusion
     HTP).
 
@@ -620,7 +620,7 @@ class SequenceInfoDialog(QDialog):
     `intensity` module les niveaux affichés (colonne « Effectif ») : c'est
     l'intensité du clip côté REC Lumière, le fader de la colonne côté pad AKAI.
     `intensity_key` nomme correctement cette modulation dans l'en-tête. Elle ne
-    s'édite pas ici — elle n'appartient pas à la mémoire.
+    s'édite pas ici - elle n'appartient pas à la mémoire.
     """
 
     # Colonnes fixes ; viennent ensuite une colonne PAR CANAL (celles que les
@@ -669,7 +669,7 @@ class SequenceInfoDialog(QDialog):
         self._head.setTextFormat(Qt.RichText)
         lay.addWidget(self._head)
 
-        # « Cette mémoire envoie : » — une pastille par paramètre réellement
+        # « Cette mémoire envoie : » - une pastille par paramètre réellement
         # imposé, ✖ pour le retirer de TOUS les projecteurs d'un coup (mémoire
         # « que du strobe » : retirer Position et Niveau + couleur).
         self._chips_scroll = QScrollArea()
@@ -848,7 +848,7 @@ class SequenceInfoDialog(QDialog):
         return getattr(self._mw, 'memories', None)
 
     def _states(self):
-        """États projecteurs du cue regardé — référence VIVE sur la mémoire."""
+        """États projecteurs du cue regardé - référence VIVE sur la mémoire."""
         return resolve_memory_projectors(self._ref, self._cue, self._memories()) or []
 
     def _cue_count(self) -> int:
@@ -869,12 +869,12 @@ class SequenceInfoDialog(QDialog):
         return [i for i in range(n) if memory_state_is_set(states[i])]
 
     def _visible_idxs(self):
-        """N° des projecteurs affichés — ceux que la mémoire règle, ou tous."""
+        """N° des projecteurs affichés - ceux que la mémoire règle, ou tous."""
         if not self._chk_all.isChecked():
             return self._set_idxs()
         # ⚠️ TOUT le patch, pas `min(len(states), …)` : une mémoire enregistrée
         # avant l'ajout d'un projecteur a une liste plus courte que le rig, et
-        # la 2e barre LED patchée après le REC n'apparaissait jamais — même
+        # la 2e barre LED patchée après le REC n'apparaissait jamais - même
         # « tout le patch » coché. L'entrée manquante est créée à la 1re édition
         # (`_ensure_state`), pas ici : simplement regarder ne modifie rien.
         projectors = getattr(self._mw, 'projectors', None) or []
@@ -900,7 +900,7 @@ class SequenceInfoDialog(QDialog):
         return (getattr(p, 'name', '') if p is not None else '') or f"#{idx + 1}"
 
     def _gobo_names(self):
-        """{valeur DMX: nom} des gobos du patch — pour lire « 64 Étoile »."""
+        """{valeur DMX: nom} des gobos du patch - pour lire « 64 Étoile »."""
         if not hasattr(self, '_gobo_cache'):
             try:
                 self._gobo_cache = {d: n for d, n, _c
@@ -980,7 +980,7 @@ class SequenceInfoDialog(QDialog):
 
         Une édition qui vide une ligne (niveau à 0, gobo remis au repos) ne doit
         pas la faire disparaître sous le curseur au milieu d'une saisie : le
-        filtre n'est rejoué qu'au prochain `_rebuild` — case « tout le patch »,
+        filtre n'est rejoué qu'au prochain `_rebuild` - case « tout le patch »,
         pastille, suppression, annulation, réouverture de la fenêtre.
         """
         self._loading = True
@@ -1008,7 +1008,7 @@ class SequenceInfoDialog(QDialog):
         tilt  = ps.get("tilt")
 
         if p is None:
-            addr = "—"
+            addr = "-"
         elif getattr(p, 'universe', 0):
             addr = f"U{getattr(p, 'universe', 0) + 1}·{getattr(p, 'start_address', 1)}"
         else:
@@ -1024,7 +1024,7 @@ class SequenceInfoDialog(QDialog):
                        tip=tr("lt_seq_info_tip_level"))
         self._set_cell(r, self.C_EFF, f"{int(lvl * inten / 100)} %", dim=True)
 
-        col_it = self._set_cell(r, self.C_COLOR, "—", dim=True,
+        col_it = self._set_cell(r, self.C_COLOR, "-", dim=True,
                                 tip=tr("lt_seq_info_tip_color"))
         if lvl > 0:
             qc = QColor(ps.get("base_color", "#ffffff"))
@@ -1048,7 +1048,7 @@ class SequenceInfoDialog(QDialog):
                 if key == "gobo" and self._gobo_names().get(v):
                     txt = f"{v} {self._gobo_names()[v]}"
                 # Valeur posée sur un projecteur qui n'a pas ce canal : rouge
-                # sombre, elle ne sort nulle part — autant la voir et la retirer.
+                # sombre, elle ne sort nulle part - autant la voir et la retirer.
                 self._set_cell(r, c, txt, editable=True,
                                bg="#1a2a33" if a_le_canal else "#3a1c1c",
                                tip=tr("lt_seq_info_tip_cell", v=repos))
@@ -1152,7 +1152,7 @@ class SequenceInfoDialog(QDialog):
             self._cue = cue
             self._fill_cue_combo()
         # Restauration EN PLACE : les dicts sont des références vives sur la
-        # mémoire (clips, pad AKAI) — les remplacer couperait le lien.
+        # mémoire (clips, pad AKAI) - les remplacer couperait le lien.
         for ps, old in zip(self._states(), snap):
             ps.clear()
             ps.update(old)
@@ -1161,7 +1161,7 @@ class SequenceInfoDialog(QDialog):
         self._rebuild()
 
     def _strip(self, fam, idxs=None):
-        """Retire une famille de paramètres — de TOUT le rig de la mémoire
+        """Retire une famille de paramètres - de TOUT le rig de la mémoire
         par défaut (y compris les projecteurs masqués), sinon de `idxs`."""
         states = self._states()
         idxs = range(len(states)) if idxs is None else idxs
@@ -1275,7 +1275,7 @@ class SequenceInfoDialog(QDialog):
             ps["level"] = v
             # Rallumer un projecteur laissé à 0 le rendrait noir : la capture
             # écrit `base_color` = #000000 dès que le niveau est à 0
-            # (cf. `_build_snapshot`). On repart du blanc — la pastille est juste
+            # (cf. `_build_snapshot`). On repart du blanc - la pastille est juste
             # à côté pour choisir mieux.
             if v > 0 and QColor(ps.get("base_color", "#000000")) == QColor("#000000"):
                 ps["base_color"] = "#ffffff"
@@ -1283,7 +1283,7 @@ class SequenceInfoDialog(QDialog):
             if txt == "":
                 # ⚠️ La clé est SUPPRIMÉE, pas remise à 32768 : le rappel par pad
                 # AKAI (`_apply_memory_to_projectors`) applique le pan/tilt dès
-                # que la clé existe, même au centre — il recentrerait la lyre au
+                # que la clé existe, même au centre - il recentrerait la lyre au
                 # lieu de la laisser tranquille. Absente, les deux moteurs
                 # l'ignorent.
                 self._push_undo()
@@ -1353,7 +1353,7 @@ class SequenceInfoDialog(QDialog):
         """Écrit la mémoire sur disque et prévient l'appelant.
 
         Immédiat : les mémoires ne vivent QUE dans `~/.maestro_akai_config.json`
-        et le Ctrl+Z de REC Lumière ne les couvre pas — le filet, c'est le
+        et le Ctrl+Z de REC Lumière ne les couvre pas - le filet, c'est le
         bouton « Annuler » de la fenêtre, tant qu'elle est ouverte.
         """
         if self._mw is not None and self._ref:
@@ -1405,7 +1405,7 @@ class SequenceInfoDialog(QDialog):
                     ps[key] = 0
             # ⚠️ Les clés `pan`/`tilt` sont SUPPRIMÉES et non remises à 32768 :
             # le rappel par pad AKAI applique le pan/tilt dès que la clé existe,
-            # même au centre — il recentrerait la lyre au lieu de la laisser
+            # même au centre - il recentrerait la lyre au lieu de la laisser
             # tranquille. Absente, les deux moteurs l'ignorent.
             ps.pop("pan", None)
             ps.pop("tilt", None)
@@ -1415,12 +1415,12 @@ class SequenceInfoDialog(QDialog):
         return True
 
 def movement_pan_tilt(get, elapsed_s, progress):
-    """Pan/tilt 16 bits d'un clip de mouvement — DÉFINITION UNIQUE.
+    """Pan/tilt 16 bits d'un clip de mouvement - DÉFINITION UNIQUE.
 
     `get(cle, defaut)` lit le clip, qu'il soit un dict (restitution) ou un objet
     Clip (aperçu de l'éditeur) : les deux moteurs appellent donc exactement le
     même calcul. Ils avaient chacun le leur, et l'aperçu ne connaissait tout
-    simplement pas `move_effect` — cercle, figure8, balayage et aléatoire ne
+    simplement pas `move_effect` - cercle, figure8, balayage et aléatoire ne
     bougeaient pas du tout en montage et bougeaient en show.
 
     `elapsed_s` = secondes écoulées depuis le début du clip (mouvements auto),
@@ -1435,7 +1435,7 @@ def movement_pan_tilt(get, elapsed_s, progress):
     tilt_end    = get('tilt_end', 128)
 
     if move_effect:
-        # Effets auto — centre 0-255 (spinbox du dialogue), amplitude 5-120,
+        # Effets auto - centre 0-255 (spinbox du dialogue), amplitude 5-120,
         # convertis en 16 bits.
         t        = elapsed_s * move_speed * 2 * math.pi
         ctr_pan  = pan_start  * 257   # 0-255 → 0-65535
@@ -1461,7 +1461,7 @@ def movement_pan_tilt(get, elapsed_s, progress):
         else:
             pan_val, tilt_val = ctr_pan, ctr_tilt
     else:
-        # Trajectoire linéaire — valeurs 16 bits (PanTiltPad, 0-65535)
+        # Trajectoire linéaire - valeurs 16 bits (PanTiltPad, 0-65535)
         p = max(0.0, min(1.0, progress))
         pan_val  = int(pan_start  + (pan_end  - pan_start)  * p)
         tilt_val = int(tilt_start + (tilt_end - tilt_start) * p)
@@ -1482,14 +1482,14 @@ def reset_beam_channels(projectors, blackout=False):
     À l'arrêt d'une timeline (fin du dernier clip, fin du média, pause,
     changement de ligne, sortie du mode « Play Lumiere », STOP), le moteur DMX
     continue d'émettre l'état des `Projector` 25 fois par seconde. Or les seuls
-    arrêts qui nettoyaient quoi que ce soit remettaient `level`/`color` à zéro —
+    arrêts qui nettoyaient quoi que ce soit remettaient `level`/`color` à zéro -
     et rien d'autre. Tous les canaux de faisceau posés par le dernier clip
     restaient donc collés jusqu'au prochain CLEAR :
 
     - `channel_extras` (canaux bruts) : c'est LE symptôme client. Un « jeu de
       lumière » dont le mode auto/son est un canal brut posé par une mémoire de
       la piste Séquence continuait de tourner indéfiniment après la fin du
-      morceau — le niveau à 0 n'y change rien, ces machines ignorent le dimmer
+      morceau - le niveau à 0 n'y change rien, ces machines ignorent le dimmer
       dans leurs modes internes. « Faut faire clear partout pour stopper. »
     - `strobe_speed`, `gobo`, `prism`, `color_wheel`, `shutter`, `uv`/blanc/
       ambre/orange : même mécanique, symptômes plus discrets (gobo qui reste,
@@ -1499,7 +1499,7 @@ def reset_beam_channels(projectors, blackout=False):
     séquence les ferait sauter au milieu de la course entre deux morceaux
     (cf. la plainte « la lyre part au centre en fin d'effet »).
 
-    `blackout=True` éteint en plus le projecteur — réservé aux arrêts qui
+    `blackout=True` éteint en plus le projecteur - réservé aux arrêts qui
     noircissaient déjà (fin de timeline, pause).
     """
     for p in projectors:
@@ -1527,7 +1527,7 @@ def reset_beam_channels(projectors, blackout=False):
 # On compare donc, attribut par attribut, le rig avant et après l'image : ce que
 # la timeline a réellement posé lui appartient, le reste est rendu tel quel. Ce
 # qu'elle prend est mémorisé (valeur manuelle d'avant) et rendu quand elle le
-# lâche — fin du bloc, pause, arrêt.
+# lâche - fin du bloc, pause, arrêt.
 _HYB_LUMIERE = ("level", "color", "base_color", "color_wheel",
                 "uv", "white_boost", "amber_boost", "orange_boost")
 _HYB_POSITION = ("pan", "tilt")
@@ -1564,7 +1564,7 @@ def hyb_merge(projectors, avant, tenus, forces=None, collants=False,
     """Fusionne la sortie de la timeline avec l'état manuel d'avant l'image.
 
     `avant`  : `hyb_snapshot` de chaque projecteur, pris AVANT la remise au noir.
-    `tenus`  : {idx: {attr: valeur manuelle}} — ce que la timeline tient.
+    `tenus`  : {idx: {attr: valeur manuelle}} - ce que la timeline tient.
                Modifié en place, il persiste d'une image à l'autre.
     `forces` : {idx: attrs} pris d'office même au repos (bloc couleur noir ou
                en fondu, verrous Position / Gobo, projecteurs d'une mémoire).
@@ -1572,7 +1572,7 @@ def hyb_merge(projectors, avant, tenus, forces=None, collants=False,
                tient, il le garde jusqu'à son arrêt, sinon le look manuel
                réapparaîtrait une image sur deux.
     `garder_position` : un bloc est actif. Le pan/tilt n'a pas de repos, on
-               le détecte au mouvement — une lyre arrivée sur sa position ne
+               le détecte au mouvement - une lyre arrivée sur sa position ne
                bouge plus, elle ne doit pas pour autant repartir sur la
                position manuelle tant que le bloc dure.
     """
@@ -1625,7 +1625,7 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win,
     HTP = « highest takes precedence » : pour chaque projecteur, la mémoire qui
     l'allume le plus fort gagne (couleur, niveau, pan/tilt, strobe, canaux
     bruts). Les mémoires qui touchent des projecteurs disjoints s'empilent donc
-    naturellement ; sur un projecteur partagé, la plus lumineuse l'emporte —
+    naturellement ; sur un projecteur partagé, la plus lumineuse l'emporte -
     aucun mélange additif (deux couches ne virent pas au blanc).
 
     UNE seule fonction pour l'aperçu (timeline_editor) ET la restitution
@@ -1707,16 +1707,16 @@ def apply_seq_memories_htp(entries, memories, projectors, main_win,
             # des valeurs hors repos).
             #
             # Une mémoire capture l'état de TOUS les projecteurs, y compris ceux
-            # qu'elle ne vise pas — ils y figurent avec level 0 et sans clé
+            # qu'elle ne vise pas - ils y figurent avec level 0 et sans clé
             # `uv`. Appliqués inconditionnellement (régression 3.1.79), ces
             # `setattr(proj, attr, 0)` s'exécutaient donc sur tout le rig dès
             # qu'une piste Séquence était active, et remettaient à zéro l'UV ou
-            # l'Ambre posés juste avant par un bloc de la piste couleur — lequel
+            # l'Ambre posés juste avant par un bloc de la piste couleur - lequel
             # met le RVB à zéro par conception (cf. core.apply_special_block).
             # Résultat : bloc « Black Light » ou « Ambre » totalement muet,
             # projecteur éteint. Ici, une mémoire ne peut effacer ces canaux que
             # lorsqu'elle allume réellement le projecteur, donc qu'elle en
-            # définit l'état complet — ce que fait déjà la couleur RVB.
+            # définit l'état complet - ce que fait déjà la couleur RVB.
             # Sauf si une mémoire levée avec elle les pose (posés plus haut).
             for _attr in ("uv", "white_boost", "amber_boost", "orange_boost"):
                 if _attr in params:
@@ -1831,7 +1831,7 @@ def xfade_resolve(active_clip, prev_clip, next_clip, current_time, get):
     On teste sa TÊTE (jointure avec `prev_clip`, si active porte un xfade) et sa
     QUEUE (jointure avec `next_clip`, si next porte un xfade). Renvoie
     (color, color2, intensity) ou None hors zone de fondu. Sert les DEUX moteurs
-    (aperçu éditeur + show) — parité obligatoire.
+    (aperçu éditeur + show) - parité obligatoire.
     """
     start = get(active_clip, 'start', 0)
     dur   = get(active_clip, 'duration', 0)
@@ -1862,7 +1862,7 @@ def xfade_resolve(active_clip, prev_clip, next_clip, current_time, get):
 
 
 class _ColorSwatch(QPushButton):
-    """Bouton couleur avec rendu premium — gradient + shine."""
+    """Bouton couleur avec rendu premium - gradient + shine."""
 
     S = 46   # taille en px
 
@@ -1940,7 +1940,7 @@ class _ColorSwatch(QPushButton):
 
 
 class ColorPalette(QWidget):
-    """Palette de couleurs draggable — flow layout auto-wrap selon la largeur fenetre."""
+    """Palette de couleurs draggable - flow layout auto-wrap selon la largeur fenetre."""
 
     _SPACING = 5
     _MARGIN  = 6
@@ -2148,7 +2148,7 @@ class MemoryDragButton(QPushButton):
 
 
 class _EffectChip(QWidget):
-    """Chip draggable représentant un effet — pour la ligne Effets de la palette."""
+    """Chip draggable représentant un effet - pour la ligne Effets de la palette."""
 
     H = 46
 
@@ -2211,7 +2211,7 @@ class _EffectChip(QWidget):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  LIBRARY PANEL  —  panneau bibliothèque latéral (nouveau layout éditeur)
+#  LIBRARY PANEL  -  panneau bibliothèque latéral (nouveau layout éditeur)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _LibraryItem(QWidget):
@@ -2346,7 +2346,7 @@ class _LibraryItem(QWidget):
             cb()
 
     def _context_extra_actions(self, menu, ed):
-        """Actions contextuelles en plus du « Bloquer » — retourne {QAction: callable}.
+        """Actions contextuelles en plus du « Bloquer » - retourne {QAction: callable}.
         Surchargé par sous-classe (ex. Renommer / Supprimer un REC)."""
         return {}
 
@@ -2535,7 +2535,7 @@ class _LibraryMemItem(_LibraryItem):
         if hasattr(mw, '_save_akai_config_auto'):
             mw._save_akai_config_auto()
         # Répercuter la couleur d'affichage sur les blocs de séquence liés
-        # (purement visuel — la lumière vient de la mémoire, pas de clip.color).
+        # (purement visuel - la lumière vient de la mémoire, pas de clip.color).
         ref = (self._mem_col, self._mem_row)
         if ed:
             for t in getattr(ed, 'tracks', []):
@@ -2667,7 +2667,7 @@ class _LibraryEffectItem(_LibraryItem):
         super().__init__(f"{emoji}  {name}", panel, parent)
 
         # L'emoji de l'effet fait déjà office de pastille : le swatch violet
-        # vide était un doublon. On le masque — le layout l'ignore et l'emoji
+        # vide était un doublon. On le masque - le layout l'ignore et l'emoji
         # vient donc se placer pile dans la colonne des swatches des autres
         # sections, l'alignement de la bibliothèque est conservé.
         self._sw.hide()
@@ -2783,11 +2783,11 @@ class _LibraryPositionItem(_LibraryItem):
         """Index dans position_presets, en convertissant le preset Plan de Feu au besoin.
 
         La conversion elle-même vit dans `MainWindow.pdf_position_to_akai_index`
-        — point unique partagé avec le menu POSITION de l'éditeur d'effets. Elle
+        - point unique partagé avec le menu POSITION de l'éditeur d'effets. Elle
         RAFRAÎCHIT une copie de même nom au lieu de simplement la retrouver :
         celle-ci date du premier glisser-déposer, et une lyre ajoutée au rig
         depuis puis fusionnée dans la position côté plan de feu n'y figurait
-        pas — « le merge ne s'applique pas dans REC Lumière ».
+        pas - « le merge ne s'applique pas dans REC Lumière ».
         """
         if self._preset_idx is not None or not self._pdf:
             return self._preset_idx
@@ -2981,7 +2981,7 @@ class LibraryPanel(QWidget):
             sec.setVisible(any_visible or not query)
 
     def wheelEvent(self, event):
-        """Scroll vertical de la bibliothèque — ne remonte jamais à la timeline."""
+        """Scroll vertical de la bibliothèque - ne remonte jamais à la timeline."""
         sb = self._scroll.verticalScrollBar()
         sb.setValue(sb.value() - event.angleDelta().y() // 2)
         event.accept()
@@ -3212,7 +3212,7 @@ class LibraryPanel(QWidget):
         # Les positions viennent de DEUX fichiers distincts : les positions AKAI
         # (position_presets, ~/.maestro_akai_config.json) et les presets du plan
         # de feu (~/.mystrow_moving_presets.json). Seules les premières étaient
-        # listées ici — d'où l'impression d'avoir perdu des positions alors
+        # listées ici - d'où l'impression d'avoir perdu des positions alors
         # qu'elles n'étaient simplement pas affichées. On montre les deux, en
         # écartant par NOM les presets déjà repris côté AKAI pour ne pas doubler.
         pdf_presets = []
@@ -3234,7 +3234,7 @@ class LibraryPanel(QWidget):
             for pi, preset in enumerate(pos_presets):
                 # _LibraryItem s'enregistre déjà auprès du panneau : un
                 # _register() supplémentaire inscrivait chaque position DEUX fois
-                # dans _all_items, que _deregister_list ne retirait qu'une fois —
+                # dans _all_items, que _deregister_list ne retirait qu'une fois -
                 # la liste grossissait de 9 entrées à chaque rafraîchissement.
                 self._sec_pos.add_item(
                     _LibraryPositionItem(pi, preset.get("name", f"POS {pi+1}"), panel=self))
@@ -3286,7 +3286,7 @@ class LibraryPanel(QWidget):
                 # Roue non décrite (fixture patchée avant l'extraction des roues,
                 # ou profil sans détail) : on propose la table générique plutôt
                 # qu'une section vide. Sans ça, une lyre équipée d'un canal Gobo1
-                # n'offrait AUCUN bloc à glisser — la piste était inutilisable.
+                # n'offrait AUCUN bloc à glisser - la piste était inutilisable.
                 # Mêmes valeurs que l'éditeur de roue de gobos.
                 try:
                     from color_wheel_editor import _GENERIC_GOBO_SLOTS
@@ -3308,11 +3308,11 @@ class LibraryPanel(QWidget):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PALETTE PANEL  (conservé pour compatibilité — non affiché dans le nouveau layout)
+#  PALETTE PANEL  (conservé pour compatibilité - non affiché dans le nouveau layout)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class PalettePanel(QWidget):
-    """Palette 4 lignes : Couleurs / Bicoleurs / Mémoires / Effets — scrollables horizontalement."""
+    """Palette 4 lignes : Couleurs / Bicoleurs / Mémoires / Effets - scrollables horizontalement."""
 
     _ROW_H   = 56
     _SCROLL_SS = """
@@ -3574,7 +3574,7 @@ class PalettePanel(QWidget):
 class LightTrack(QWidget):
     """Une piste de lumiere (une ligne dans la timeline)"""
 
-    # ── Géométrie verticale d'un bloc — SOURCE UNIQUE ────────────────────────
+    # ── Géométrie verticale d'un bloc - SOURCE UNIQUE ────────────────────────
     # Ces trois valeurs étaient recopiées en dur dans le rendu (y=10, h=40), le
     # test de survol (10 < y < 50), les marqueurs de fondu enchaîné (30 → 50) et
     # les fantômes de copie. Toute densité de lignes autre que 100 % les faisait
@@ -3653,7 +3653,7 @@ class LightTrack(QWidget):
 
         # Fantômes d'Alt+glisser (copie) : [(start_ms, duree_ms, QColor)].
         # Pendant une copie, les blocs d'origine restent en place et c'est ce
-        # fantôme qui suit le curseur — comme sur un pupitre lumière.
+        # fantôme qui suit le curseur - comme sur un pupitre lumière.
         self._drag_ghosts = []
         # Décalage courant du glisser. En copie les blocs ne bougeant plus,
         # c'est la SEULE trace de la distance parcourue au relâché.
@@ -3687,7 +3687,7 @@ class LightTrack(QWidget):
         """Taille de police mise à l'échelle, ou 0 si le texte ne rentre plus.
 
         Rendre 0 est un signal : à densité forte, les libellés à l'intérieur des
-        blocs sont illisibles et brouillent la couleur — mieux vaut ne rien
+        blocs sont illisibles et brouillent la couleur - mieux vaut ne rien
         écrire que d'empiler des pixels. Les appelants testent `if px:`.
         """
         h = self.clip_h()
@@ -3698,7 +3698,7 @@ class LightTrack(QWidget):
     # ── En-tête de piste : géométrie et rendu ────────────────────────────────
     #
     # Trois zones dans la colonne gelée de 145 px, calquées sur un en-tête de
-    # piste de montage : cadenas, nom, oeil. Tout est peint — le clic tape dans
+    # piste de montage : cadenas, nom, oeil. Tout est peint - le clic tape dans
     # les MÊMES rectangles que le rendu (`_header_rects`), donc aucune dérive
     # possible entre ce qu'on voit et ce qu'on touche, à n'importe quelle densité.
     HEADER_W = 145
@@ -3708,8 +3708,8 @@ class LightTrack(QWidget):
         à une famille multi-lignes, sinon (None, []).
 
         Seules les pistes Effet et Séquence s'empilent : ce sont les deux qui
-        fusionnent (superposition d'effets, HTP de mémoires). Les autres —
-        Position, Gobo, groupes, projecteurs — sont uniques par conception, une
+        fusionnent (superposition d'effets, HTP de mémoires). Les autres -
+        Position, Gobo, groupes, projecteurs - sont uniques par conception, une
         deuxième ligne n'y voudrait rien dire.
         """
         ed = self.parent_editor
@@ -3722,8 +3722,8 @@ class LightTrack(QWidget):
     def _header_actions(self):
         """Icônes d'action de l'en-tête, de droite à gauche.
 
-        Le « ＋ » ne s'affiche que sur la DERNIÈRE piste de la famille — une
-        ligne par piste meublerait la colonne pour rien — et le « × » que sur
+        Le « ＋ » ne s'affiche que sur la DERNIÈRE piste de la famille - une
+        ligne par piste meublerait la colonne pour rien - et le « × » que sur
         les pistes ajoutées, jamais sur la première : c'est elle que chargent
         les montages existants et que vise le code par son nom.
         """
@@ -3791,7 +3791,7 @@ class LightTrack(QWidget):
         if not px:
             return
         # Même typo que la bibliothèque de gauche : Segoe UI 11 px, sans gras.
-        # Un en-tête de piste est un repère, pas un titre — le gras et les 12 px
+        # Un en-tête de piste est un repère, pas un titre - le gras et les 12 px
         # d'avant alourdissaient une colonne qu'on lit soixante fois par écran.
         f = painter.font()
         f.setFamilies(self.NAME_FAMILIES)
@@ -3827,7 +3827,7 @@ class LightTrack(QWidget):
         return max(8, min(11, h - 6))
 
     def _paint_lock(self, painter, r):
-        """Cadenas plein, anse en crochet — le dessin d'un pupitre de montage.
+        """Cadenas plein, anse en crochet - le dessin d'un pupitre de montage.
 
         Corps plein avec sa serrure ajourée, anse tracée par-dessus : fermée et
         centrée quand la piste est verrouillée, ouverte en crochet vers la
@@ -3863,7 +3863,7 @@ class LightTrack(QWidget):
             anse.lineTo(bcx - R, by0)
         else:
             # Crochet : la branche droite plonge dans le corps, la gauche reste
-            # libre EN L'AIR — c'est ce déséquilibre qui se lit « ouvert » d'un
+            # libre EN L'AIR - c'est ce déséquilibre qui se lit « ouvert » d'un
             # coup d'oeil. Le bout libre doit s'arrêter franchement au-dessus du
             # corps : posé dessus, il repassait sous le remplissage du corps et
             # les deux états devenaient impossibles à distinguer.
@@ -3976,7 +3976,7 @@ class LightTrack(QWidget):
 
         # Le « ＋ » change de ligne (nouvelle dernière piste) : toutes les
         # en-têtes de la famille doivent être repeintes, pas seulement celle-ci
-        # — qui, sur un « × », n'existe déjà plus.
+        # - qui, sur un « × », n'existe déjà plus.
         for t in list(getattr(ed, 'tracks', None) or []):
             if t is not self:
                 t.update()
@@ -3992,7 +3992,7 @@ class LightTrack(QWidget):
             return
         self._hdr_hover = zone
         # L'en-tête est PEINT : sans widget dessous, il n'y a pas de tooltip
-        # automatique — c'est le survol qui la pose.
+        # automatique - c'est le survol qui la pose.
         if zone in ('add', 'del'):
             fam, _ = self._multi_family()
             cle = ('lt_hdr_add_effect' if fam == 'effect' else 'lt_hdr_add_sequence') \
@@ -4016,8 +4016,8 @@ class LightTrack(QWidget):
     def set_locked(self, locked):
         """Cadenas.
 
-        Une piste verrouillée refuse tout ce qui modifie ses blocs — glisser,
-        redimensionner, déposer, peindre, couper, supprimer — mais continue de
+        Une piste verrouillée refuse tout ce qui modifie ses blocs - glisser,
+        redimensionner, déposer, peindre, couper, supprimer - mais continue de
         s'afficher ET de jouer normalement. C'est une protection d'édition, pas
         un mute : le show sort exactement pareil.
         """
@@ -4053,7 +4053,7 @@ class LightTrack(QWidget):
         « Séquence 3 »…) gardent leur nom FRANÇAIS comme clé : le code et les
         montages enregistrés les retrouvent par ce nom (`track_map`, préfixes
         `Effet` / `Séquence` au chargement, restitution). On ne traduit donc que
-        le libellé affiché — avant, ces en-têtes restaient en français dans
+        le libellé affiché - avant, ces en-têtes restaient en français dans
         toutes les langues.
         """
         # `display_label` vaut `name` par défaut (__init__) : seul un libellé
@@ -4141,7 +4141,7 @@ class LightTrack(QWidget):
 
         except wave.Error:
             print(f"   Pas un fichier WAV, tentative decodage...")
-            # Essai 1: ffmpeg — le plus robuste, gere tous les MP3 (VBR, ID3 corrompus, encodages non-standard)
+            # Essai 1: ffmpeg - le plus robuste, gere tous les MP3 (VBR, ID3 corrompus, encodages non-standard)
             result = self._extract_waveform_ffmpeg(audio_path, max_samples, cancel_check=cancel_check)
             if result:
                 return result
@@ -4192,12 +4192,12 @@ class LightTrack(QWidget):
                 # Garde-fou : miniaudio (décodeur C) peut se figer INDÉFINIMENT sur
                 # certains MP3 (VBR / ID3 non standard). Sans cette borne, la boucle
                 # tournait à l'infini → « analyse bloquée » sur les machines SANS
-                # ffmpeg (le seul chemin qui atteint miniaudio ici — avec ffmpeg
+                # ffmpeg (le seul chemin qui atteint miniaudio ici - avec ffmpeg
                 # dans le PATH, l'étape précédente court-circuite). On abandonne
                 # après 30 s et on laisse le décodeur Qt natif prendre le relais.
                 if time.time() - _ma_start > 30:
                     _ma_timed_out = True
-                    print("   ⚠️ miniaudio direct s'est figé (>30s) — abandon, bascule décodeur Qt")
+                    print("   ⚠️ miniaudio direct s'est figé (>30s) - abandon, bascule décodeur Qt")
                     break
                 QApplication.processEvents()
                 time.sleep(0.05)
@@ -4569,14 +4569,14 @@ print(json.dumps(waveform))
     def place_dropped_block(self, click_time, wanted_dur, min_dur=None):
         """(début, durée) d'un bloc lâché à `click_time`.
 
-        Règle unique à toutes les familles — couleur, bicolore, mémoire AKAI,
+        Règle unique à toutes les familles - couleur, bicolore, mémoire AKAI,
         position, effet. Le bloc démarre LÀ OÙ on lâche : c'est ça, le geste.
         La durée n'est qu'un défaut, c'est donc elle qui cède quand la place
         manque. Sauf si le trou est si petit que le bloc n'aurait plus aucun
         sens (< min_dur) : on le repousse alors après le clip suivant.
 
-        Avant, chaque branche de dropEvent() avait sa propre règle — les effets
-        se recalaient au début du trou courant, les autres non — d'où un drop
+        Avant, chaque branche de dropEvent() avait sa propre règle - les effets
+        se recalaient au début du trou courant, les autres non - d'où un drop
         au comportement différent selon ce qu'on glissait.
         """
         if min_dur is None:
@@ -4690,7 +4690,7 @@ print(json.dumps(waveform))
             return
 
         # Pan (clic molette) : se déplacer sur la timeline sans attraper de bloc.
-        # (Au trackpad, utiliser le défilement à deux doigts — vertical/horizontal.)
+        # (Au trackpad, utiliser le défilement à deux doigts - vertical/horizontal.)
         if event.button() == Qt.MiddleButton:
             self._panning   = True
             self._pan_start = event.globalPosition().toPoint()
@@ -4965,7 +4965,7 @@ print(json.dumps(waveform))
             new_start = self._apply_snap(new_start, exclude_clip=self.dragging_clip)
             delta = new_start - self.drag_start_positions.get(self.dragging_clip, self.dragging_clip.start_time)
 
-            # Déplacer librement — la résolution des chevauchements se fait au relâché
+            # Déplacer librement - la résolution des chevauchements se fait au relâché
             clamped_delta = delta
 
             # Clamp uniquement pour ne pas aller sous 0
@@ -5160,7 +5160,7 @@ print(json.dumps(waveform))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Fin drag/resize — résout les chevauchements éventuels."""
+        """Fin drag/resize - résout les chevauchements éventuels."""
         if getattr(self, '_panning', False):
             self._panning = False
             self.setCursor(Qt.ArrowCursor)
@@ -5258,7 +5258,7 @@ print(json.dumps(waveform))
                             self._resolve_overlap(track, new_clip)
                         track.update()
                 else:
-                    # DÉPLACE normal — résoudre les chevauchements
+                    # DÉPLACE normal - résoudre les chevauchements
                     for track in self.parent_editor.tracks:
                         dragged = [c for c in track.selected_clips if c in self.drag_start_positions]
                         for c in dragged:
@@ -5414,7 +5414,7 @@ print(json.dumps(waveform))
             act_hide = menu.addAction(tr("lt_hdr_hide"))
             act_hide.triggered.connect(lambda: ed.set_track_row_visible(self, False))
 
-        # Vider : ici aussi, pas seulement dans le vide de la piste — une piste
+        # Vider : ici aussi, pas seulement dans le vide de la piste - une piste
         # remplie de bout en bout n'offre plus un pixel où faire ce clic droit.
         self._add_clear_track_action(menu)
 
@@ -5441,7 +5441,7 @@ print(json.dumps(waveform))
         menu.exec(global_pos)
 
     def show_clear_only_menu(self, global_pos):
-        """Menu réduit à « Vider la piste » — pistes sans menu de création."""
+        """Menu réduit à « Vider la piste » - pistes sans menu de création."""
         menu = QMenu(self)
         menu.setStyleSheet(self._EFFECT_MENU_STYLE)
         if self._add_clear_track_action(menu):
@@ -5451,7 +5451,7 @@ print(json.dumps(waveform))
         """Ajoute « Vider la piste (n blocs) » à un menu contextuel.
 
         Branchée sur les menus de zone vide de TOUTES les pistes (couleur,
-        Effet, Séquence, Position, Gobo) et sur le menu de l'en-tête — ce
+        Effet, Séquence, Position, Gobo) et sur le menu de l'en-tête - ce
         dernier est le seul accessible quand la piste est pleine de bout en
         bout : il n'y a alors plus un pixel de vide où faire un clic droit.
 
@@ -5459,7 +5459,7 @@ print(json.dumps(waveform))
         des dizaines d'entrées, l'action serait injoignable en bas.
 
         Rien n'est ajouté sur une piste vide (pas de faux bouton) ni sur une
-        piste verrouillée — le cadenas garde tous les autres chemins d'écriture.
+        piste verrouillée - le cadenas garde tous les autres chemins d'écriture.
         """
         from PySide6.QtGui import QAction
         if self.locked or not self.clips:
@@ -5810,7 +5810,7 @@ print(json.dumps(waveform))
         """Fenêtre « Info » d'un clip Séquence : contenu de la mémoire rappelée.
 
         Le tableau, ses critères de filtrage et la suppression d'un projecteur
-        vivent dans `SequenceInfoDialog` — partagés avec le clic droit sur un
+        vivent dans `SequenceInfoDialog` - partagés avec le clic droit sur un
         pad mémoire de l'AKAI, qui regarde exactement la même mémoire.
         """
         SequenceInfoDialog(
@@ -5835,7 +5835,7 @@ print(json.dumps(waveform))
             "QMenu::item:disabled { color:#555; font-size:9px; letter-spacing:1px; }"
             "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
         )
-        cur = getattr(clip, 'gobo_name', '') or '—'
+        cur = getattr(clip, 'gobo_name', '') or '-'
         hdr = menu.addAction(tr("lt_f_gobo", cur=cur))
         hdr.setEnabled(False)
         menu.addSeparator()
@@ -5937,7 +5937,7 @@ print(json.dumps(waveform))
             "QMenu::separator { background:#333; height:1px; margin:2px 6px; }"
         )
 
-        cur_name = getattr(clip, 'position_preset_name', '') or '—'
+        cur_name = getattr(clip, 'position_preset_name', '') or '-'
         hdr = menu.addAction(tr("lt_pos_ctx_header", name=cur_name))
         hdr.setEnabled(False)
         menu.addSeparator()
@@ -5999,7 +5999,7 @@ print(json.dumps(waveform))
         menu.exec(global_pos)
 
     def show_position_empty_menu(self, local_pos, global_pos, click_time_ms):
-        """Menu clic droit sur zone vide de la piste Position — créer un clip depuis un preset."""
+        """Menu clic droit sur zone vide de la piste Position - créer un clip depuis un preset."""
         menu = QMenu(self)
         _style = (
             "QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:2px; font-size:11px; }"
@@ -6953,7 +6953,7 @@ print(json.dumps(waveform))
 
         Le lasso + Suppr faisait déjà le travail, mais seulement sur ce qui est
         à l'écran : sur un show généré ou importé, il fallait dézoomer et
-        recommencer. Ici la piste entière part d'un coup — et elle seule.
+        recommencer. Ici la piste entière part d'un coup - et elle seule.
 
         Annulable : `save_state()` empile l'état APRÈS coup (même convention que
         `delete_clip`), donc Ctrl+Z ramène les blocs.
@@ -7040,7 +7040,7 @@ print(json.dumps(waveform))
         """Pose une COPIE de `clip` sur `cible` à `depart`, sans chevauchement.
 
         La copie passe par `_clone_clip`, seul cloneur de l'éditeur : couleur,
-        fondus, effet, mouvement, mémoire, gobo — tout suit. Le placement passe
+        fondus, effet, mouvement, mémoire, gobo - tout suit. Le placement passe
         par `_resolve_overlap`, la même résolution qu'un glisser cross-piste :
         si la place est prise, le bloc se range dans le trou le plus proche
         plutôt que de se superposer en silence.
@@ -7058,7 +7058,7 @@ print(json.dumps(waveform))
         Le geste de montage classique : la tête reste en place, la queue part
         sur la ligne d'à côté. Sur une piste de groupe suivie de ses
         projecteurs, cela revient à détacher la fin d'un bloc pour ne la garder
-        que sur un projecteur — d'où l'intérêt de l'avoir sous le clic droit.
+        que sur un projecteur - d'où l'intérêt de l'avoir sous le clic droit.
         """
         if clip not in self.clips:
             return
@@ -7114,7 +7114,7 @@ print(json.dumps(waveform))
         for source_clip in clips_to_copy:
             # Clone COMPLET : cette copie ne reprenait que couleur/fondus/effet,
             # donc un bloc de position (ou de mémoire, ou de gobo) copié vers une
-            # autre piste perdait son preset — plus de titre, plus de visée.
+            # autre piste perdait son preset - plus de titre, plus de visée.
             new_clip = self._clone_clip(source_clip, target_track)
             new_clip.start_time = target_track.find_free_position(
                 source_clip.start_time, source_clip.duration)
@@ -7467,7 +7467,7 @@ print(json.dumps(waveform))
                 # démarre LÀ OÙ on lâche, et n'est repoussé que s'il chevauche
                 # un clip existant. L'effet était auparavant recalé au début du
                 # trou courant (fin du clip précédent) : lâché au milieu d'une
-                # zone vide, il sautait en arrière — d'où l'impression que le
+                # zone vide, il sautait en arrière - d'où l'impression que le
                 # drop ne se comporte pas pareil selon ce qu'on glisse.
                 wanted = max(self._default_block_dur_ms(), 10_000)
                 start, clip_duration = self.place_dropped_block(click_time, wanted)
@@ -7587,12 +7587,12 @@ print(json.dumps(waveform))
         return clip
 
     def _clone_clip(self, clip, dest_track):
-        """Copie COMPLÈTE d'un clip — Alt+drag, coupe, copie vers une autre piste.
+        """Copie COMPLÈTE d'un clip - Alt+drag, coupe, copie vers une autre piste.
 
         Seul cloneur en mémoire de l'éditeur : toute duplication passe par ici.
         Ce qui manque à cette liste est silencieusement perdu par la copie, et
         un bloc qui perd son identité (position, mémoire, gobo) retombe en
-        simple bloc couleur — d'où le doublon qui n'avait « ni le bon titre ni
+        simple bloc couleur - d'où le doublon qui n'avait « ni le bon titre ni
         la bonne position ».
         """
         new_clip = LightClip(clip.start_time, clip.duration, QColor(clip.color), clip.intensity, dest_track)
@@ -8115,7 +8115,7 @@ print(json.dumps(waveform))
             # Étiquette « intensité % » des blocs couleur. Les pistes qui
             # dessinent DÉJÀ leur propre libellé (aligné à gauche) doivent être
             # exclues, sinon les deux textes se superposent dès que le bloc est
-            # trop étroit pour les séparer — c'est ce qui arrivait à la piste
+            # trop étroit pour les séparer - c'est ce qui arrivait à la piste
             # Gobo au dézoom. Un gobo n'a de toute façon pas d'intensité.
             if (not getattr(self, 'is_effect_track', False) and
                     not getattr(self, 'is_position_track', False) and
@@ -8247,7 +8247,7 @@ print(json.dumps(waveform))
             painter.setPen(QPen(QColor("#ffffff"), 2, Qt.DashLine))
             painter.drawRoundedRect(g_rect, 6, 6)
 
-        # Marqueurs de fondu enchaîné (2e passe : PAR-DESSUS les 2 blocs) —
+        # Marqueurs de fondu enchaîné (2e passe : PAR-DESSUS les 2 blocs) -
         # centrés sur la jointure, façon transition Premiere.
         self._paint_xfade_markers(painter)
 
@@ -8271,7 +8271,7 @@ print(json.dumps(waveform))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
 
-        # En-tête gelé — peint EN DERNIER pour couvrir tous les clips
+        # En-tête gelé - peint EN DERNIER pour couvrir tous les clips
         self._paint_header(painter, self._scroll_offset())
 
         # Surlignage cible cross-track drag

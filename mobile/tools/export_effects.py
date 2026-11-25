@@ -24,8 +24,8 @@ from effect_editor import BUILTIN_EFFECTS, PAN_TILT_SHAPES  # noqa: E402
 SUPPORTED = {"RGB", "Dimmer", "Strobe", "R", "V", "B", "Permut", "Pan", "Tilt", "Pan/Tilt"}
 
 # Boutons d'effet par défaut : ceux de « Charger les effets par défaut » du PC
-# (main_window, DEFAULT_EFFECTS), sauf Bascule — un échange de couleurs
-# ponctuel, pas une couche — remplacé par Vague.
+# (main_window, DEFAULT_EFFECTS), sauf Bascule - un échange de couleurs
+# ponctuel, pas une couche - remplacé par Vague.
 DEFAULT_BUTTONS = ["Strobe Classique", "Chase Doux", "Pulse Doux", "Rainbow",
                    "Comète", "Vague", "Ping Pong", "Police"]
 

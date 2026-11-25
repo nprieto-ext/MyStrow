@@ -1,5 +1,5 @@
 """
-test_ligne_site_internet.py — Ligne « 🌐 Site internet » de la playlist.
+test_ligne_site_internet.py - Ligne « 🌐 Site internet » de la playlist.
 
 Une page web (ex. mur de messages qui défile) affichée comme une image : sur
 la sortie vidéo si elle est ouverte (le préview en montre des captures), sinon
@@ -8,7 +8,7 @@ rechargée en passant du préview à la sortie : elle perdrait son état.
 
 Le test d'intégration utilise le vrai moteur web et la vraie fenêtre de
 sortie, sur une page locale (pas besoin d'internet) dont un compteur JS
-avance tout seul — s'il repartait de zéro, la page aurait été rechargée.
+avance tout seul - s'il repartait de zéro, la page aurait été rechargée.
 
     python test_ligne_site_internet.py
 """

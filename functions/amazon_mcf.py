@@ -1,5 +1,5 @@
 """
-Amazon SP-API — Expédié par Amazon multicanal (MCF).
+Amazon SP-API - Expédié par Amazon multicanal (MCF).
 
 Le pack boîtier USB-DMX vendu sur mystrow.fr part du stock FBA : le webhook
 Stripe crée la commande MCF ici, et la tâche planifiée `mcf_suivi` vient
@@ -100,7 +100,7 @@ def create_order(order_id: str, sku: str, quantity: int, address: dict,
 
     `address` : clés Stripe (name, line1, line2, city, postal_code, country,
     state, phone). `FillOrKill` : si le stock FBA ne suffit pas, Amazon refuse
-    la commande au lieu d'en expédier une partie — l'erreur remonte à
+    la commande au lieu d'en expédier une partie - l'erreur remonte à
     l'appelant, qui prévient l'admin.
     """
     dest = {
@@ -244,7 +244,7 @@ def get_order_items(amazon_order_id: str) -> list[dict]:
 
 
 def get_inventory(skus: list[str]) -> dict:
-    """Stock FBA vendable par SKU (lecture seule — sert de test de connexion)."""
+    """Stock FBA vendable par SKU (lecture seule - sert de test de connexion)."""
     q = urllib.parse.urlencode({
         "details":         "true",
         "granularityType": "Marketplace",

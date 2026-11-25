@@ -1,5 +1,5 @@
 """
-test_amp_plafond_mouvement.py — Plafond de la colonne AMP sur les canaux de
+test_amp_plafond_mouvement.py - Plafond de la colonne AMP sur les canaux de
 mouvement (Pan, Tilt, Pan/Tilt).
 
 Contexte (retour Christo, 11/09/2026) : « tu peux mettre a 100, ca va pas plus
@@ -15,7 +15,7 @@ Ce que ces tests verrouillent :
   1. le plafond vaut 400 sur Pan / Tilt / Pan/Tilt, 100 ailleurs ;
   2. une couche relue a 400 garde 400 (deux pieges d'ORDRE : la cellule naissait
      bornee a 100, et `refresh()` reposait les valeurs avant le plafond) ;
-  3. changer le canal pour un canal d'intensite rabat la valeur — un `size` de
+  3. changer le canal pour un canal d'intensite rabat la valeur - un `size` de
      400 laisse sur un Dimmer multiplierait l'intensite par quatre ;
   4. les 5 sites de rendu portent toujours `* 8192`, a l'identique de part et
      d'autre (apercu de l'editeur ET moteur du show).
@@ -152,8 +152,8 @@ class TestLeFacteurDeRenduNeBougePas(unittest.TestCase):
     def _lignes_de_code(fichier, motif):
         """Lignes de code portant `motif`, commentaires exclus.
 
-        Les commentaires citent le facteur abondamment — c'est voulu, ils
-        expliquent pourquoi il ne bouge pas — et les compter rendrait ce test
+        Les commentaires citent le facteur abondamment - c'est voulu, ils
+        expliquent pourquoi il ne bouge pas - et les compter rendrait ce test
         faux a la premiere phrase ajoutee.
         """
         with io.open(fichier, encoding='utf-8') as f:

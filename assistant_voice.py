@@ -1,5 +1,5 @@
 """
-assistant_voice.py — Dictée vocale de l'assistant, hors ligne.
+assistant_voice.py - Dictée vocale de l'assistant, hors ligne.
 
 Micro (sounddevice, 16 kHz mono) → faster-whisper sur le processeur → texte.
 Le modèle (~145 Mo pour « base ») est téléchargé au premier usage dans

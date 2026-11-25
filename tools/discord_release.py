@@ -64,7 +64,7 @@ MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
 
 
 def get_version():
-    """Lit VERSION dans core.py — jamais de numero saisi a la main."""
+    """Lit VERSION dans core.py - jamais de numero saisi a la main."""
     src = io.open(CORE, encoding="utf-8").read()
     m = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', src, re.M)
     if not m:
@@ -79,9 +79,9 @@ def today_fr():
 
 def links_block():
     return (
-        f"🪟  **Windows 10 / 11** — [télécharger l'installeur]({DL_WIN})\n"
-        f"🍎  **macOS Apple Silicon** (M1 → M5) — [télécharger le .dmg]({DL_MAC})\n"
-        f"🍏  **macOS Intel** — [télécharger le .dmg]({DL_MAC_INTEL})"
+        f"🪟  **Windows 10 / 11** - [télécharger l'installeur]({DL_WIN})\n"
+        f"🍎  **macOS Apple Silicon** (M1 → M5) - [télécharger le .dmg]({DL_MAC})\n"
+        f"🍏  **macOS Intel** - [télécharger le .dmg]({DL_MAC_INTEL})"
     )
 
 
@@ -148,7 +148,7 @@ def send(webhook, embed):
 
 
 def do_latest(version):
-    """Delegue a release.notify_discord_latest — implementation unique."""
+    """Delegue a release.notify_discord_latest - implementation unique."""
     ok, msg = notify_discord_latest(version)
     print("  " + msg)
     if not ok:
@@ -178,7 +178,7 @@ def show(embed):
 
 def main():
     # La console Windows est en cp1252 : les fleches et emoji la font planter.
-    # Sans ca, un simple print ferait sortir le script en erreur — et release.py
+    # Sans ca, un simple print ferait sortir le script en erreur - et release.py
     # croirait a un echec alors que le message est parti.
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")

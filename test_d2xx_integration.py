@@ -24,7 +24,7 @@ if not ok or not dmx.connected:
     sys.exit(1)
 
 # Le thread interne envoie dmx_data[0] en continu à ~40 fps.
-print(f"CH1-4 = 255 pendant {DURATION:.0f}s — le projo doit s'allumer à fond...")
+print(f"CH1-4 = 255 pendant {DURATION:.0f}s - le projo doit s'allumer à fond...")
 for ch in (1, 2, 3, 4):
     dmx.set_channel(ch, 255)
 time.sleep(DURATION)

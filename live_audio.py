@@ -1,5 +1,5 @@
 """
-LiveAudioEngine — Capture audio temps réel + beat detection + détection de section
+LiveAudioEngine - Capture audio temps réel + beat detection + détection de section
 Sources supportées : Loopback système, Micro/Line In, MIDI Clock, Virtual DJ HTTP
 """
 import math
@@ -53,7 +53,7 @@ def ensure_sounddevice():
         print(f"[LiveAudio] sounddevice indisponible : {_SD_ERR}")
     return HAS_SD
 
-# pyaudiowpatch — WASAPI loopback natif sur Windows (Spotify, YouTube, etc.)
+# pyaudiowpatch - WASAPI loopback natif sur Windows (Spotify, YouTube, etc.)
 try:
     import pyaudiowpatch as _pyaudio_w
     HAS_PYAUDIOWPATCH = True
@@ -93,9 +93,9 @@ _DEV_EXCLUDE_KEYWORDS = (
     'périphérique audio principal', 'primary sound',
     '@system32', 'bthhfenum',
     'ksproxy', 'ksthunk',
-    'loopmidi', 'loop midi',   # port MIDI virtuel — pas une carte son
+    'loopmidi', 'loop midi',   # port MIDI virtuel - pas une carte son
     'midi mapper', 'midi through',
-    'iac driver',              # Mac MIDI virtuel — pas une carte son
+    'iac driver',              # Mac MIDI virtuel - pas une carte son
 )
 
 def get_audio_devices() -> list:
@@ -201,13 +201,13 @@ class _PyAudioLoopbackStream:
         self._running = False
 
     def close(self):
-        """Extinction du flux — l'ORDRE est critique, il a fait crasher MyStrow.
+        """Extinction du flux - l'ORDRE est critique, il a fait crasher MyStrow.
 
         Avant, on fermait le stream d'abord, exprès, « pour débloquer le reader »
         coincé dans `stream.read()`. C'est précisément le geste interdit :
         `Pa_CloseStream` libère les tampons pendant que le thread de lecture
         écrit dedans. Deux crashs natifs relevés chez un utilisateur en sortant
-        du mode LIVE — `access violation`, puis `0xc0000374` (corruption du tas),
+        du mode LIVE - `access violation`, puis `0xc0000374` (corruption du tas),
         les deux avec `pyaudiowpatch.read`/`close` en haut de pile.
 
         Ordre correct : arrêter le flux (ce qui débloque la lecture SANS libérer
@@ -215,7 +215,7 @@ class _PyAudioLoopbackStream:
         """
         self._running = False
 
-        # 1. stop_stream() — débloque le read() en cours sans rien libérer.
+        # 1. stop_stream() - débloque le read() en cours sans rien libérer.
         try:
             self._stream.stop_stream()
         except Exception:
@@ -231,7 +231,7 @@ class _PyAudioLoopbackStream:
 
         # 3. Fermer seulement si plus personne ne lit. Si le thread est encore
         #    dans read() (WASAPI muet peut y rester longtemps), on préfère fuir
-        #    un flux — récupéré à la fermeture du process — plutôt que de libérer
+        #    un flux - récupéré à la fermeture du process - plutôt que de libérer
         #    sous ses pieds la mémoire qu'il écrit : ça tuait l'application.
         if not lecteur_sorti:
             print("[live] flux audio laissé ouvert : thread de lecture encore bloqué")
@@ -257,7 +257,7 @@ class _PyAudioLoopbackStream:
                 self._last_chunk_ts = time.monotonic()
 
     def _reader(self):
-        """Thread de lecture bloquante — stream.read() peut bloquer sans audio WASAPI."""
+        """Thread de lecture bloquante - stream.read() peut bloquer sans audio WASAPI."""
         import struct as _st
         ch   = self._channels
         size = self._chunk_size
@@ -302,7 +302,7 @@ class _PyAudioLoopbackStream:
 
 
 class _SilentStream:
-    """Stream muet placeholder — utilisé pendant le retry pyaudiowpatch (3 s)."""
+    """Stream muet placeholder - utilisé pendant le retry pyaudiowpatch (3 s)."""
     def start(self):  pass
     def stop(self):   pass
     def close(self):  pass
@@ -438,7 +438,7 @@ class LiveAudioEngine(QObject):
         self._running = True
 
         self._open_stream()
-        self._state_timer.start(25)   # 40 fps (aligné DMX) — mouvement lyres plus fluide
+        self._state_timer.start(25)   # 40 fps (aligné DMX) - mouvement lyres plus fluide
 
     def stop(self):
         self._running = False
@@ -500,7 +500,7 @@ class LiveAudioEngine(QObject):
 
         Seule une source audio doit détecter ses beats dans le signal. Le test
         valait `in ('loopback', 'mic')` : il ignorait les entrées choisies
-        par périphérique (`dev_in:N`, `dev_out:N`) — VU-mètre vivant mais zéro
+        par périphérique (`dev_in:N`, `dev_out:N`) - VU-mètre vivant mais zéro
         beat, BPM à 0, et le plan de feu figé en Musical IA.
         """
         return self._source_key not in ('midi_clock', 'rekordbox', 'virtualdj')
@@ -560,20 +560,22 @@ class LiveAudioEngine(QObject):
             self.device_info.emit(
                 tr("la3_017"))
         else:
-            self.device_info.emit(tr("la3_018"))
+            err = getattr(self, '_last_input_error', '')
+            self.device_info.emit(
+                tr("la3_018") + (f" - {err}" if err else ""))
         self.connection_status.emit('off')
         self._start_audio_fallback()
 
     def _try_loopback(self):
-        # ── 1. pyaudiowpatch WASAPI loopback (Windows — capture n'importe quel device) ──
+        # ── 1. pyaudiowpatch WASAPI loopback (Windows - capture n'importe quel device) ──
         if HAS_PYAUDIOWPATCH:
             stream = self._try_loopback_pyaudio()
             if stream:
                 return stream
-            # pyaudiowpatch a échoué — programmer un retry dans 3 s
+            # pyaudiowpatch a échoué - programmer un retry dans 3 s
             # (device USB/HDMI pas encore prêt juste après le démarrage Windows)
             if self._fallback_tmr is None:  # pas déjà en fallback
-                print("LiveAudio: pyaudiowpatch échoué — retry dans 3 s")
+                print("LiveAudio: pyaudiowpatch échoué - retry dans 3 s")
                 self.device_info.emit(tr("la3_019"))
                 self.connection_status.emit('waiting')
                 self._loopback_retry_count = getattr(self, '_loopback_retry_count', 0) + 1
@@ -581,7 +583,7 @@ class LiveAudioEngine(QObject):
                     QTimer.singleShot(3000, self._retry_loopback_pyaudio)
                     return _SilentStream()  # stream muet, évite le fallback Stéréo Mix
 
-        # ── 2. sounddevice — devices loopback nommés (Stereo Mix, Wave Out…) ──
+        # ── 2. sounddevice - devices loopback nommés (Stereo Mix, Wave Out…) ──
         # ⚠ Ces devices ne capturent QUE la sortie de leur propre carte son.
         # Si la sortie par défaut Windows est sur un autre périphérique (USB, HDMI),
         # le signal sera vide. Dans ce cas, pyaudiowpatch est la seule vraie solution.
@@ -623,7 +625,7 @@ class LiveAudioEngine(QObject):
                             if len(w) > 3 and w not in _GENERIC
                         }
                         dev_name_lower = dev['name'].lower()
-                        # Externe si sortie est USB, HDMI, Bluetooth — Stéréo Mix ne les capture pas
+                        # Externe si sortie est USB, HDMI, Bluetooth - Stéréo Mix ne les capture pas
                         out_is_external = any(k in default_out_hint for k in ('usb', 'hdmi', 'bluetooth', 'bt'))
                         same_card = (not out_is_external) and bool(
                             out_words and any(w in dev_name_lower for w in out_words)
@@ -676,7 +678,7 @@ class LiveAudioEngine(QObject):
 
     @staticmethod
     def _log_audio(msg: str):
-        """Log dans un fichier texte — visible même depuis l'EXE PyInstaller."""
+        """Log dans un fichier texte - visible même depuis l'EXE PyInstaller."""
         try:
             import os, datetime
             log_path = os.path.join(os.path.expanduser('~'), 'mystrow_audio_debug.log')
@@ -794,20 +796,93 @@ class LiveAudioEngine(QObject):
     def _try_input(self):
         try:
             dev = sd.query_devices(kind='input')
-            sr  = int(dev.get('default_samplerate', 44100))
-            ch  = max(1, min(2, int(dev.get('max_input_channels', 2))))
-            self._band_sr = sr
+        except Exception as e:
+            self._last_input_error = str(e)
+            self._log_audio(f"micro : pas d'entrée par défaut ({e})")
+            print(f"LiveAudio: micro erreur ({e})")
+            return None
+        stream = self._open_input_robust(dev.get('index'), dev)
+        if stream:
             self.device_info.emit(tr("la3_031", a=dev['name']))
             self.connection_status.emit('connected')
             print(f"LiveAudio: micro → {dev['name']}")
-            return sd.InputStream(
-                channels=ch, samplerate=sr,
-                blocksize=int(sr * 0.05),
-                callback=self._audio_cb,
-            )
-        except Exception as e:
-            print(f"LiveAudio: micro erreur ({e})")
-            return None
+        return stream
+
+    def _open_input_robust(self, dev_idx, dev):
+        """Ouvre une entrée audio en essayant plusieurs réglages.
+
+        Une seule tentative (WASAPI, fréquence « par défaut », 2 canaux) ne
+        suffit pas : les cartes son pro (Focusrite Scarlett, etc.) refusent
+        souvent l'ouverture WASAPI partagée si leur horloge (réglée dans leur
+        propre logiciel) ne correspond pas à la fréquence annoncée à Windows,
+        ou si un logiciel ASIO / leur panneau tient la carte. Le client ne
+        voyait alors que « Aucun micro / entrée ligne détecté », sans la cause.
+
+        Ordre : même périphérique (fréquence par défaut, 48 k, 44,1 k ; stéréo
+        puis mono), puis le même nom sur les autres API Windows (DirectSound,
+        MME - où le nom est tronqué à 31 caractères). Toutes les erreurs vont
+        dans ~/mystrow_audio_debug.log.
+        """
+        self._last_input_error = ""
+        name = (dev or {}).get('name', '').strip()
+        cands = []                       # (idx, dev)
+        if dev_idx is not None:
+            cands.append((dev_idx, dev))
+        try:
+            all_devs = sd.query_devices()
+            apis = sd.query_hostapis()
+            prefix = name[:31].lower()
+            for i, d in enumerate(all_devs):
+                if i == dev_idx or d.get('max_input_channels', 0) < 1:
+                    continue
+                dn = d.get('name', '').strip().lower()
+                if prefix and (dn.startswith(prefix) or prefix.startswith(dn[:31])) and len(dn) >= 8:
+                    cands.append((i, d))
+            def _api(d):
+                try:
+                    return apis[d.get('hostapi', 0)].get('name', '')
+                except Exception:
+                    return ''
+        except Exception:
+            def _api(d):
+                return ''
+        if dev_idx is None and dev:
+            cands.append((None, dev))
+
+        errors = []
+        for idx, d in cands:
+            max_ch = int(d.get('max_input_channels', 1) or 1)
+            rates = []
+            for r in (int(d.get('default_samplerate', 0) or 0), 48000, 44100):
+                if r and r not in rates:
+                    rates.append(r)
+            chans = []
+            for c in (min(2, max_ch), 1):
+                if c >= 1 and c not in chans:
+                    chans.append(c)
+            for sr in rates:
+                for ch in chans:
+                    try:
+                        kw = dict(channels=ch, samplerate=sr,
+                                  blocksize=int(sr * 0.05), callback=self._audio_cb)
+                        if idx is not None:
+                            kw['device'] = idx
+                        stream = sd.InputStream(**kw)
+                    except Exception as e:
+                        msg = f"{d.get('name', '?')} [{_api(d)}] {sr} Hz {ch} can. → {e}"
+                        errors.append(msg)
+                        self._log_audio(f"entrée refusée : {msg}")
+                        continue
+                    self._band_sr = sr
+                    if errors:
+                        self._log_audio(
+                            f"entrée OUVERTE après {len(errors)} échec(s) : "
+                            f"{d.get('name', '?')} [{_api(d)}] {sr} Hz {ch} can.")
+                    return stream
+        if errors:
+            # La 1re erreur (WASAPI, réglage d'origine) est la plus parlante.
+            self._last_input_error = str(errors[0]).split('→')[-1].strip()
+        return None
 
     def _try_input_device(self, dev_idx: int):
         """Ouvre un périphérique d'entrée spécifique par son index sounddevice."""
@@ -820,17 +895,12 @@ class LiveAudioEngine(QObject):
                 self.connection_status.emit('off')
                 self._start_audio_fallback()
                 return None
-            sr  = int(dev.get('default_samplerate', 44100))
-            ch  = max(1, min(2, int(dev.get('max_input_channels', 1))))
-            self._band_sr = sr
-            self.device_info.emit(tr("la3_035", a=dev['name']))
-            self.connection_status.emit('connected')
-            print(f"LiveAudio: entrée → {dev['name']} (idx {dev_idx})")
-            return sd.InputStream(
-                device=dev_idx, channels=ch, samplerate=sr,
-                blocksize=int(sr * 0.05),
-                callback=self._audio_cb,
-            )
+            stream = self._open_input_robust(dev_idx, dev)
+            if stream:
+                self.device_info.emit(tr("la3_035", a=dev['name']))
+                self.connection_status.emit('connected')
+                print(f"LiveAudio: entrée → {dev['name']} (idx {dev_idx})")
+            return stream
         except Exception as e:
             print(f"LiveAudio: entrée {dev_idx} erreur ({e})")
             return None
@@ -845,7 +915,7 @@ class LiveAudioEngine(QObject):
             except Exception:
                 pass
 
-        # Méthode 1 : pyaudiowpatch — matcher le loopback par nom
+        # Méthode 1 : pyaudiowpatch - matcher le loopback par nom
         if HAS_PYAUDIOWPATCH:
             try:
                 pa = _pyaudio_w.PyAudio()
@@ -908,7 +978,7 @@ class LiveAudioEngine(QObject):
             except Exception as e:
                 print(f"LiveAudio: loopback pyaudio erreur ({e})")
 
-        # Méthode 2 : sounddevice — tenter capture directe si le device a des canaux entrée
+        # Méthode 2 : sounddevice - tenter capture directe si le device a des canaux entrée
         if HAS_SD and dev_idx >= 0:
             try:
                 dev = sd.query_devices(dev_idx)
@@ -965,7 +1035,7 @@ class LiveAudioEngine(QObject):
         Même priorité qu'avant (port « MyStrow », puis le logiciel détecté, puis
         loopMIDI, puis n'importe quel port), mais en LISTE : si le premier reste
         muet on passe au suivant, au lieu de rester collé au premier port que
-        Windows a énuméré. Les ports du contrôleur sont exclus — on les écoute
+        Windows a énuméré. Les ports du contrôleur sont exclus - on les écoute
         déjà par le MIDIHandler.
         """
         held = self._ctrl_held_ports()
@@ -1012,7 +1082,7 @@ class LiveAudioEngine(QObject):
         """Ouvre le prochain port candidat pas encore essayé.
 
         Rien d'ouvrable : on reste à l'écoute du contrôleur seul (s'il y en a
-        un) — c'est le cas d'une DJM branchée en contrôleur, parfaitement
+        un) - c'est le cas d'une DJM branchée en contrôleur, parfaitement
         valable.
         """
         self._close_clock_port()
@@ -1094,7 +1164,7 @@ class LiveAudioEngine(QObject):
         src = self._clock_src
         if src is not None:
             if src not in ports:
-                self._log_audio(f"MIDI Clock : « {src} » débranché — nouvelle recherche")
+                self._log_audio(f"MIDI Clock : « {src} » débranché - nouvelle recherche")
                 self._clock_src = None
                 self._clock_tried = set()
                 self._clock_exhausted = False
@@ -1128,7 +1198,7 @@ class LiveAudioEngine(QObject):
         self._fallback_tmr.start(50)
 
     def _midi_clock_cb(self, event, data=None):
-        """Callback rtmidi — 0xF8 = timing clock (24 messages par beat)."""
+        """Callback rtmidi - 0xF8 = timing clock (24 messages par beat)."""
         if not self._running:
             return
         msg, dt = event
@@ -1290,7 +1360,7 @@ class LiveAudioEngine(QObject):
     # ── Callback audio ─────────────────────────────────────────────────────
 
     def _audio_cb(self, indata, frames, time_info, status):
-        """Callback sounddevice — thread audio (GIL protège les list.append).
+        """Callback sounddevice - thread audio (GIL protège les list.append).
 
         Ce callback s'exécute dans le thread C de PortAudio. Une exception qui
         s'en échappe traverse la frontière C/CFFI et peut faire crasher tout
@@ -1357,7 +1427,7 @@ class LiveAudioEngine(QObject):
             return (cur > long_avg * threshold
                     and now - self._last_transient[hit_key] > refract)
 
-        # Kick drum : 20-80 Hz sub-bass — marqueur de beat le plus fiable en EDM/house.
+        # Kick drum : 20-80 Hz sub-bass - marqueur de beat le plus fiable en EDM/house.
         # refract=0.35 s → max 171 BPM, évite le double-kick (deux spikes rapprochés).
         # En source audio (loopback / mic) : le kick pilote directement le BPM,
         # bien plus précis que la détection RMS full-spectre (snare/hihat polluent).
@@ -1398,13 +1468,13 @@ class LiveAudioEngine(QObject):
         # Soft reset des indices de beat (transition ~1 bar)
         self.audio_ai._last_beat_idx   = len(self.audio_ai.beats) - 1
         self.audio_ai._beat_group_count = max(0, self.audio_ai._beat_group_count - trim_n)
-        print(f"LiveAudio: trim {trim_n} frames ({trim_ms//1000}s) — {len(em)} restants")
+        print(f"LiveAudio: trim {trim_n} frames ({trim_ms//1000}s) - {len(em)} restants")
 
     def _process_chunk(self, rms: float):
         """Met à jour energy_map, détecte beats, section, avance le temps."""
         self._rms_history.append(rms)
 
-        # Floor à 0.001 — laisse la normalisation adapter les signaux loopback faibles
+        # Floor à 0.001 - laisse la normalisation adapter les signaux loopback faibles
         local_max = max(max(self._rms_history) if self._rms_history else 0.01, 0.001)
         norm      = min(1.0, rms / local_max)
 
@@ -1428,7 +1498,7 @@ class LiveAudioEngine(QObject):
             if counts[dominant] >= 4:
                 self._section_state = dominant
 
-        # ── Détection de beat (audio seulement — MIDI/VDJ ont leur propre) ─
+        # ── Détection de beat (audio seulement - MIDI/VDJ ont leur propre) ─
         if self._is_audio_source() and len(self._rms_history) >= 12:
             now = time.monotonic()
             # Si numpy dispo, le kick FFT (_detect_transients) pilote le BPM.

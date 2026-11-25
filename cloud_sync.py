@@ -1,6 +1,6 @@
-"""Patch et effets synchronisés avec le compte MyStrow — façon iCloud.
+"""Patch et effets synchronisés avec le compte MyStrow - façon iCloud.
 
-Demande du 13/10/2026 : « encore plus intuitif, à la Apple — j'ai fait un
+Demande du 13/10/2026 : « encore plus intuitif, à la Apple - j'ai fait un
 patch sur un compte, hop ça l'enregistre sur mon compte ». Aucun bouton :
 connecté, le patch et les effets suivent le compte d'un PC à l'autre.
 
@@ -26,17 +26,17 @@ connecté, le patch et les effets suivent le compte d'un PC à l'autre.
     suivant.
 
 SOBRIÉTÉ FIRESTORE (13/10/2026, « ça va pas coûter cher ? ») : le poste qui
-grossit est la bande passante — chaque lecture rapatrie tout le document.
+grossit est la bande passante - chaque lecture rapatrie tout le document.
   - Lecture en deux temps : d'abord la seule date (`updated_utc`, quelques
     octets via `mask.fieldPaths`) ; le contenu n'est téléchargé que s'il a
     changé depuis la dernière fois. Le dernier contenu vu est gardé en cache
     local (`CACHE_FILE`). Un lancement sans changement ne coûte presque rien.
   - Contenu compressé (zlib + base64, préfixe `z1:`), ~5× plus petit.
-  - Envoi groupé : `QUIET_S` secondes de calme avant d'envoyer — éditer un
+  - Envoi groupé : `QUIET_S` secondes de calme avant d'envoyer - éditer un
     effet pendant dix minutes fait UN envoi, pas cent.
 
 Ce qui est synchronisé : le patch (`~/.maestro_dmx_patch.json`, profils
-complets de chaque projecteur inclus — pas besoin de la bibliothèque de
+complets de chaque projecteur inclus - pas besoin de la bibliothèque de
 fixtures), les effets (éditeur, bibliothèque modifiée, boutons E1-E8) et,
 depuis le 09/11/2026, les mémoires et pages AKAI. Celles-ci vivent dans
 `~/.maestro_akai_config.json`, qui mélange contenu (mémoires, pages, pads FX,
@@ -288,7 +288,7 @@ def account_uid():
 
 
 def _token():
-    """Jeton frais — RÉSEAU : à n'appeler que depuis un thread."""
+    """Jeton frais - RÉSEAU : à n'appeler que depuis un thread."""
     import license_manager as lm
     return lm.get_current_id_token()
 
@@ -356,9 +356,9 @@ def push(uid: str, local: dict, known=None):
 
     `local` : {clé: {content, sha, utc}}. RÉSEAU (thread). Fusion fichier par
     fichier, le plus récent gagne : un autre PC a pu envoyer entre-temps.
-    Renvoie (pris, files, updated_utc) — `pris` = {clé: sha} des fichiers
+    Renvoie (pris, files, updated_utc) - `pris` = {clé: sha} des fichiers
     locaux désormais dans le compte, `files`/`updated_utc` = nouveau contenu
-    du compte (pour le cache) — ou None en cas d'échec.
+    du compte (pour le cache) - ou None en cas d'échec.
     """
     import urllib.request
     import firebase_client as fc
@@ -550,7 +550,7 @@ class StartupPull:
     """Lance la lecture du compte en arrière-plan dès le splash.
 
     `start()` n'attend rien. `result()` renvoie (files, updated_utc) si la
-    lecture a fini, sinon None — l'appelant (le splash) décide combien de
+    lecture a fini, sinon None - l'appelant (le splash) décide combien de
     temps il attend, jamais plus de `PULL_DEADLINE_S`.
     """
 
@@ -605,7 +605,7 @@ def finish_startup_pull(puller: StartupPull, ask_first_time=None) -> list:
     if plan["conflicts"]:
         # La question est posée une fois par PC… et à nouveau pour un fichier
         # que ce PC n'a JAMAIS échangé (ex. mémoires ajoutées le 09/11) : le
-        # « plus récent gagne » y serait faux — la config AKAI est réécrite à
+        # « plus récent gagne » y serait faux - la config AKAI est réécrite à
         # chaque fermeture, sa date ne dit rien des mémoires.
         S = state.get("synced") or {}
         asked_keys = state.setdefault("asked_keys", [])

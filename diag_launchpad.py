@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Diagnostic Launchpad Mini MK3 — « les LED s'allument mais rien ne rentre ».
+"""Diagnostic Launchpad Mini MK3 - « les LED s'allument mais rien ne rentre ».
 
 Fonctionne sur Windows, macOS et Linux. Autonome : n'importe RIEN de MyStrow,
 pour qu'un souci de l'application ne fausse pas le résultat. Ouvre TOUTES les
 entrées MIDI du contrôleur en même temps et affiche, pour chaque message reçu,
-LE PORT qui l'a émis — c'est la seule façon de savoir si les pads parlent sur
+LE PORT qui l'a émis - c'est la seule façon de savoir si les pads parlent sur
 le port DAW, sur le port MIDI, ou sur aucun des deux.
 
 Usage (remplacer `python3` par `python` sous Windows) :
@@ -38,7 +38,7 @@ except ImportError:
 
 MOTS_CLES = ("LAUNCHPAD", "LPMINI", "MINI MK3")
 
-# Programmer mode ON / Live mode — SysEx Novation Launchpad Mini MK3
+# Programmer mode ON / Live mode - SysEx Novation Launchpad Mini MK3
 SYSEX_PROGRAMMER = [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01, 0xF7]
 SYSEX_LIVE       = [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x00, 0xF7]
 # Identity Request universel : si le boîtier répond, la liaison est bidirectionnelle
@@ -213,7 +213,7 @@ def main():
 
     print()
     print("=" * 72)
-    print("  APPUYEZ SUR DES PADS  —  Ctrl+C pour le récapitulatif")
+    print("  APPUYEZ SUR DES PADS  -  Ctrl+C pour le récapitulatif")
     print("=" * 72)
     print()
 
@@ -240,7 +240,7 @@ def main():
         print("  Le problème est en amont de MyStrow. À vérifier, dans l'ordre :")
         print("   1. Une autre app tient le Launchpad (Ableton, Novation Components,")
         print("      MyStrow déjà lancé…). Fermez-la et relancez.")
-        print("   2. Changer de câble et de port USB — beaucoup de câbles sont")
+        print("   2. Changer de câble et de port USB - beaucoup de câbles sont")
         print("      charge seule et ne transportent aucune donnée.")
         if sys.platform == "darwin":
             print("   3. Configuration audio et MIDI ▸ Fenêtre ▸ Studio MIDI :")

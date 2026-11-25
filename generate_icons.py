@@ -222,7 +222,7 @@ def make_plugin(size=72):
     img, d = make_base(size, (10, 10, 16))
     f_big = ImageFont.truetype(F_BEBAS, int(size * 0.30))
     f_sub = ImageFont.truetype(F_INTER, int(size * 0.11))
-    # MY + STROW — centré
+    # MY + STROW - centré
     bb_my  = d.textbbox((0, 0), 'MY',    font=f_big)
     bb_str = d.textbbox((0, 0), 'STROW', font=f_big)
     w_my   = bb_my[2]  - bb_my[0]

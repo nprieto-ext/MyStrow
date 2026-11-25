@@ -1,16 +1,16 @@
 """
-Éditeur de blocs de preset — MyStrow
+Éditeur de blocs de preset - MyStrow
 
 Un canal de type `Preset1..4` porte une fonction à valeurs pré-enregistrées de
 l'appareil : « Auto 1 », « Sound active », « Fondu », « Blackout »… Cet éditeur
 associe un NOM à chaque valeur DMX, exactement comme l'éditeur de roue de gobos
-le fait pour les positions d'une roue — mais sans couleur, et surtout sans le
+le fait pour les positions d'une roue - mais sans couleur, et surtout sans le
 moindre effet sur le rendu 2D/3D.
 
 C'est ce qui manquait dans MyStrow : `Gobo1` et `ColorWheel` étaient les deux
 seuls types de canaux à offrir des presets nommés, et tous deux dessinent
 quelque chose à l'écran. Qui voulait des presets sur un canal de programme
-déclarait donc son canal en « Gobo » puis le renommait — et son PAR LED se
+déclarait donc son canal en « Gobo » puis le renommait - et son PAR LED se
 couvrait de motifs de gobo (cf. `core.fixture_projects_gobo`).
 """
 from PySide6.QtWidgets import (
@@ -30,7 +30,7 @@ from color_wheel_editor import (
 # Blocs proposés quand le canal n'en a encore aucun. Volontairement VIDES de
 # valeur (dmx=0) sauf le premier : inventer des valeurs de macro ferait
 # déclencher à l'appareil un programme que personne n'a choisi. L'utilisateur
-# lit la notice de son appareil et remplit — c'est le geste de calibration.
+# lit la notice de son appareil et remplit - c'est le geste de calibration.
 _GENERIC_PRESET_SLOTS = [
     {"name": "Arrêt", "color": "#888888", "dmx": 0},
 ]
@@ -304,7 +304,7 @@ class PresetEditorDialog(QDialog):
     # ── Sortie ───────────────────────────────────────────────────────────────
 
     def _collect_slots(self) -> list:
-        """Blocs retenus, sans la couleur — un preset n'en a pas.
+        """Blocs retenus, sans la couleur - un preset n'en a pas.
 
         Une ligne sans nom ET à 0 est une ligne qu'on a ajoutée puis laissée
         vide : elle est écartée. En revanche un bloc nommé à 0 est légitime

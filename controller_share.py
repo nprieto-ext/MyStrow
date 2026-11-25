@@ -1,5 +1,5 @@
 """
-controller_share — Partage communautaire des profils de contrôleurs MIDI.
+controller_share - Partage communautaire des profils de contrôleurs MIDI.
 
 Quand un utilisateur mappe son contrôleur avec l'assistant, il peut verser son
 profil à la bibliothèque commune. Le trajet remplace l'ancien `mailto:` de
@@ -10,14 +10,14 @@ un `mailto:` sous Windows et arrivait tronqué, sans que personne ne le voie.
 Ce qui distingue ce partage de celui des fixtures (`fixture_share.py`) :
 
   * Pas de déclaration de provenance ni de filtre par licence. Une fixture est
-    presque toujours extraite d'une base tierce (QLC+, OFL, GDTF Share) — d'où
+    presque toujours extraite d'une base tierce (QLC+, OFL, GDTF Share) - d'où
     l'attestation et le quota anti-dump de la directive 96/9/CE. Un profil sorti
     de l'assistant est fabriqué par l'utilisateur en appuyant sur ses propres
     pads : il n'y a pas de base à recopier.
 
   * Une entrée canonique par MODÈLE de contrôleur, pas par variante. Trente
     personnes vont mapper le même Launchpad, chacune à sa façon, et aucune n'a
-    tort — mais l'intérêt d'une bibliothèque commune est « je branche, ça
+    tort - mais l'intérêt d'une bibliothèque commune est « je branche, ça
     marche », pas « choisis parmi douze mappings ». L'empreinte porte donc sur
     les mots-clés de détection et la géométrie, jamais sur le contenu du
     mapping : le premier profil approuvé pour un modèle tient la place.
@@ -26,7 +26,7 @@ Rien n'est publié directement : la soumission atterrit dans la collection
 Firestore `controller_submissions` au statut "pending", et seule l'approbation
 d'un administrateur écrit dans `controller_profiles`.
 
-Le serveur (Cloud Function `controller_submit`) revalide TOUT — l'empreinte, la
+Le serveur (Cloud Function `controller_submit`) revalide TOUT - l'empreinte, la
 structure du profil et le quota. Les contrôles de ce module sont là pour le
 confort d'usage, pas pour la sécurité.
 """
@@ -105,7 +105,7 @@ def build_submission_payload(profile: dict) -> dict:
 
 
 def local_check(profile: dict) -> tuple[bool, str]:
-    """(ok, raison) — refus prévisibles, dits avant l'aller-retour réseau.
+    """(ok, raison) - refus prévisibles, dits avant l'aller-retour réseau.
 
     Même validation que pour un profil importé d'un tiers : un profil qu'on
     envoie à la communauté mérite au moins la sévérité de celui qu'on accepte
@@ -231,7 +231,7 @@ def match_port(profiles: list, port_name: str) -> list:
     """Profils communautaires dont un mot-clé apparaît dans ce nom de port.
 
     Même règle que `controller_profile.find_profile_for_port`, mais appliquée à
-    la bibliothèque distante — c'est ce qui permet de proposer un profil pour un
+    la bibliothèque distante - c'est ce qui permet de proposer un profil pour un
     contrôleur que l'utilisateur vient de brancher et que MyStrow ne connaît pas.
     """
     upper = (port_name or "").upper()

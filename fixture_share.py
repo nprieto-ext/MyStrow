@@ -1,16 +1,16 @@
 """
-fixture_share — Partage communautaire des fixtures importées (MyStrow).
+fixture_share - Partage communautaire des fixtures importées (MyStrow).
 
 Quand un utilisateur importe une fixture (XML QLC+/GrandMA, .mft…), il peut la
 proposer à la bibliothèque commune. Trois garde-fous juridiques encadrent ce
 partage, en plus d'une modération humaine :
 
-  1. Déclaration de provenance  — l'utilisateur choisit la source du fichier et
+  1. Déclaration de provenance  - l'utilisateur choisit la source du fichier et
      coche une attestation ("j'ai le droit de partager ce profil").
-  2. Filtrage par licence        — les sources non redistribuables (fichier
+  2. Filtrage par licence        - les sources non redistribuables (fichier
      constructeur, GDTF Share, origine inconnue) ne peuvent PAS être partagées :
      import local uniquement.
-  3. Quota anti-dump             — au plus DAILY_SHARE_QUOTA fixtures partagées
+  3. Quota anti-dump             - au plus DAILY_SHARE_QUOTA fixtures partagées
      par compte et par jour, ce qui écarte le scénario d'extraction
      substantielle d'une base tierce (directive 96/9/CE).
 
@@ -98,11 +98,11 @@ SOURCE_POLICIES = [
     ),
     SourcePolicy(
         "ofl", "fs_src_ofl", True, "CC0-1.0",
-        "Open Fixture Library — CC0 1.0", "fs_note_ofl",
+        "Open Fixture Library - CC0 1.0", "fs_note_ofl",
     ),
     SourcePolicy(
         "qlcplus", "fs_src_qlcplus", True, "Apache-2.0",
-        "QLC+ Fixture Library — Apache 2.0", "fs_note_qlcplus",
+        "QLC+ Fixture Library - Apache 2.0", "fs_note_qlcplus",
     ),
     SourcePolicy(
         "gdtf_share", "fs_src_gdtf", False, "",
@@ -273,7 +273,7 @@ _PAYLOAD_FIELDS = (
     # Plage utile par canal : la partie « dangereuse » de l'appareil (haut de
     # course qui lance un programme auto) doit voyager avec lui.
     "channel_ranges",
-    # Blocs de preset : c'est la CALIBRATION du partageur — les valeurs de macro
+    # Blocs de preset : c'est la CALIBRATION du partageur - les valeurs de macro
     # qu'il a relevées sur l'appareil, notice en main. Sans elles, celui qui
     # reçoit la fixture retrouve un canal de programme nu et doit tout refaire.
     "preset_slots",
@@ -282,7 +282,7 @@ _PAYLOAD_FIELDS = (
     # avec « Light strip strobe », « Colour Macro »… arrivait chez l'autre
     # utilisateur en colonne de « UNUSED » anonymes. Non seulement il ne
     # comprenait pas ce que fait le canal, mais il ne pouvait même pas le typer
-    # à la main — c'est la seule information qui reste quand le type manque.
+    # à la main - c'est la seule information qui reste quand le type manque.
     "channel_labels", "labels",
 )
 
@@ -443,7 +443,7 @@ class FixtureShareDialog(QDialog):
             label = fx.get("name", "")
             mfr   = fx.get("manufacturer", "")
             if mfr:
-                label = f"{mfr} — {label}"
+                label = f"{mfr} - {label}"
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
@@ -830,7 +830,7 @@ def auto_share(parent, fixtures: list, source_key: str = "perso"):
 
     Réservé aux profils tapés à la main dans MyStrow (`origin_source == "perso"`) :
     la provenance y est certaine, donc l'attestation de droit de partage
-    n'apporte rien — l'utilisateur attesterait de son propre travail. Pour un
+    n'apporte rien - l'utilisateur attesterait de son propre travail. Pour un
     fichier importé, la provenance reste déclarative et le dialogue complet
     (`offer_share`) garde tout son sens.
 

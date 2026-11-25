@@ -1,11 +1,11 @@
 """
-Réglages IA Lumière par média — MyStrow
+Réglages IA Lumière par média - MyStrow
 
 Le mode « IA Lumière » de la colonne DMX avait son propre moteur, plus ancien
 que celui du mode LIVE : une seule couleur dominante, une palette dérivée
 automatiquement, et un cercle codé en dur pour les lyres. Le mode LIVE, lui,
 possède déjà un pool de couleurs, un pool de mouvements qui s'enchaînent, des
-gobos, la nervosité — tout ce qu'on voulait dans la séquence.
+gobos, la nervosité - tout ce qu'on voulait dans la séquence.
 
 Plutôt que de faire grossir l'ancien moteur, la séquence utilise désormais le
 moteur LIVE (`MainWindow._apply_live_state`). Ce moteur lisait ses réglages
@@ -17,7 +17,7 @@ qui est :
 
 D'où cette classe : elle expose EXACTEMENT la même API en lecture que
 `LiveModePanel`, mais sans widget derrière. C'est ce qui permet à chaque média
-de la playlist d'avoir son ambiance sans jamais toucher au panneau LIVE — le
+de la playlist d'avoir son ambiance sans jamais toucher au panneau LIVE - le
 panneau garde son état, on ne le pilote pas depuis la playlist.
 
 ⚠️ Toute propriété lue par le moteur DOIT exister ici avec la même sémantique
@@ -42,7 +42,7 @@ COLOR_TILE_ORDER = [
     'bi_rb', 'bi_vo', 'bi_vj', 'bi_rv', 'bi_cc', 'bi_bv',
 ]
 
-# (clé, couleur 1, couleur 2) — `None` en couleur 1 = AUTO (palette de l'IA).
+# (clé, couleur 1, couleur 2) - `None` en couleur 1 = AUTO (palette de l'IA).
 COLOR_TILE_DATA = {
     'rouge':      ('#ff1133', None),
     'orange':     ('#ff8800', None),
@@ -70,7 +70,7 @@ MOVEMENT_ORDER = ['auto', 'vague', 'cercle', 'diagonale', 'spirale', 'bounce', '
 
 
 class IASettings:
-    """Réglages IA Lumière d'un média — même API en lecture que le panneau LIVE."""
+    """Réglages IA Lumière d'un média - même API en lecture que le panneau LIVE."""
 
     def __init__(self):
         self._ia_mode           = 'musical'
@@ -169,7 +169,7 @@ class IASettings:
         """Le moteur doit-il faire défiler le pool de couleurs ?
 
         Non à 1 couleur : le dialogue annonce « une seule couleur, tenue tout
-        le morceau — cliquez celle qui joue ». Le panneau LIVE donne l'autre
+        le morceau - cliquez celle qui joue ». Le panneau LIVE donne l'autre
         sens à son « 1 » (une couleur à la fois, qui défile au rythme du
         curseur DURÉE) et rend donc toujours `True`.
         """
@@ -188,7 +188,7 @@ class IASettings:
         return self._color_duration
 
     def get_color_data(self, key: str):
-        """(QColor|None, QColor|None) — couleur 1 à None = AUTO (palette IA)."""
+        """(QColor|None, QColor|None) - couleur 1 à None = AUTO (palette IA)."""
         c1, c2 = COLOR_TILE_DATA.get(key, (None, None))
         return (QColor(c1) if c1 else None,
                 QColor(c2) if c2 else None)
@@ -221,7 +221,7 @@ class IASettings:
         return self._gobo_rot_speed
 
     def _refresh_gobo_tiles(self):
-        """Sans objet hors panneau — le moteur l'appelle après avoir changé de
+        """Sans objet hors panneau - le moteur l'appelle après avoir changé de
         gobo pour rafraîchir les tuiles. Ici il n'y a pas de tuile à peindre."""
         pass
 
@@ -241,14 +241,14 @@ class IASettings:
 
     @property
     def active_special(self):
-        """Effet special tenu (None si aucun) — priorite absolue dans le moteur."""
+        """Effet special tenu (None si aucun) - priorite absolue dans le moteur."""
         return self._active_special
 
     # ── Divers ───────────────────────────────────────────────────────────────
 
     @property
     def nervosity(self) -> float:
-        """0.0-1.0 — le panneau rend `slider/100`, on garde la même unité."""
+        """0.0-1.0 - le panneau rend `slider/100`, on garde la même unité."""
         return self._nervosity / 100.0
 
     @property
@@ -281,7 +281,7 @@ class IASettings:
 
     def is_tile_active(self, tile_id: str) -> bool:
         """Les tuiles d'effet au beat (flash/strobe/gobo/auto) n'existent plus
-        dans le panneau — sa propre implémentation rend False sans condition.
+        dans le panneau - sa propre implémentation rend False sans condition.
         Même réponse ici, pour que séquence et LIVE restent identiques."""
         return False
 
@@ -317,8 +317,8 @@ class IASettings:
             'gobo_pool':        sorted(self._gobo_pool),
             # Nombre de crans de la roue symbolique au moment de l'écriture.
             # Sans ce témoin, impossible de distinguer un pool {0,1,2} écrit à
-            # l'époque des 8 slots — où 1 valait DMX 32 — d'un pool {0,1,2}
-            # écrit depuis les 16 — où 1 vaut DMX 16. Cf. `from_dict`.
+            # l'époque des 8 slots - où 1 valait DMX 32 - d'un pool {0,1,2}
+            # écrit depuis les 16 - où 1 vaut DMX 16. Cf. `from_dict`.
             'gobo_slots':       GOBO_SLOT_COUNT,
             'gobo_duration':    self._gobo_duration,
             'gobo_rotation':    self._gobo_rotation,
@@ -417,7 +417,7 @@ class IASettings:
 
         # Tuiles unies et colorées seulement : ni AUTO (pas de couleur), ni les
         # bicouleurs (deux teintes, donc pas de distance unique), ni le blanc
-        # (achromatique — il sortirait gagnant de toutes les comparaisons).
+        # (achromatique - il sortirait gagnant de toutes les comparaisons).
         def _dist(key):
             c1, c2 = COLOR_TILE_DATA.get(key, (None, None))
             if not c1 or c2:
@@ -433,7 +433,7 @@ class IASettings:
              for d in [_dist(k)] if d is not None))
         if not classees:
             return s
-        # Les trois teintes les plus proches — voisines EN TEINTE, pas voisines
+        # Les trois teintes les plus proches - voisines EN TEINTE, pas voisines
         # dans la liste : l'ordre des tuiles range par familles (chaud puis
         # froid), donc « la tuile d'à côté » du vert y est le rose.
         proches = [k for _, k in classees[:3]]
@@ -443,7 +443,7 @@ class IASettings:
 
     @classmethod
     def from_panel(cls, panel) -> "IASettings":
-        """Copie l'état courant du panneau LIVE — point de départ d'un nouveau
+        """Copie l'état courant du panneau LIVE - point de départ d'un nouveau
         média : l'utilisateur retrouve l'ambiance qu'il vient de régler en LIVE.
 
         Copie profonde des ensembles : le préréglage ne doit plus jamais bouger
@@ -475,7 +475,7 @@ class IASettings:
             # `active_special` n'est PAS repris du panneau : c'est un effet
             # qu'on declenche a la main pendant un live, pas un reglage de
             # depart. Un media neuf ne doit pas hériter d'un strobe reste
-            # arme dans le panneau — il partirait des la premiere lecture.
+            # arme dans le panneau - il partirait des la premiere lecture.
             s._nervosity         = int(round(panel.nervosity * 100))
             s._passage_speed     = panel.passage_speed
             s._allowed_groups    = set(panel.allowed_groups)

@@ -322,7 +322,7 @@ class Moteur(bi.Initialiseur):
         if r == "ko":
             bi.journaliser("KO test dmx", "", usb_id, fw, self.fw_sha, self.batch,
                            self.months, "fan", time.time())
-            self.ui.ligne.emit("—", bi.libelle_offre(self.months), "écarté (DMX)", ROUGE)
+            self.ui.ligne.emit("-", bi.libelle_offre(self.months), "écarté (DMX)", ROUGE)
             self._fixer("ko", "Boîtier écarté", "Mets-le de côté, débranche-le.")
             self._attendre_debranchement(p.device)
             return
@@ -341,7 +341,7 @@ class Moteur(bi.Initialiseur):
         if rep.get("created"):
             self._fixer("ok", "Enregistré !",
                         f"{bi.libelle_offre(rep['months'])} · flashé le "
-                        f"{bi.heure(flash_utc) if flash_utc else '—'} · débranche-le",
+                        f"{bi.heure(flash_utc) if flash_utc else '-'} · débranche-le",
                         numero=numero)
             self.ui.ligne.emit(numero, bi.libelle_offre(rep["months"]), "enregistré", VERT)
         else:
@@ -898,7 +898,7 @@ class Fenetre(QMainWindow):
         tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
         tab.setSelectionMode(QAbstractItemView.NoSelection)
         for i, (utc, quoi, detail, montant) in enumerate(lignes):
-            date = time.strftime("%d/%m/%Y", time.localtime(float(utc))) if utc else "—"
+            date = time.strftime("%d/%m/%Y", time.localtime(float(utc))) if utc else "-"
             for j, txt in enumerate((date, quoi, detail, montant)):
                 it = QTableWidgetItem(txt)
                 if j == 3:
@@ -930,7 +930,7 @@ class Fenetre(QMainWindow):
             return
         self._maj = maj
         if self.b_maj.isEnabled():
-            self.b_maj.setText(f"⬇  Nouvelle version {maj['version']} disponible — "
+            self.b_maj.setText(f"⬇  Nouvelle version {maj['version']} disponible - "
                                "clique ici pour l'installer")
         self.b_maj.setVisible(True)
 
@@ -987,7 +987,7 @@ class Fenetre(QMainWindow):
     def _maj_etape(self, msg: str):
         if msg.startswith("ERREUR"):
             self.b_maj.setEnabled(True)
-            self.b_maj.setText("⬇  Mise à jour ratée — clique pour réessayer")
+            self.b_maj.setText("⬇  Mise à jour ratée - clique pour réessayer")
             QMessageBox.warning(self, "Mise à jour", msg[7:])
             return
         if msg != "OK":
@@ -1008,7 +1008,7 @@ class Fenetre(QMainWindow):
             if not exe.exists() and ancien.exists():
                 ancien.rename(exe)
             self.b_maj.setEnabled(True)
-            self.b_maj.setText("⬇  Mise à jour ratée — clique pour réessayer")
+            self.b_maj.setText("⬇  Mise à jour ratée - clique pour réessayer")
             QMessageBox.warning(self, "Mise à jour",
                                 f"Impossible de remplacer le programme : {e}\n"
                                 "Demande à Nicolas de te renvoyer le fichier.")
@@ -1048,7 +1048,7 @@ class Fenetre(QMainWindow):
             self.expe_liste.insertWidget(pos, self._carte_commande(c))
             pos += 1
         if faites:
-            self.expe_liste.insertWidget(pos, self._titre("EXPÉDIÉES — 30 DERNIERS JOURS"))
+            self.expe_liste.insertWidget(pos, self._titre("EXPÉDIÉES - 30 DERNIERS JOURS"))
             pos += 1
             for c in faites:
                 self.expe_liste.insertWidget(pos, self._ligne_expediee(c))
@@ -1174,7 +1174,7 @@ class Fenetre(QMainWindow):
         l.setContentsMargins(14, 8, 14, 8)
         quand = time.strftime("%d/%m", time.localtime(c["shipped_utc"] or c["created_utc"]))
         a = c["address"]
-        g = QLabel(f"✔  {quand} · {a.get('name', '')} — "
+        g = QLabel(f"✔  {quand} · {a.get('name', '')} - "
                    f"{a.get('postal_code', '')} {a.get('city', '')}")
         g.setTextFormat(Qt.PlainText)
         l.addWidget(g, 1)

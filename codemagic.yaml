@@ -5,7 +5,7 @@
 # - Settings > Integrations > Developer Portal : clé API App Store Connect nommée « MyStrow ASC »
 # - Environment variables, groupe « ios_signing » : CERTIFICATE_PRIVATE_KEY (clé RSA PEM, secrète)
 #   qui sert à créer / retrouver le certificat Apple Distribution.
-# - Android (workflow android-play) — en place depuis le 30/10/2026 :
+# - Android (workflow android-play) - en place depuis le 30/10/2026 :
 #   · Settings > Code signing identities > Android keystores : mystrow-upload.jks
 #     (%USERPROFILE%\.mystrow-android), nom de référence « mystrow_upload ».
 #   · Applications > MyStrow > Environment variables, groupe « google_play » :

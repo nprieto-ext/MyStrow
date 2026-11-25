@@ -43,7 +43,7 @@ canvas { display:block; }
 <!-- Three.js EN LOCAL (vendor/three, version 0.161.0).
      Surtout pas de CDN : en prestation la machine est très souvent hors ligne
      ou derrière un réseau fermé, et un import de module qui échoue est
-     silencieux — la fenêtre resterait bloquée sur « Chargement Three.js… ».
+     silencieux - la fenêtre resterait bloquée sur « Chargement Three.js… ».
      Les chemins sont relatifs au HTML, donc vendor/ doit rester à côté de
      plan_3d_web.html (y compris dans le bundle PyInstaller). -->
 <script type="importmap">
@@ -73,7 +73,7 @@ document.getElementById('loading').remove();
 // ── Sélection projector (raycasting + QWebChannel) ───────────────────────────
 let _selectedProjo = -1;
 // Sélection MULTIPLE : tous les projecteurs sélectionnés s'allument en blanc et
-// clignotent. `_selectedProjo` reste le « primaire » — celui dont le corps
+// clignotent. `_selectedProjo` reste le « primaire » - celui dont le corps
 // prend le surlignage bleu et que suit le panneau de réglages.
 let _selSet = new Set();
 const _raycaster   = new THREE.Raycaster();
@@ -102,7 +102,7 @@ scene.background = new THREE.Color(0x05050f);
 // Haze atmosphérique : DÉSACTIVÉ par défaut (densité 0) depuis le 10/11/2026.
 // À 0,030 il mélangeait ~43 % de bleu nuit sur tout le plateau vu depuis la
 // caméra par défaut (≈ 25 m) : remonté par un utilisateur comme un « léger
-// voile dérangeant » sur la visualisation — noirs délavés, fond de scène
+// voile dérangeant » sur la visualisation - noirs délavés, fond de scène
 // grisâtre. Comparaison au rendu (shot_on / shot_off) : sans lui l'image est
 // nette et les noirs francs. La fumée DES FAISCEAUX n'en dépend pas : elle
 // est calculée dans BEAM_FRAG (uHaze / uFogAmt). setHaze() reste disponible.
@@ -139,15 +139,15 @@ renderer.domElement.addEventListener('dblclick', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Post-processing — Bloom
+// Post-processing - Bloom
 // ─────────────────────────────────────────────────────────────────────────────
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 window.bloomPass = new UnrealBloomPass(
   new THREE.Vector2(W(), H()),
-  0.65,  // strength — bloom activé par défaut pour l'ambiance
+  0.65,  // strength - bloom activé par défaut pour l'ambiance
   0.42,  // radius
-  0.08   // threshold — très bas pour capter même les lumières faibles
+  0.08   // threshold - très bas pour capter même les lumières faibles
 );
 composer.addPass(window.bloomPass);
 
@@ -188,12 +188,12 @@ scene.add(window.ambLight);
 const hemi = new THREE.HemisphereLight(0x8090c0, 0x000000, 0.18);
 scene.add(hemi);
 
-// Lumière de remplissage douce (toujours présente — visibilité de scène)
+// Lumière de remplissage douce (toujours présente - visibilité de scène)
 const _fillLight = new THREE.DirectionalLight(0xb0c0e0, 0.35);
 _fillLight.position.set(0, 10, 4);
 scene.add(_fillLight);
 
-// Ambiance salle — un seul point d'entrée pour les TROIS lumières d'ambiance.
+// Ambiance salle - un seul point d'entrée pour les TROIS lumières d'ambiance.
 // Le curseur ne pilotait que l'AmbientLight : elle éclaire à plat, sature vite
 // et ne donne jamais l'impression d'une salle éclairée. En montant aussi
 // l'hémisphérique (dégradé haut/bas, qui « ouvre » le volume) et le
@@ -210,12 +210,12 @@ window.setRoomAmbience = function (x) {
 // Géométrie de scène
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Sol — plan mat, SANS réflexion.
+// Sol - plan mat, SANS réflexion.
 //
 // C'était un Reflector (effet « sol mouillé ») qui renvoyait les faisceaux et
 // les taches de couleur. Rendu flatteur en capture d'écran, mais gênant à
 // l'usage : chaque projecteur apparaissait en double et la scène devenait
-// difficile à lire. Le miroir est supprimé, pas seulement masqué — un
+// difficile à lire. Le miroir est supprimé, pas seulement masqué - un
 // Reflector coûte une passe de rendu complète et une cible 1024², donc autant
 // de FPS récupérés sur les machines modestes.
 //
@@ -225,7 +225,7 @@ window.setRoomAmbience = function (x) {
 //
 // ⚠️ L'EMPRISE du sol est déclarée ici et NULLE PART AILLEURS : c'est la même
 // qui borne le point d'arrivée des faisceaux dans `beamFloor()`. Les deux
-// avaient divergé — plancher 18 × 10 (x ±9, z ±5) contre une arrivée bornée à
+// avaient divergé - plancher 18 × 10 (x ±9, z ±5) contre une arrivée bornée à
 // x ±11 et z ∈ [−8, 13]. Un faisceau incliné vers le public atterrissait donc
 // jusqu'à 3 m DEVANT le bord du plancher : le cône traversait la scène et sa
 // tache flottait sur le noir (capture `depasse.png`, 11/09/2026). Le public
@@ -267,18 +267,18 @@ floorTint.position.set(FLOOR_CX, 0.004, FLOOR_CZ);
 scene.add(floorTint);
 window.floorTint = floorTint;
 
-// Grille de scène — volontairement PLUS PETITE que le plancher : c'est elle
+// Grille de scène - volontairement PLUS PETITE que le plancher : c'est elle
 // qui marque le plateau (18 × 18 m), le plancher débordant jusque sous les
 // taches des faisceaux qui partent au-delà du bord de scène.
 const gridHelper = new THREE.GridHelper(18, 18, 0x141018, 0x0d0a12);
 gridHelper.position.y = 0.008;
 scene.add(gridHelper);
 
-// Cyclorama (fond de scène) — DERRIÈRE la scène, donc côté Z positif, face
+// Cyclorama (fond de scène) - DERRIÈRE la scène, donc côté Z positif, face
 // tournée vers la salle. Il était à z = -5.6 tourné vers +Z : correct tant que
 // la caméra regardait depuis le fond, mais depuis qu'elle est passée côté
 // public il se retrouvait ENTRE la caméra et le rig, en voile bleu vertical
-// devant tout — et il s'évanouissait dès qu'on tournait un peu, puisque
+// devant tout - et il s'évanouissait dès qu'on tournait un peu, puisque
 // `FrontSide` le rend invisible de dos.
 // `FrontSide` est gardé volontairement : en passant derrière la scène, le fond
 // s'efface au lieu de masquer le rig.
@@ -353,13 +353,13 @@ function buildTrusses(defs) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shaders — faisceau conique volumétrique
+// Shaders - faisceau conique volumétrique
 // ─────────────────────────────────────────────────────────────────────────────
 // Le faisceau n'est plus un empilement de cônes translucides : on intègre
 // réellement la lumière diffusée par la fumée le long du rayon de vue
 // (raymarching dans le volume du cône). C'est ce qui donne le cœur chaud, la
 // pénombre douce sur les bords et surtout l'éblouissement quand le faisceau
-// pointe vers la caméra — les trois choses qui manquaient.
+// pointe vers la caméra - les trois choses qui manquaient.
 const BEAM_VERT = `
   varying vec3 vObjPos;
   varying vec3 vWorldPos;
@@ -381,10 +381,10 @@ const BEAM_FRAG = `
   uniform float uHaze;      // absorption de la fumée, par mètre
   uniform float uAniso;     // g de Henyey-Greenstein (diffusion avant)
   uniform float uFall;      // chute d'intensité avec la distance
-  uniform int   uSteps;     // pas de raymarching — piloté par la qualité
+  uniform int   uSteps;     // pas de raymarching - piloté par la qualité
   // Gobo projeté DANS le volume : un vrai gobo est un masque placé au foyer,
   // il découpe donc le faisceau lui-même, pas seulement la tache au sol. Le
-  // motif est constant en coupe normalisée — c'est ce qui lui fait épouser
+  // motif est constant en coupe normalisée - c'est ce qui lui fait épouser
   // l'ouverture du cône, comme en vrai.
   uniform sampler2D uGoboTex;
   uniform float     uGoboBlend;   // 0 = pas de gobo (aucun coût : branche évitée)
@@ -401,7 +401,7 @@ const BEAM_FRAG = `
   // qui donne les stries et les nuages DANS le faisceau, au lieu d'un cône
   // uniforme qui trahit tout de suite le rendu de synthèse.
   //
-  // Le bruit est échantillonné en coordonnées MONDE — jamais dans le repère du
+  // Le bruit est échantillonné en coordonnées MONDE - jamais dans le repère du
   // cône. C'est le point décisif : la fumée appartient à la salle, pas au
   // projecteur. Deux faisceaux qui se croisent traversent donc la MÊME volute,
   // et une lyre qui balaye révèle un brouillard immobile au lieu d'emporter ses
@@ -409,7 +409,7 @@ const BEAM_FRAG = `
   uniform float uFogAmt;    // 0 = pas de brouillard (branche entièrement évitée)
   uniform float uFogScale;  // finesse des volutes (m⁻¹)
   uniform vec3  uFogDrift;  // dérive lente du volume (pré-multipliée par le temps)
-  uniform int   uFogOct;    // octaves — indexé sur la qualité
+  uniform int   uFogOct;    // octaves - indexé sur la qualité
 
   // Three n'injecte modelMatrix que dans le vertex shader : on la passe ici.
   uniform mat4  uModel;
@@ -561,7 +561,7 @@ const BEAM_FRAG = `
           // les prélèvements supplémentaires d'un vrai flou, soit 9× le coût
           // du gobo sur TOUT le volume. L'approximation passe parce que le
           // faisceau en l'air est de toute façon lissé par l'intégration le
-          // long du rayon — c'est au sol que la netteté se juge.
+          // long du rayon - c'est au sol que la netteté se juge.
           float e = 0.15 + uGoboBlur * 0.34;
           dens *= mix(1.0, smoothstep(0.5 - e, 0.5 + e, gm), uGoboBlend);
         }
@@ -575,7 +575,7 @@ const BEAM_FRAG = `
         vec3 pw = (uModel * vec4(p, 1.0)).xyz;      // coordonnées MONDE
         // Étirement du bruit le long de l'axe du faisceau. Sans lui, l'effet
         // est INVISIBLE : on somme 24 à 40 échantillons le long du rayon de
-        // vue, et un bruit isotrope se moyenne à ~1 sur ce trajet — il ne
+        // vue, et un bruit isotrope se moyenne à ~1 sur ce trajet - il ne
         // restait qu'un voile uniforme, strictement identique au rendu sans
         // brouillard (vérifié au rendu). En comprimant la composante axiale,
         // les volutes deviennent de longues traînées parallèles au faisceau :
@@ -589,13 +589,13 @@ const BEAM_FRAG = `
         // échantillons le long du rayon écrase les écarts : mesuré au rendu,
         // une modulation de ±15 % est purement et simplement invisible, et
         // même ±80 % ne donne qu'un frémissement. À fond, la fenêtre se
-        // resserre presque en seuil — ce sont alors de vraies déchirures de
+        // resserre presque en seuil - ce sont alors de vraies déchirures de
         // fumée, comme sur une scène enfumée à la machine.
         f = smoothstep(0.32 + 0.10 * uFogAmt, 0.72 - 0.10 * uFogAmt, f);
         // Plancher à 18 % et non ~0 : les volutes font plus d'un mètre, un
         // faisceau entier peut donc tomber dans un creux du bruit. Avec un
         // plancher trop bas il s'ÉTEIGNAIT complètement pendant quelques
-        // secondes (constaté au rendu) — on croyait le projecteur coupé. 18 %
+        // secondes (constaté au rendu) - on croyait le projecteur coupé. 18 %
         // laisse traverser la fumée épaisse sans jamais perdre le faisceau.
         // La moyenne reste 1 (0,18 + 1,64 × 0,5), donc pas d'assombrissement.
         dens *= mix(1.0, 0.18 + 1.64 * f, uFogAmt);
@@ -698,13 +698,13 @@ window.setBeamQuality = function (steps) {
   for (const m of _beamMats) m.uniforms.uSteps.value = window.beamQuality;
 };
 
-// Brouillard — 0 à 100 %. Piloté depuis Python (onglet Scène).
+// Brouillard - 0 à 100 %. Piloté depuis Python (onglet Scène).
 window.setFog = function (pct) {
   window.fogAmount = Math.max(0, Math.min(100, pct)) / 100;
   for (const m of _beamMats) m.uniforms.uFogAmt.value = window.fogAmount;
 };
 
-// Vitesse de brassage — 0 à 100 %. À 0 la fumée est complètement figée, ce qui
+// Vitesse de brassage - 0 à 100 %. À 0 la fumée est complètement figée, ce qui
 // est utile pour juger une photo de plan de feu.
 window.setFogSpeed = function (pct) {
   window.fogSpeed = Math.max(0, Math.min(100, pct)) / 100;
@@ -725,7 +725,7 @@ window.setFogOctaves = function (n) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shader — tache au sol
+// Shader - tache au sol
 // ─────────────────────────────────────────────────────────────────────────────
 const POOL_VERT = `
   varying vec2 vUv;
@@ -762,11 +762,11 @@ const POOL_FRAG = `
     if (uGoboBlur <= 0.002) {
       // NET. La texture est dessinée au canvas, donc anticrénelée : son bord
       // s'étale sur plusieurs texels et, étiré sur une tache de plusieurs
-      // mètres, ça donne un motif mou. Le seuil raidit ce bord — c'est lui qui
+      // mètres, ça donne un motif mou. Le seuil raidit ce bord - c'est lui qui
       // fait la différence entre « un gobo » et « une vague tache plus sombre ».
       gm = smoothstep(0.35, 0.65, goboTap(uvR));
     } else {
-      // FLOU : vraie moyenne spatiale. Élargir un seuil ne suffirait pas — la
+      // FLOU : vraie moyenne spatiale. Élargir un seuil ne suffirait pas - la
       // texture ne vaut presque partout que 0 ou 1, un seuil ne toucherait donc
       // que les bords et le motif resterait net au milieu du flou.
       //
@@ -823,7 +823,7 @@ function makePoolMat() {
 // ⚠️ L'ordre de ces seize motifs fait foi et vit dans `core.GOBO_SLOT_NAMES` :
 // le plan 2D les redessine au QPainter dans la tache au sol
 // (`plan_de_feu._draw_gobo_pattern`). Les deux listes ont DIVERGÉ par le passé
-// — le slot 3 montrait trois cercles ici et une croix × en 2D — et le même show
+// - le slot 3 montrait trois cercles ici et une croix × en 2D - et le même show
 // ne se lisait pas pareil selon le plan ouvert. Modifier l'un = modifier
 // l'autre.
 //
@@ -838,10 +838,10 @@ function _createGoboTexture(slot) {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, size, size);
   ctx.fillStyle = '#fff';
   switch(slot) {
-    case 0: // Open — disque plein
+    case 0: // Open - disque plein
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
       break;
-    case 1: // Barre — une seule fente en travers du faisceau
+    case 1: // Barre - une seule fente en travers du faisceau
       ctx.fillRect(0, cy - r*0.20, size, r*0.40);
       break;
     case 2: // Anneau
@@ -880,7 +880,7 @@ function _createGoboTexture(slot) {
       }
       ctx.closePath(); ctx.fill(); ctx.restore();
       break;
-    case 5: // Gouttes — pastilles de tailles franchement différentes
+    case 5: // Gouttes - pastilles de tailles franchement différentes
       // Positions figées (pas de random) : la texture n'est créée qu'une fois au
       // chargement, mais un motif tiré au sort changerait d'une session à
       // l'autre et le même show ne se rejouerait pas à l'identique.
@@ -895,7 +895,7 @@ function _createGoboTexture(slot) {
         for(let i=0;i<3;i++){const a=(i/3)*Math.PI*2-Math.PI/2;
           ctx.beginPath();ctx.arc(cx+Math.cos(a)*of,cy+Math.sin(a)*of,dr,0,Math.PI*2);ctx.fill();}}
       break;
-    case 7: // Feuillage — lumière tachetée à travers des feuilles
+    case 7: // Feuillage - lumière tachetée à travers des feuilles
       // Polarité volontaire : disque plein PERCÉ d'ombres allongées. Un gobo de
       // feuillage éclaire surtout les interstices ; dessiner les feuilles en
       // clair donnerait le négatif, et un sol beaucoup trop sombre.
@@ -917,7 +917,7 @@ function _createGoboTexture(slot) {
         ctx.fill();ctx.restore();}
       ctx.restore();
       break;
-    case 9: // Vitrail — facettes séparées par le plomb
+    case 9: // Vitrail - facettes séparées par le plomb
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
       ctx.strokeStyle = '#000'; ctx.lineWidth = r*0.075;
       // Deux cercles de plomb…
@@ -960,7 +960,7 @@ function _createGoboTexture(slot) {
         ctx.fillRect(-r*0.075,-r,r*0.15,r);ctx.restore();}
       ctx.restore();
       break;
-    case 13: // Triangles — pointe vers l'extérieur, base vers le centre
+    case 13: // Triangles - pointe vers l'extérieur, base vers le centre
       // ⚠️ La base est RENTRÉE (0,34 au lieu de 0,24) et resserrée : avec des
       // bases plus larges, les coins de deux triangles voisins se touchaient et
       // les trois se lisaient comme UN seul grand triangle évidé. Il faut un
@@ -982,7 +982,7 @@ function _createGoboTexture(slot) {
       ctx.fillStyle='#fff';
       ctx.beginPath(); ctx.arc(cx,cy,r*0.30,0,Math.PI*2); ctx.fill();
       break;
-    case 15: // Nuages — amas de bulles qui se recouvrent
+    case 15: // Nuages - amas de bulles qui se recouvrent
       [[-0.44,-0.34,0.30],[-0.16,-0.46,0.24],[-0.62,-0.16,0.20],
        [ 0.42,-0.40,0.26],[ 0.66,-0.18,0.19],[ 0.20,-0.30,0.17],
        [-0.06, 0.32,0.32],[ 0.32, 0.46,0.25],[-0.40, 0.48,0.22],
@@ -996,13 +996,13 @@ function _createGoboTexture(slot) {
   ctx.globalCompositeOperation='source-over';
   return new THREE.CanvasTexture(cv);
 }
-// ⚠️ miroir de `core.GOBO_SLOT_COUNT` — les deux découpages du canal Gobo
+// ⚠️ miroir de `core.GOBO_SLOT_COUNT` - les deux découpages du canal Gobo
 // doivent rester identiques.
 const GOBO_SLOT_COUNT = 16;
 const _goboTextures = Array.from({length:GOBO_SLOT_COUNT}, (_,i) => _createGoboTexture(i));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Halo de lentille — le flare vu sur la source elle-même
+// Halo de lentille - le flare vu sur la source elle-même
 // ─────────────────────────────────────────────────────────────────────────────
 const _LENS_GLOW_TEX = (function () {
   const s = 128;
@@ -1032,7 +1032,7 @@ function makeLensGlowMat() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Géométries template (unit — scalées à la volée)
+// Géométries template (unit - scalées à la volée)
 // ─────────────────────────────────────────────────────────────────────────────
 // Cône fermé (avec le disque de base) : le raymarching a besoin d'une face
 // avant même quand on regarde le faisceau par en dessous.
@@ -1063,14 +1063,14 @@ const GEO_BAR_MH       = new THREE.BoxGeometry(0.80, 0.10, 0.14);  // mounting b
 // Un PAR LED n'est pas un projecteur à lampe : sa face n'est pas UN disque
 // lumineux mais une grappe de petites lentilles, et c'est à ça qu'on le
 // reconnaît d'un coup d'œil sur un plan de feu. On garde malgré tout UN SEUL
-// maillage — les cercles sont fusionnés en une géométrie unique — pour que
+// maillage - les cercles sont fusionnés en une géométrie unique - pour que
 // dessiner 14 LED coûte exactement le même draw call que l'ancien disque.
 // Sans cette fusion, un rig de 40 PAR ajoutait 560 objets à la scène.
 const PAR_LED_COUNT = 14;
 
 // Répartition en anneaux concentriques : 1 au centre, puis autant de LED que
 // la circonférence en accepte à pas régulier (6, 12, 18…). C'est le pavage
-// hexagonal des vraies galettes, et il reste correct pour un compte partiel —
+// hexagonal des vraies galettes, et il reste correct pour un compte partiel -
 // le dernier anneau se répartit alors sur 2π/k au lieu de se tasser d'un côté.
 function _ledLayout(n, R) {
   const rings = [];          // [nb de LED par anneau]
@@ -1082,7 +1082,7 @@ function _ledLayout(n, R) {
     ring++;
   }
   // Pas radial : le dernier anneau doit tenir DANS le rayon utile, lentille
-  // comprise — d'où le demi-pas de marge, sinon les LED du bord mordent la
+  // comprise - d'où le demi-pas de marge, sinon les LED du bord mordent la
   // bague chrome.
   const step = R / (rings.length - 0.5 + 0.0001);
   const rad  = step * 0.42;
@@ -1113,7 +1113,7 @@ function _ledClusterGeo(n, R) {
     // ÉTEINT. Un cercle plat rend une galette de gommettes.
     const c = new THREE.SphereGeometry(rad, 10, 5, 0, Math.PI * 2, 0, Math.PI * 0.34);
     // Vers -Z, et non +Z : la lentille est portée par un mesh tourné de -90°
-    // sur X, qui envoie -Z vers le BAS — le sens de sortie du PAR. Bombée dans
+    // sur X, qui envoie -Z vers le BAS - le sens de sortie du PAR. Bombée dans
     // l'autre sens, la calotte rentrait dans le boîtier et le plateau noir
     // passait devant : la face redevenait un disque uni.
     c.rotateX(-Math.PI / 2);
@@ -1146,7 +1146,7 @@ const GROUP_COLOR = {
 
 let _objs = [];   // un objet par projecteur
 window.beamScale = 1.7;
-// Gain global des faisceaux volumétriques — permet de doser l'intensité
+// Gain global des faisceaux volumétriques - permet de doser l'intensité
 // sans toucher au niveau DMX des projecteurs.
 // 1.0 → 0.62 : à pleine échelle les faisceaux écrasaient tout le reste de la
 // scène (sol, structures, taches au sol devenaient illisibles). On garde les
@@ -1157,7 +1157,7 @@ window.beamGain = 0.62;
 // de barre LED). À ne pas confondre avec le bloom : l'UnrealBloomPass est déjà
 // coupé au chargement par Python, ces halos sont des maillages additifs dessinés
 // autour de chaque source. C'est eux qui donnent l'impression de « glow ».
-// Ils ne portent aucune information — la tache au sol, si — donc on peut les
+// Ils ne portent aucune information - la tache au sol, si - donc on peut les
 // baisser franchement sans perdre en lisibilité.
 window.glowGain = 0.55;
 
@@ -1165,7 +1165,7 @@ window.glowGain = 0.55;
 // Machines à effet : fumée, brouillard, étincelles, flamme
 // ─────────────────────────────────────────────────────────────────────────────
 // Ces appareils ne projettent PAS de lumière : ils crachent de la matière. Un
-// cône volumétrique ne sait rien en dire — d'où un système de PARTICULES par
+// cône volumétrique ne sait rien en dire - d'où un système de PARTICULES par
 // machine.
 //
 // Simulé en repère MONDE et non dans celui de la machine : la gravité doit
@@ -1184,7 +1184,7 @@ const MACHINE_PARAMS = {
   // life   durée de vie [min, max] en secondes
   // spd    vitesse initiale [min, max] en m/s
   // spread demi-ouverture du jet, en radians
-  // grav   accélération verticale (m/s²) — NÉGATIVE pour ce qui retombe,
+  // grav   accélération verticale (m/s²) - NÉGATIVE pour ce qui retombe,
   //        POSITIVE pour ce qui monte (poussée d'un gaz plus chaud que l'air)
   // size   taille du point, en pixels à 1 m
   // drag   frottement de l'air (1/s)
@@ -1192,7 +1192,7 @@ const MACHINE_PARAMS = {
   //
   // Gerbe et flamme : jet agrandi ×PYRO_JET_SCALE (10/09/26, « 3× plus
   // grand »). Vitesse ET gravité multipliées ENSEMBLE, drag et durée de vie
-  // inchangés : la trajectoire est une homothétie exacte de l'ancienne — même
+  // inchangés : la trajectoire est une homothétie exacte de l'ancienne - même
   // rythme, même ouverture, simplement 3× plus haute et plus large. Toucher la
   // vitesse seule aurait monté la gerbe de ×9 (h = v²/2g) et étiré son temps
   // de vol.
@@ -1211,7 +1211,7 @@ const MACHINE_PARAMS = {
            size:[7.0 * PYRO_JET_SCALE, 13.0 * PYRO_JET_SCALE], drag:2.0,
            add:true,  bounce:false },
   // ⚠️ Fumée et brume se règlent BAS. Premier jet : taille 26-72 px et alpha
-  // 0,17 — les bouffées se recouvraient par dizaines, saturaient à blanc puis
+  // 0,17 - les bouffées se recouvraient par dizaines, saturaient à blanc puis
   // passaient dans le bloom : deux ampoules géantes au milieu du plateau au
   // lieu de deux machines. Une volute réelle est presque transparente ; c'est
   // leur ACCUMULATION qui fait la matière, pas l'opacité de chacune.
@@ -1221,7 +1221,7 @@ const MACHINE_PARAMS = {
   // serrée (≈ v/drag : 3,5 à 5 m de colonne à 100 %), puis la matière
   // ralentit, GONFLE (grow : taille ×(1+grow·u) sur la vie) et se met à
   // tourbillonner (turb, m/s² aléatoires). Le gonflement tient l'opacité :
-  // petite et dense à la buse, large et diluée en haut — c'est lui qui évite
+  // petite et dense à la buse, large et diluée en haut - c'est lui qui évite
   // la colonne de boules blanches, pas un alpha plus bas.
   // Sans rapport avec le brouillard des faisceaux (setFog) : décision Niko.
   fog:   { n:240, rate: 58, life:[2.6, 4.4],   spd:[5.6, 8.2],  spread:0.20,
@@ -1348,7 +1348,7 @@ function _machShade(kind, u, out) {
     // une pile de boules blanches, brûlées par le bloom.
     return 0.42 * (1.0 - u) * (1.0 - u);
   }
-  // Fumée / brume : gris légèrement bleuté, opacité en cloche — la bouffée
+  // Fumée / brume : gris légèrement bleuté, opacité en cloche - la bouffée
   // apparaît, s'épaissit, se dilue.
   out[0] = 0.55; out[1] = 0.58; out[2] = 0.65;
   if (kind === 'haze') return 0.028 * Math.sin(Math.PI * u);
@@ -1498,7 +1498,7 @@ function _tickMachines(dt) {
 function _getObj(i) {
   if (i < _objs.length) return _objs[i];
 
-  // Faisceau volumétrique — un seul cône remplace l'ancien empilement
+  // Faisceau volumétrique - un seul cône remplace l'ancien empilement
   // haze/glow/main/core : le profil radial est intégré dans le shader.
   const cVol = makeVolBeam(GEO_VOL_CONE, 1.0);
   cVol.renderOrder = 2; _beamGrp.add(cVol);
@@ -1522,7 +1522,7 @@ function _getObj(i) {
   // ── PRISME : 3 faisceaux + 3 taches, une par facette ──────────────────
   // Un prisme 3 facettes ne « décore » pas le faisceau : il en produit trois
   // copies complètes, gobo compris, à 120° autour de l'axe. Le faisceau
-  // central (cVol) est donc éteint tant que le prisme est actif — sinon on
+  // central (cVol) est donc éteint tant que le prisme est actif - sinon on
   // verrait quatre images là où l'optique n'en donne que trois.
   // Cachés par défaut, pilotés par _orientPrism().
   const prismBeams = [], prismPools = [];
@@ -1534,13 +1534,13 @@ function _getObj(i) {
     _poolGrp.add(pp); prismPools.push(pp);
   }
 
-  // ── PAR LED — modèle compact réaliste ────────────────────────────────
+  // ── PAR LED - modèle compact réaliste ────────────────────────────────
   const parGrp = new THREE.Group();
   // 'YXZ' et non l'ordre par défaut 'XYZ' : sur un PAR, RY est le lacet de
   // l'ÉTRIER (axe vertical d'accroche) et RX l'inclinaison DANS cet étrier.
   // En 'XYZ', le lacet est appliqué en premier, donc à l'intérieur du tilt :
   // pivoter un PAR déjà incliné le faisait tourner autour d'un axe basculé, et
-  // surtout la direction de la lentille ne dépendait plus du tout de RY —
+  // surtout la direction de la lentille ne dépendait plus du tout de RY -
   // alors que `beamFloor()`, elle, en tenait compte. Les deux doivent décrire
   // la MÊME chaîne, sinon corps et faisceau divergent.
   parGrp.rotation.order = 'YXZ';
@@ -1605,7 +1605,7 @@ function _getObj(i) {
   groupRing.position.set(0, -0.094, 0);
   parGrp.add(groupRing);
 
-  // Bague chrome avant (autour de la lentille). OUVERTE aux deux bouts — une
+  // Bague chrome avant (autour de la lentille). OUVERTE aux deux bouts - une
   // bague est un anneau, pas un jeton : en cylindre plein, son fond faisait
   // écran et masquait entièrement la galette de LED enchâssée derrière.
   // DoubleSide parce qu'on regarde un PAR par en dessous, donc par l'INTÉRIEUR
@@ -1631,7 +1631,7 @@ function _getObj(i) {
   }
 
   // Plateau noir de la face avant : c'est le fond sur lequel les LED sont
-  // montées. Il est indispensable — la galette de LED laisse du vide entre les
+  // montées. Il est indispensable - la galette de LED laisse du vide entre les
   // lentilles, et sans lui on voyait à travers le PAR jusqu'à l'intérieur du
   // corps.
   const lensBack = new THREE.Mesh(
@@ -1642,7 +1642,7 @@ function _getObj(i) {
   // non posé sur son bord : les dômes des LED avancent de 19 mm, à -0,331 ils
   // débordaient du boîtier et le PAR ressemblait à une galette de billes
   // collées sur le devant. Le plateau ferme aussi le fond de la bague, qui est
-  // creuse — d'où son rayon calé sur elle (0,180) et non sur la galette.
+  // creuse - d'où son rayon calé sur elle (0,180) et non sur la galette.
   lensBack.position.set(0, -0.309, 0);
   lensBack.rotation.x = -Math.PI / 2;
   lensBack.userData.projoIndex = i;
@@ -1667,7 +1667,7 @@ function _getObj(i) {
   // clamp kept as alias for backward compat (now inside parGrp)
   const clamp = parOme;
 
-  // ── Moving Head (Lyre) — modèle doré réaliste ────────────────────────
+  // ── Moving Head (Lyre) - modèle doré réaliste ────────────────────────
   const mhGrp = new THREE.Group();
 
   const _mhGoldMat = new THREE.MeshStandardMaterial({ color:0xc09030, roughness:0.28, metalness:0.82 });
@@ -1700,18 +1700,18 @@ function _getObj(i) {
     mhGrp.add(bolt);
   }
 
-  // ── Groupe yoke (pan — rotation Y) ───────────────────────────────────
+  // ── Groupe yoke (pan - rotation Y) ───────────────────────────────────
   // Tout ce qui suit TOURNE avec le pan ; tout ce qui précède (barre de
   // montage, colliers omega, vis) reste solidaire du truss. Sur un vrai
   // appareil, le pan pivote entre la BASE et le yoke : les colliers qui
   // mordent la structure ne bougent évidemment pas. Sans ce groupe
   // intermédiaire, `mhGrp.rotation.y = pan` faisait tourner l'accroche avec
-  // la tête — la lyre semblait dévisser son propre point de suspension.
+  // la tête - la lyre semblait dévisser son propre point de suspension.
   // Origine à (0,0,0) : l'axe de pan passe bien par le point d'accroche.
   const mhYoke = new THREE.Group();
   mhGrp.add(mhYoke);
 
-  // Bras du yoke ×2 (gauche & droite) — longueur divisée par 2
+  // Bras du yoke ×2 (gauche & droite) - longueur divisée par 2
   for (const sx of [-0.252, 0.252]) {
     const arm = new THREE.Mesh(
       new THREE.BoxGeometry(0.076, 0.28, 0.112),
@@ -1729,11 +1729,11 @@ function _getObj(i) {
     mhYoke.add(elbow);
   }
 
-  // ── Groupe tête (tilt — rotation X) ──────────────────────────────────
+  // ── Groupe tête (tilt - rotation X) ──────────────────────────────────
   const mhHGrp = new THREE.Group();
   mhHGrp.position.set(0, -0.35, 0);
 
-  // Corps principal — frustum légèrement évasé vers l'arrière (haut = +Y)
+  // Corps principal - frustum légèrement évasé vers l'arrière (haut = +Y)
   const mhHead = new THREE.Mesh(
     new THREE.CylinderGeometry(0.158, 0.212, 0.43, 26),
     _mhGoldMat.clone()
@@ -1783,11 +1783,11 @@ function _getObj(i) {
   mhGrp.visible = false;
   _fixtureGrp.add(mhGrp);
 
-  // ── Laser — boîtier fixe, rayons fins ────────────────────────────────
+  // ── Laser - boîtier fixe, rayons fins ────────────────────────────────
   // Un laser n'a NI yoke NI cône : un boîtier accroché par un étrier, une
   // petite ouverture, et des TRAITS fins qui balaient par miroirs. Le
   // représenter en lyre (corps doré qui pivote, cône volumétrique large) le
-  // rendait méconnaissable — cf. `_updateLaser()`.
+  // rendait méconnaissable - cf. `_updateLaser()`.
   const lzGrp = new THREE.Group();
   lzGrp.rotation.order = 'YXZ';                 // même accroche qu'un PAR
   const _lzMetal = new THREE.MeshStandardMaterial({ color:0x8a8f99, roughness:0.35, metalness:0.85 });
@@ -1797,7 +1797,7 @@ function _getObj(i) {
   lzBody.position.y = -0.12;
   lzBody.userData.projoIndex = i;
   lzGrp.add(lzBody);
-  // Étrier (barre + deux joues) — accroché au truss par le haut
+  // Étrier (barre + deux joues) - accroché au truss par le haut
   const lzTop = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.016, 0.05), _lzMetal);
   lzTop.position.y = 0.02; lzGrp.add(lzTop);
   for (const sx of [-0.20, 0.20]) {
@@ -1885,7 +1885,7 @@ function _getObj(i) {
   // ── Machine à effet : corps posé au sol ──────────────────────────────
   // Le corps vit dans `_fixtureGrp` (il suit donc le bouton « Fixtures ») ;
   // les particules, elles, vivent dans `_machPtsGrp`, à part : ce sont l'effet,
-  // pas l'appareil — comme les faisceaux, qui ne sont pas non plus dans le
+  // pas l'appareil - comme les faisceaux, qui ne sont pas non plus dans le
   // groupe des corps.
   const machGrp = new THREE.Group();
   machGrp.visible = false;
@@ -1904,7 +1904,7 @@ function _getObj(i) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sélection par clic — raycasting sur les fixtures
+// Sélection par clic - raycasting sur les fixtures
 // ─────────────────────────────────────────────────────────────────────────────
 window.setSelectedProjos = function(list) {
   // Efface les références de clignotement de l'ancienne sélection : elles
@@ -1994,7 +1994,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // que le cône s'arrêtait encore à 2 m du sol.
 const BEAM_TMAX = 22.0;
 
-// Raccourcir `t` pour que le point d'arrivée reste DANS la salle — sans jamais
+// Raccourcir `t` pour que le point d'arrivée reste DANS la salle - sans jamais
 // le sortir du rayon.
 //
 // ⚠️ Les trois coordonnées étaient rabotées SÉPARÉMENT :
@@ -2024,7 +2024,7 @@ function _clampT(o, d, lo, hi, t) {
 // Seul le fond (FLOOR_Z1, derrière le cyclo) reste une paroi.
 //
 // `endFade` : 0 quand le faisceau s'écrase sur le plancher dessiné, 1 quand il
-// finit en l'air ou hors plancher — le shader l'éteint alors progressivement au
+// finit en l'air ou hors plancher - le shader l'éteint alors progressivement au
 // lieu de montrer la base du cône. CONTINU : il croît avec la hauteur du point
 // d'arrivée et sa distance au bord du plancher, pour ne pas faire clignoter le
 // bout du faisceau au franchissement du bord.
@@ -2051,7 +2051,7 @@ function _beamEnd(lensX, lensY, lensZ, bx, by, bz, t) {
 // fixture dans la fenêtre Patch, transmis ici en `pan_range` / `tilt_range`.
 //
 // ⚠️ Ces deux angles étaient écrits EN DUR (π pour le pan, 0,75·π pour le tilt)
-// et à DEUX endroits — beamFloor() pour le faisceau, updateScene() pour le
+// et à DEUX endroits - beamFloor() pour le faisceau, updateScene() pour le
 // corps. UN SEUL point de conversion désormais : les laisser diverger fait
 // partir le cône à côté de la lentille.
 //
@@ -2065,7 +2065,7 @@ function _beamEnd(lensX, lensY, lensZ, bx, by, bz, t) {
 // Signe négatif sur le pan : le repère a jardin du côté des X POSITIFS (cf. la
 // conversion depuis le plan 2D), alors qu'un pan « gauche » vaut moins de
 // 32768 (presets « Gauche » 15360 / « Droite » 49920). Sans lui, deux lyres
-// qui convergent sur le plan 2D divergeaient en 3D — le pan y partait du côté
+// qui convergent sur le plan 2D divergeaient en 3D - le pan y partait du côté
 // opposé, corps et faisceau compris.
 const PAN_RANGE_DEFAULT  = 540.0;
 const TILT_RANGE_DEFAULT = 270.0;
@@ -2084,7 +2084,7 @@ function beamFloor(p) {
   const isMH = p.fixture_type === 'Moving Head';
   // Taille du corps (colonne « Taille » de l'onglet Plan). Le groupe de la
   // fixture est mis à l'échelle dans updateScene(), donc TOUS les décalages
-  // internes qui suivent — pivot du yoke, sortie de lentille — se contractent
+  // internes qui suivent - pivot du yoke, sortie de lentille - se contractent
   // d'autant. Les laisser en dur ferait démarrer le faisceau à côté de
   // l'appareil dès qu'on le réduit : à 40 %, le cône partait 20 cm sous une
   // lentille qui, elle, était remontée.
@@ -2096,7 +2096,7 @@ function beamFloor(p) {
     // était purement décorative sur une lyre (corps ET faisceau), et il était
     // impossible d'accrocher des lyres sur les faces d'une structure orientée
     // (tour, praticable, portique biais) : elles regardaient toutes du même
-    // côté. Il appartient au SOCLE, pas au yoke — cf. la chaîne ci-dessous.
+    // côté. Il appartient au SOCLE, pas au yoke - cf. la chaîne ci-dessous.
     const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;
     const theta = _pt.tilt;
     const rx    = (p.rot3d_x || 0) * Math.PI / 180;
@@ -2114,26 +2114,26 @@ function beamFloor(p) {
     // (Rx·Ry(pan)·Rz) : le roulis RZ se retrouvait à l'INTÉRIEUR du pan et
     // tournait donc avec le yoke au lieu d'appartenir au socle. Sur une lyre
     // à RZ = 180°, panner faisait pivoter l'appareil autour d'un axe mirroité
-    // — la « rotation bizarre » constatée sur les lyres 2 et 4 d'un plan de
+    // - la « rotation bizarre » constatée sur les lyres 2 et 4 d'un plan de
     // feu en tour, seules à porter un roulis de 180°.
     const _rig = (x, y, z) => {
-      // Ry(pan) — yoke
+      // Ry(pan) - yoke
       const x1 =  x * Math.cos(panDmx) + z * Math.sin(panDmx);
       const z1 = -x * Math.sin(panDmx) + z * Math.cos(panDmx);
-      // Rz — roulis d'accroche
+      // Rz - roulis d'accroche
       const x2 = x1 * Math.cos(rz) - y * Math.sin(rz);
       const y2 = x1 * Math.sin(rz) + y * Math.cos(rz);
-      // Ry(RY) — lacet d'accroche
+      // Ry(RY) - lacet d'accroche
       const x3 =  x2 * Math.cos(ry) + z1 * Math.sin(ry);
       const z3 = -x2 * Math.sin(ry) + z1 * Math.cos(ry);
-      // Rx — inclinaison d'accroche
+      // Rx - inclinaison d'accroche
       return { x: x3,
                y: y2 * Math.cos(rx) - z3 * Math.sin(rx),
                z: y2 * Math.sin(rx) + z3 * Math.cos(rx) };
     };
     const d = _rig(0, -Math.cos(theta), Math.sin(theta));
     const bx = d.x, by = d.y, bz = d.z;
-    // Position réelle de la lentille — MÊME chaîne, sinon le faisceau démarre
+    // Position réelle de la lentille - MÊME chaîne, sinon le faisceau démarre
     // à côté de la lentille dès que l'appareil est pivoté.
     const ly_l  = (-0.35 - 0.248 * Math.cos(theta)) * fs;
     const lz_l  = (         0.248 * Math.sin(theta)) * fs;
@@ -2150,7 +2150,7 @@ function beamFloor(p) {
     // Les trois branches d'origine ne se raccordaient PAS : 10 m en descendant,
     // 10 m dans la zone morte |by| <= 0.05, mais 15 m dès que ça montait. Au
     // franchissement de l'horizontale, la longueur sautait de 10 à 15 m et le
-    // point d'arrivée basculait du sol au plafond — le faisceau paraissait
+    // point d'arrivée basculait du sol au plafond - le faisceau paraissait
     // sauter « de bas en haut » (constaté entre tilt 54995 et 55499 sur une
     // lyre à 7 m). Avec une borne UNIQUE, les deux quotients divergent vers
     // BEAM_TMAX quand by → 0 de part et d'autre : la longueur est continue.
@@ -2164,18 +2164,18 @@ function beamFloor(p) {
     return Object.assign(_beamEnd(lensX, lensY, lensZ, bx, by, bz, t),
                          { lensX, lensY, lensZ, bx, by, bz, isMH, goingUp });
   } else {
-    const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;  // pan — pivot horizontal
-    const rx    = (p.rot3d_x ?? 0) * Math.PI / 180;  // tilt — inclinaison depuis nadir
+    const ry    = (p.rot3d_y ?? 0) * Math.PI / 180;  // pan - pivot horizontal
+    const rx    = (p.rot3d_x ?? 0) * Math.PI / 180;  // tilt - inclinaison depuis nadir
     // La galette de LED d'un PAR est montée SOUS le corps : sa direction
     // d'émission est le nadir local (0, -1, 0), auquel on applique la même
-    // chaîne que le maillage — `parGrp`, en ordre d'Euler 'YXZ', soit
+    // chaîne que le maillage - `parGrp`, en ordre d'Euler 'YXZ', soit
     // Ry(pan) · Rx(tilt). Le lacet appartient à l'étrier (axe vertical
     // d'accroche), l'inclinaison bascule à l'intérieur de l'étrier ainsi
     // orienté : c'est un yoke, pas un cardan.
     //
     // ⚠️ Les signes de X et Z étaient INVERSÉS : le calcul appliquait Rx(-tilt)
     // là où le maillage applique Rx(+tilt). Le corps s'inclinait donc d'un côté
-    // et le faisceau partait de l'autre — « je retourne mes PAR et ils éclairent
+    // et le faisceau partait de l'autre - « je retourne mes PAR et ils éclairent
     // à l'opposé » (remontée du 27/08/2026, capture `Bug_affichage3D.png` : des
     // PAR galette vers le public lavant de rouge la structure DERRIÈRE eux).
     // Toute modification ici doit être répercutée sur `parGrp` dans
@@ -2191,7 +2191,7 @@ function beamFloor(p) {
     const L = 0.333 * fs;
     const lensX = p.x + bx * L, lensY = hy + by * L, lensZ = p.z + bz * L;
     const goingUp = by > 0.05;
-    // Même borne unique que pour les lyres — voir le commentaire plus haut :
+    // Même borne unique que pour les lyres - voir le commentaire plus haut :
     // trois bornes différentes (12 / 15 / 12) faisaient sauter la longueur au
     // franchissement de l'horizontale.
     const t = by < 0 ? Math.min(lensY / (-by), BEAM_TMAX)
@@ -2236,7 +2236,7 @@ function goboThrowDir(out, lensX, lensZ, baseX, baseZ) {
 // Pose une tache au sol dans le repère du jet : axe latéral = rayon r, axe du
 // jet = r / cos(incidence). Une lyre inclinée dessine une ELLIPSE ; un disque
 // gardait le motif à sa largeur de face pendant que le faisceau, lui,
-// s'allongeait — les bâtons d'un gobo ne tombaient plus sur ceux du volume
+// s'allongeait - les bâtons d'un gobo ne tombaient plus sur ceux du volume
 // dès que le gobo tournait. Étirement plafonné à 4 : en rasant, l'ellipse
 // partirait à l'infini.
 // ⚠ La tache doit être en rotation.order 'YXZ' (Rx couche le disque, Ry le
@@ -2257,9 +2257,9 @@ function goboScaleFor(base_r, poolR) {
 const _gThrow = new THREE.Vector3();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// updateScene — appelé depuis Python via runJavaScript
+// updateScene - appelé depuis Python via runJavaScript
 // ─────────────────────────────────────────────────────────────────────────────
-// Buffers pré-alloués — évite ~600 allocations Color/s qui déclenchent le GC
+// Buffers pré-alloués - évite ~600 allocations Color/s qui déclenchent le GC
 const _colBuf = new THREE.Color();
 const _briBuf = new THREE.Color();
 
@@ -2268,7 +2268,7 @@ const _briBuf = new THREE.Color();
 // ─────────────────────────────────────────────────────────────────────────────
 // Le boîtier est FIXE (accroche RX/RY/RZ, comme un PAR) ; Pan/Tilt dévient les
 // rayons par les miroirs, dans l'angle de balayage du laser (`pan_range` /
-// `tilt_range`, 60° par défaut côté Python — cf. core.pan_tilt_ranges).
+// `tilt_range`, 60° par défaut côté Python - cf. core.pan_tilt_ranges).
 //
 // Le motif n'est pas un gobo : on ne connaît pas les 51 dessins d'un laser
 // chinois. On en propose 8 FAMILLES lisibles (éventail, cercle, croix,
@@ -2501,20 +2501,23 @@ function _tickPanTilt(dt) {
 }
 
 // `_anim` : passe d'animation déclenchée par la boucle de rendu. Elle rejoue la
-// DERNIÈRE trame pour les seuls appareils encore en mouvement — les autres ne
+// DERNIÈRE trame pour les seuls appareils encore en mouvement - les autres ne
 // coûtent rien, et la scène n'est pas reconstruite 60 fois par seconde.
 // Orientation d'une barre LED, sur TROIS axes comme un vrai appareil :
 //   RY (lacet)        tourne la barre dans le plan horizontal ;
-//   RZ (roulis)       lève une extrémité — 90° = barre DEBOUT, le long d'une
+//   RZ (roulis)       lève une extrémité - 90° = barre DEBOUT, le long d'une
 //                     tour de truss (demande de Nico, 04/11/26) ;
 //   RX (inclinaison)  bascule la face LED autour de l'axe de la barre.
+//                     Une barre à Tilt MOTORISÉ y ajoute son tilt DMX
+//                     (`motor_tilt`, degrés, calculé côté Python) : la barre
+//                     bouge en 3D comme la vraie (retour Hypno Mat, 20/11/26).
 // Euler 'YZX' = Ry·Rz·Rx : on incline la face, on redresse, puis on oriente.
 // L'axe X LOCAL est toujours l'axe de la barre, −Y la direction d'éclairage.
 const _bq = new THREE.Quaternion();
 const _be = new THREE.Euler(0, 0, 0, 'YZX');
 const _bv = new THREE.Vector3();
 function _barQuat(th, p) {
-  _be.set((p.rot3d_x ?? 0) * Math.PI / 180, th,
+  _be.set(((p.rot3d_x ?? 0) + (p.motor_tilt ?? 0)) * Math.PI / 180, th,
           (p.rot3d_z ?? 0) * Math.PI / 180, 'YZX');
   return _bq.setFromEuler(_be);
 }
@@ -2526,14 +2529,14 @@ function _barVec(x, y, z) {
 
 // Faisceaux d'une barre LED dans la fumée. Une barre est une SOURCE LINÉAIRE :
 // un seul cône partant de son milieu la faisait éclairer « depuis un point »
-// (remontée de Nico, 04/11/26 — barres debout sur une tour). Le shader ne sait
+// (remontée de Nico, 04/11/26 - barres debout sur une tour). Le shader ne sait
 // tracer qu'un cône à apex ponctuel ; on en répartit donc jusqu'à
 // BAR_BEAMS le long de la barre, un par tronçon, chacun de la couleur de ses
-// pixels — un chenillard se voit courir dans la fumée. Chaque cône est une
+// pixels - un chenillard se voit courir dans la fumée. Chaque cône est une
 // nappe elliptique (étirée dans l'axe de la barre) qui recouvre ses voisins.
 // Le premier est le `cVol` du slot ; les suivants sont créés à la demande.
 const BAR_BEAMS = 4;
-// Barre à pixels : UNE sortie par pixel (remontée de Nico, 04/11/26 — « une
+// Barre à pixels : UNE sortie par pixel (remontée de Nico, 04/11/26 - « une
 // sortie lumineuse par pixel »), plafonnée selon la qualité : chaque cône est
 // un raymarching. Au-delà du plafond, les pixels voisins sont regroupés.
 const BAR_PX_BEAMS = [6, 12, 25, 40];
@@ -2566,12 +2569,12 @@ function _barBeam(obj, p, cx, cz, hy, len, th, segs) {
   const dn = _barVec(0, -1, 0);                  // direction d'éclairage
   const segLen = len / Math.max(1, segs.length);
   // Un cône par pixel (ou presque) : faisceaux ÉTROITS et ronds, qu'on
-  // distingue un à un dans la fumée — comme une vraie barre à pixels.
+  // distingue un à un dans la fumée - comme une vraie barre à pixels.
   // Sinon (barre simple, qualité basse) : nappes larges qui se recouvrent.
   const perPx = segs.length >= 6;
   // Densité répartie : la barre entière éclaire à peu près comme 1,5 tronçon
   // isolé (nappes qui se recouvrent). Faisceaux fins : ils se recouvrent
-  // AUSSI dès 1-2 m — en 1/sqrt(n), 4 barres de 25 px saturaient l'image
+  // AUSSI dès 1-2 m - en 1/sqrt(n), 4 barres de 25 px saturaient l'image
   // en blanc ; en 1/n la barre entière vaut ~2,5 faisceaux.
   const kA = perPx ? Math.min(1, 2.5 / segs.length)
                    : Math.min(1, 1.5 / segs.length);
@@ -2659,7 +2662,7 @@ window.updateScene = function(projectors, _anim) {
     b.angle = isBar ? Math.atan2(b.lz - b.fz, b.lx - b.fx) : 0;
     b.cx = b.sx / n; b.cz = b.sz / n;
     // Barre : centre = milieu des deux extrémités, et pas régulier entre
-    // elles (cf. `_s` plus bas — positions stockées arrondies à ≈ 3 cm).
+    // elles (cf. `_s` plus bas - positions stockées arrondies à ≈ 3 cm).
     if (isBar) {
       b.cx = (b.fx + b.lx) / 2; b.cz = (b.fz + b.lz) / 2;
       b.span = Math.hypot(b.lx - b.fx, b.lz - b.fz);
@@ -2681,7 +2684,7 @@ window.updateScene = function(projectors, _anim) {
 
     // ── Barre/matrice : rendu per-pixel (cellule légère, pas de corps/faisceau) ──
     // Barre LED SIMPLE (une seule couleur, pas de pixels) : c'est une
-    // réglette, pas un PAR. Elle passait par le rendu PAR — corps rond et
+    // réglette, pas un PAR. Elle passait par le rendu PAR - corps rond et
     // faisceau serré de spot (le cône large était réservé à « PAR LED »).
     // Elle prend désormais le rendu des barres : boîtier allongé, bande
     // lumineuse sur toute la longueur, nappe au sol étirée dans son axe.
@@ -2766,7 +2769,7 @@ window.updateScene = function(projectors, _anim) {
       _barQuat(_th, p);    // _barBeam a pu recalculer l'orientation
 
       // Master (canaux globaux) : le boîtier et le faisceau, pas de cellule.
-      // Il sortait AVANT le boîtier — or c'est lui le représentant dès que la
+      // Il sortait AVANT le boîtier - or c'est lui le représentant dès que la
       // barre a des canaux globaux : ces barres-là n'avaient jamais de boîtier.
       if (p.is_master) {
         obj.pxCell.visible = false;
@@ -2777,7 +2780,7 @@ window.updateScene = function(projectors, _anim) {
       // Position de la LED : abscisse le long de la barre (0 pour une barre
       // simple), puis orientation complète autour du centre. C'est ce qui
       // met les pixels l'un au-dessus de l'autre quand la barre est debout.
-      // Barre à pixels : abscisse tirée du RANG du pixel, régulière — les
+      // Barre à pixels : abscisse tirée du RANG du pixel, régulière - les
       // positions stockées tremblent de ±3 cm (arrondi du plan 2D), ce qui
       // faisait des LED en zigzag. Matrice : position réelle.
       // `_t` : écart en travers, nul pour une barre, réel pour une matrice
@@ -2857,7 +2860,7 @@ window.updateScene = function(projectors, _anim) {
     obj.pxHousing.visible = false;
 
     // ── Machine à effet : de la matière, jamais un faisceau ──────────────
-    // `p.machine` vaut 'fog', 'haze', 'spark' ou 'flame' — le genre est décidé
+    // `p.machine` vaut 'fog', 'haze', 'spark' ou 'flame' - le genre est décidé
     // côté Python (core.FX_MACHINE_KIND), la scène n'a pas à connaître le
     // vocabulaire des types de fixtures.
     if (p.machine) {
@@ -2909,7 +2912,7 @@ window.updateScene = function(projectors, _anim) {
       // Une gerbe et une flamme ÉCLAIRENT : c'est même souvent leur vraie
       // fonction sur un plateau. Sans cette lumière, la 3D montrait une gerbe
       // qui brille toute seule au milieu du noir, sans un reflet au sol. La
-      // fumée, elle, n'émet rien — elle ne fait que révéler les faisceaux.
+      // fumée, elle, n'émet rien - elle ne fait que révéler les faisceaux.
       const _emit = (p.machine === 'spark' || p.machine === 'flame');
       obj.ptLight.visible = _emit && mk.level > 0.02;
       if (obj.ptLight.visible) {
@@ -2938,7 +2941,7 @@ window.updateScene = function(projectors, _anim) {
 
     // Projecteur sélectionné dans le tableau : on le force allumé en blanc,
     // à pleine puissance. C'est ce qui permet de le repérer d'un coup d'œil
-    // dans la scène, même s'il est éteint dans le show — cas le plus fréquent
+    // dans la scène, même s'il est éteint dans le show - cas le plus fréquent
     // quand on cherche « lequel est-ce ? ». Le clignotement est appliqué par
     // animate(), image par image (voir _selBlink).
     const _isSel = _selSet.has(i);
@@ -2959,7 +2962,7 @@ window.updateScene = function(projectors, _anim) {
       obj.parGrp.visible = false;
 
       // Positionne + oriente le Moving Head
-      // MÊME conversion que beamFloor() — cf. ptAngles(). Corps et
+      // MÊME conversion que beamFloor() - cf. ptAngles(). Corps et
       // faisceau DOIVENT sortir du même calcul, sinon le cône part à côté
       // de la lentille.
       const _pt2   = ptAngles(p);
@@ -2978,7 +2981,7 @@ window.updateScene = function(projectors, _anim) {
       // et non plus Rx·Ry(pan)·Rz, qui plaçait le ROULIS À L'INTÉRIEUR du
       // pan : le roulis tournait avec le yoke au lieu d'appartenir au socle.
       // C'est ce qui rendait le pan aberrant sur toute lyre ayant RZ ≠ 0.
-      // beamFloor() reproduit cet ordre à l'identique — les deux doivent
+      // beamFloor() reproduit cet ordre à l'identique - les deux doivent
       // rester synchronisés.
       obj.mhGrp.rotation.x  = rx;
       obj.mhGrp.rotation.y  = (p.rot3d_y ?? 0) * Math.PI / 180;
@@ -3019,7 +3022,7 @@ window.updateScene = function(projectors, _anim) {
 
       // Galette de LED émissive. Dosage plus sage que la lyre juste au-dessus :
       // en ACESFilmic, tout ce qui dépasse ~2 vire au blanc, et sur quatorze
-      // petites lentilles ça se voyait — un PAR rouge à fond rendait une
+      // petites lentilles ça se voyait - un PAR rouge à fond rendait une
       // constellation de billes BLANCHES dans un halo rouge. La couleur n'est
       // plus amplifiée (elle porte la teinte), seule l'intensité monte.
       if (lvl > 0) {
@@ -3072,7 +3075,7 @@ window.updateScene = function(projectors, _anim) {
       // `_zoomF` SEUL ici, surtout pas `_openF`. uSharp est exprimé sur le
       // rayon normalisé : à uSharp constant, la largeur visible suit
       // exactement l'enveloppe. En divisant AUSSI par l'angle, on resserrait
-      // le profil EN PLUS du cône et la largeur variait en angle^1,5 — mesuré :
+      // le profil EN PLUS du cône et la largeur variait en angle^1,5 - mesuré :
       // à 50 %, un faisceau à 35 % posé sur une tache à 50 %, qui ne se
       // rejoignent plus au sol. Le zoom garde son dosage d'origine.
       _bu.uSharp.value = (isWash ? 1.35 : 4.40) / Math.max(0.35, _zoomF);
@@ -3088,7 +3091,7 @@ window.updateScene = function(projectors, _anim) {
       if (_isSel) obj._selA = _bu.uAlpha.value;
 
       // Halo de lentille : grossit et s'intensifie avec le niveau.
-      // PAR LED : AUCUN halo (choix de Nico, 04/11/26 — « coller à la
+      // PAR LED : AUCUN halo (choix de Nico, 04/11/26 - « coller à la
       // réalité »). Un PAR à LED montre sa face allumée et la lumière qu'il
       // projette ; la sphère colorée de ~2 m qui l'entourait n'existe pas en
       // vrai. La face, elle, reste lumineuse (lentille émissive du corps).
@@ -3105,11 +3108,11 @@ window.updateScene = function(projectors, _anim) {
       }
 
       // Gobo : calculé ici et non dans le bloc « tache au sol », car il
-      // découpe AUSSI le faisceau — y compris quand la lyre pointe vers le
+      // découpe AUSSI le faisceau - y compris quand la lyre pointe vers le
       // haut, cas où il n'y a pas de tache au sol du tout.
       //
       // `has_gobo` : la fixture porte-t-elle une optique de PROJECTION ? Un PAR
-      // LED, une barre, un strobe n'en ont pas — ils ne peuvent pas faire de
+      // LED, une barre, un strobe n'en ont pas - ils ne peuvent pas faire de
       // gobo, quelle que soit la valeur du canal. Décider ici sur `p.gobo > 0`
       // plaquait des motifs sur les PAR dont le canal `Gobo1` sert en réalité
       // de canal de PROGRAMME (seul `Gobo1` ouvre un éditeur de presets, d'où
@@ -3124,29 +3127,29 @@ window.updateScene = function(projectors, _anim) {
         : 0;
       const goboBlend = goboSlot > 0 ? 1.0 : 0.0;
       // Même porte sur la rotation : sans motif, faire tourner le faisceau
-      // n'aurait rien à quoi s'accrocher — et animate() le ferait pivoter dans
+      // n'aurait rien à quoi s'accrocher - et animate() le ferait pivoter dans
       // le vide.
       const goboRotV  = p.has_gobo ? (p.gobo_rotation || 0) : 0;
       const goboRot   = (goboRotV / 255.0) * Math.PI * 2;
       // Netteté du gobo.
       //
       // Sans canal Focus, l'appareil est mis au point à la main sur le plateau
-      // une fois pour toutes : la 3D le montre NET. L'alternative — un flou
-      // fixe — afficherait un défaut que l'utilisateur n'aurait aucun moyen de
+      // une fois pour toutes : la 3D le montre NET. L'alternative - un flou
+      // fixe - afficherait un défaut que l'utilisateur n'aurait aucun moyen de
       // corriger depuis le logiciel.
       //
       // Avec un canal Focus, c'est le curseur qui décide : 0 = NET,
-      // 255 = flou (choix utilisateur 24/09/26 — un Focus au repos doit
+      // 255 = flou (choix utilisateur 24/09/26 - un Focus au repos doit
       // montrer un gobo net, comme sans canal Focus). Convention monotone
-      // assumée — la course réelle dépend de l'appareil ET du jeté, que rien
+      // assumée - la course réelle dépend de l'appareil ET du jeté, que rien
       // ici ne permet de connaître.
       const goboBlur = p.has_focus ? Math.min(255, Math.max(0, p.focus || 0)) / 255 : 0.0;
       _bu.uGoboTex.value   = _goboTextures[goboSlot];
       _bu.uGoboBlend.value = goboBlend;
       _bu.uGoboBlur.value  = goboBlur;
       // Rotation continue en cours ? C'est animate() qui pilote l'angle, image
-      // par image. L'écraser ici — 25 fois par seconde, à la cadence des envois
-      // Python — ramenait sans cesse le motif à son angle de départ : le gobo
+      // par image. L'écraser ici - 25 fois par seconde, à la cadence des envois
+      // Python - ramenait sans cesse le motif à son angle de départ : le gobo
       // tressautait au lieu de tourner.
       if (!(goboRotV > 0)) _bu.uGoboRot.value = goboRot;
 
@@ -3165,8 +3168,8 @@ window.updateScene = function(projectors, _anim) {
         // tache pleine largeur se lit tout de suite comme un bug.
         //
         // Rayon de la tache DÉRIVÉ du cône, et non calculé par une formule
-        // parallèle. L'ancienne — (0.35 + 2.2*lvl) * bs * (wash ? 1.6 : 1) *
-        // _angF — ignorait complètement `_zoomF` et retenait 1.6 là où le cône
+        // parallèle. L'ancienne - (0.35 + 2.2*lvl) * bs * (wash ? 1.6 : 1) *
+        // _angF - ignorait complètement `_zoomF` et retenait 1.6 là où le cône
         // prend 1.9 pour un wash. Mesuré : tache 2,2× trop LARGE zoom serré,
         // 3,4× trop ÉTROITE zoom large, et systématiquement trop étroite sur
         // un wash. Le facteur 1.15 reproduit à 0,2 % près l'ancienne taille
@@ -3190,7 +3193,7 @@ window.updateScene = function(projectors, _anim) {
         obj.pool.visible = true;
 
         // Halo diffus au sol. 1.7 et non 2.8 : à 2,8 un simple spot à 7 m
-        // posait un disque de 14 m de diamètre sur un plateau de 18 m — deux
+        // posait un disque de 14 m de diamètre sur un plateau de 18 m - deux
         // projecteurs suffisaient à noyer toute la scène de blanc, très loin
         // devant un faisceau qui, lui, fait 4,4 m. C'est ce halo, et non la
         // tache principale, qui faisait « la tache est plus large que le
@@ -3207,7 +3210,7 @@ window.updateScene = function(projectors, _anim) {
         obj.ptLight.intensity = lvl * 4.5;
         obj.ptLight.position.set(fx2, 0.4, fz2);
       } else {
-        // Faisceau montant — pas de tache au sol
+        // Faisceau montant - pas de tache au sol
         obj.pool.visible = false;
         obj.halo.visible = false;
         // Point light dans le faisceau montant
@@ -3225,7 +3228,7 @@ window.updateScene = function(projectors, _anim) {
         base_r,
         // Rayon EXACT de la tache principale, facteurs wash, ouverture et
         // zoom compris : les taches du prisme sont des copies, elles doivent
-        // avoir la même taille — et leur écartement en dépend aussi. Recopier
+        // avoir la même taille - et leur écartement en dépend aussi. Recopier
         // la formule ici la faisait diverger de celle du bloc `hitsFloor`,
         // d'où une seule expression, identique des deux côtés.
         poolR,
@@ -3386,7 +3389,7 @@ window.toggleFlag = function(what) {
 //
 // setSize() réalloue les tampons du GPU, ce qui coûte une image noire sur
 // beaucoup de pilotes. Or l'événement `resize` part aussi pour des raisons qui
-// ne changent pas la taille utile de la vue — apparition d'une barre de
+// ne changent pas la taille utile de la vue - apparition d'une barre de
 // défilement à côté, redessin du panneau, changement d'échelle système. D'où
 // des clignotements noirs dans le plan 3D seul, sans que rien n'ait bougé.
 let _lastW = 0, _lastH = 0;
@@ -3423,7 +3426,7 @@ function _orientPrism(obj, t) {
     if (obj.pool.material.uniforms.uGoboBlend.value > 0)
       obj.pool.material.uniforms.uGoboRot.value = grot;
     // Le faisceau tourne avec la tache : sans ça, gobo figé dans la fumée et
-    // motif tournant au sol — deux images du même gobo qui se contredisent.
+    // motif tournant au sol - deux images du même gobo qui se contredisent.
     const _bu2 = obj.cVol && obj.cVol.material.uniforms;
     if (_bu2 && _bu2.uGoboBlend.value > 0) _bu2.uGoboRot.value = grot;
   }
@@ -3438,14 +3441,14 @@ function _orientPrism(obj, t) {
 
   // Le prisme ne s'ajoute pas au faisceau : il le REMPLACE par ses copies.
   // Laisser cVol allumé donnait une image centrale que l'optique ne produit
-  // pas, et surtout un gobo net au milieu de trois copies floues — d'où
+  // pas, et surtout un gobo net au milieu de trois copies floues - d'où
   // l'impression que « le prisme fonctionne mal ». La tache principale part
   // avec lui ; le halo, la lentille et la point light restent, eux, le
   // rayonnement diffus ne disparaît pas quand on insère un prisme.
   // Les alphas sont lus dans les UNIFORMS, jamais via .visible : updateScene()
   // ne tourne qu'aux ~25 fps des envois Python alors qu'animate() tourne à 60,
   // donc dès la deuxième image on relirait le `visible = false` qu'on vient
-  // d'écrire — et les copies s'éteindraient une image sur deux.
+  // d'écrire - et les copies s'éteindraient une image sur deux.
   const _cu = obj.cVol && obj.cVol.material.uniforms;
   const _mp = obj.pool.material.uniforms;
   const _centerAlpha = _cu ? _cu.uAlpha.value : 0;
@@ -3454,15 +3457,15 @@ function _orientPrism(obj, t) {
   obj.pool.visible = false;
 
   _fxColBuf.setRGB(s.col[0], s.col[1], s.col[2]);
-  const pspd = (s.prismV / 255) * 2.2;              // rad/s — 0 = split fixe (comme une vraie lyre)
+  const pspd = (s.prismV / 255) * 2.2;              // rad/s - 0 = split fixe (comme une vraie lyre)
   const ang  = t * pspd;
 
-  // Écart des copies, exprimé en rayons de tache — et non en divergence
+  // Écart des copies, exprimé en rayons de tache - et non en divergence
   // angulaire depuis la lentille. Un prisme sépare bien ses images d'un angle
   // fixe, mais les deux grandeurs croissent ensemble avec le jeté : leur
   // RAPPORT est ce qui définit l'aspect du split, et c'est lui qu'il faut
   // tenir. Calculer l'écart à partir du jeté seul donnait ici 0,7 m pour des
-  // taches de 4,3 m de rayon — trois copies empilées, soit exactement la
+  // taches de 4,3 m de rayon - trois copies empilées, soit exactement la
   // bouillie qu'on cherche à corriger.
   const R = Math.max(0.35, s.poolR * PRISM_SPREAD);
 
@@ -3489,7 +3492,7 @@ function _orientPrism(obj, t) {
       _pu.uGoboScale.value = _cu.uGoboScale.value;
     }
     // Repère gobo de CETTE copie : son jet est légèrement dévié, sa tache
-    // aussi — les deux doivent partager la même direction.
+    // aussi - les deux doivent partager la même direction.
     goboThrowDir(_gThrow, s.lensX, s.lensZ, bx, bz);
     _pu.uGoboD.value.copy(_gThrow);
     // Chaque facette reçoit une fraction du flux. Pas 1/3 strict : l'œil (et
@@ -3535,7 +3538,7 @@ window.autoQuality  = true;
 window.setQuality = function (lvl, redimensionner) {
   lvl = Math.max(0, Math.min(QUALITY.length - 1, lvl | 0));
   // Tracé : la dégradation automatique est à SENS UNIQUE (aucune remontée).
-  // Si elle se déclenche, la baisse est définitive — un tramage permanent des
+  // Si elle se déclenche, la baisse est définitive - un tramage permanent des
   // faisceaux, pas un glitch passager. Le journal permet de trancher.
   if (lvl !== window.qualityLevel) {
     console.log(`[3D] qualité ${QUALITY[window.qualityLevel].name} → `
@@ -3549,7 +3552,7 @@ window.setQuality = function (lvl, redimensionner) {
 
   // Changer la résolution de rendu réalloue les tampons du GPU, ce qui coûte
   // UNE IMAGE NOIRE sur beaucoup de pilotes. Acceptable quand l'utilisateur
-  // choisit lui-même sa qualité — il s'y attend. Inacceptable quand c'est la
+  // choisit lui-même sa qualité - il s'y attend. Inacceptable quand c'est la
   // dégradation automatique qui se déclenche : l'écran clignote en noir sans
   // que personne n'ait rien demandé, et ça se répète à chaque palier.
   // Par défaut on redimensionne ; la dégradation auto passe `false` et se
@@ -3581,11 +3584,11 @@ let _diagPrev = 0, _diagLongFrames = 0, _diagCtxLost = 0;
 //
 // ⚠️ Ceci est du DIAGNOSTIC, pas un correctif : Three.js pose déjà son propre
 // gestionnaire et appelle `preventDefault()` (`three.module.js`, onContextLost),
-// la restauration marchait donc déjà. Ce qui manquait, c'est de le SAVOIR — ses
+// la restauration marchait donc déjà. Ce qui manquait, c'est de le SAVOIR - ses
 // messages n'ont pas le préfixe `[3D]` et n'atteignent pas le terminal Python.
 renderer.domElement.addEventListener('webglcontextlost', () => {
   _diagCtxLost++;
-  console.log(`[3D] CONTEXTE WEBGL PERDU (${_diagCtxLost}e fois) — `
+  console.log(`[3D] CONTEXTE WEBGL PERDU (${_diagCtxLost}e fois) - `
             + `Three.js va tenter la restauration`);
 }, false);
 
@@ -3596,21 +3599,21 @@ renderer.domElement.addEventListener('webglcontextrestored', () => {
 // Visibilité de la page. Deux raisons de la tracer : elle explique les écarts
 // de plusieurs secondes entre deux images (rendu suspendu, cf. boucle de
 // rendu), et une reprise d'affichage est justement un moment où le compositeur
-// réalloue sa surface — donc un suspect pour le clignotement.
+// réalloue sa surface - donc un suspect pour le clignotement.
 document.addEventListener('visibilitychange', () => {
   _diagPrev = 0;
-  console.log(`[3D] page ${document.hidden ? 'masquée — rendu suspendu' : 'visible'}`);
+  console.log(`[3D] page ${document.hidden ? 'masquée - rendu suspendu' : 'visible'}`);
 });
 
 // ── Détecteur de glitch ────────────────────────────────────────────────────
 // Les sondes ci-dessus ne voient QUE des causes supposées (contexte perdu,
-// image longue, qualité). Si le clignotement vient d'ailleurs — tramage des
-// faisceaux, ordre de dessin, bloom — elles restent muettes et l'utilisateur
+// image longue, qualité). Si le clignotement vient d'ailleurs - tramage des
+// faisceaux, ordre de dessin, bloom - elles restent muettes et l'utilisateur
 // aura reproduit pour rien. Celle-ci mesure le SYMPTÔME.
 //
 // DEUX symptômes, parce que la capture `glitch.jpg` en montre deux à la fois :
 // la scène qui s'assombrit, ET les faisceaux qui se trament pixel par pixel.
-//   • `lum`  : luminance moyenne — attrape le « tout devient noir ».
+//   • `lum`  : luminance moyenne - attrape le « tout devient noir ».
 //   • `dith` : alternance d'un pixel au suivant (laplacien horizontal
 //              normalisé). Un dégradé lisse donne ~0,02 ; un damier 1 pixel
 //              monte au-delà de 1. C'est la signature du bruit de raymarching
@@ -3633,8 +3636,8 @@ let _ditMoy = -1, _ditInst = 0, _ditMax = 0, _ditHits = 0;
 // Capture de l'image fautive. C'est LE point qui manquait : une photo de
 // l'écran prise au téléphone ne permet pas de distinguer un tramage réel d'un
 // moiré d'appareil photo, et le glitch est trop bref pour cliquer sur quoi que
-// ce soit. Ici l'image est prise dans la MÊME tâche que le rendu — obligatoire,
-// le contexte n'a pas `preserveDrawingBuffer` — puis remise à Python qui
+// ce soit. Ici l'image est prise dans la MÊME tâche que le rendu - obligatoire,
+// le contexte n'a pas `preserveDrawingBuffer` - puis remise à Python qui
 // l'écrit à côté du journal.
 let _shots = 0, _shotLast = -1e9;
 const _SHOTS_MAX = 8;
@@ -3661,7 +3664,7 @@ function _capturerGlitch(raison) {
 // La sonde large ci-dessous tourne à 10 Hz. C'est suffisant pour un glitch
 // d'un quart de seconde, mais **pas** pour un clignotement d'une seule image :
 // 16 ms sur 100, elle a une chance sur six de tomber dessus. Or c'est
-// exactement ce qui a été observé — dix minutes de journal parfaitement plats
+// exactement ce qui a été observé - dix minutes de journal parfaitement plats
 // alors que l'utilisateur voyait le glitch.
 //
 // Celle-ci ne lit que 32×4 pixels au centre (512 octets) : le coût n'est pas
@@ -3692,7 +3695,7 @@ function _sondeRapide(now) {
     console.log(`[3D] sonde par image : ${moyen.toFixed(2)} ms par lecture`);
     if (moyen > 4.0) {
       window.diagFast = false;
-      console.log('[3D] sonde par image COUPÉE (trop coûteuse) — '
+      console.log('[3D] sonde par image COUPÉE (trop coûteuse) - '
                 + 'seule la sonde 10 Hz reste active');
     }
   }
@@ -3706,7 +3709,7 @@ function _sondeRapide(now) {
     _fastHits++;
     const inf = renderer.info.render;
     console.log(`[3D] IMAGE NOIRE (${_fastHits}e) : luminance ${lum.toFixed(1)} `
-              + `contre ${_fastMoy.toFixed(1)} — ${inf.calls} draws, `
+              + `contre ${_fastMoy.toFixed(1)} - ${inf.calls} draws, `
               + `${inf.triangles} tri, ambiance ${window.ambLight.intensity.toFixed(1)}, `
               + `bloom=${_flags.bloom}, ${_fpsValue.toFixed(0)} fps`);
     _capturerGlitch('noire');
@@ -3768,7 +3771,7 @@ function _mesurerNoirceur(now) {
   if (_dbMoy > 8 && lum < _dbMoy * 0.45) {
     _dbHits++;
     console.log(`[3D] IMAGE ASSOMBRIE (${_dbHits}e) : luminance ${lum.toFixed(1)} `
-              + `contre ${_dbMoy.toFixed(1)} en moyenne — ${etat}`);
+              + `contre ${_dbMoy.toFixed(1)} en moyenne - ${etat}`);
     _capturerGlitch('assombrie');
   }
   // Tramage. Le nombre de draws est journalisé avec : s'il s'effondre, ce sont
@@ -3777,7 +3780,7 @@ function _mesurerNoirceur(now) {
   if (dith > 0.25 && dith > _ditMoy * 1.6 + 0.04) {
     _ditHits++;
     console.log(`[3D] IMAGE TRAMÉE (${_ditHits}e) : indice ${dith.toFixed(3)} `
-              + `contre ${Math.max(_ditMoy, 0).toFixed(3)} en moyenne — ${etat}`);
+              + `contre ${Math.max(_ditMoy, 0).toFixed(3)} en moyenne - ${etat}`);
     _capturerGlitch('tramee');
   }
   // Trace périodique. Les seuils ci-dessus reposent sur des hypothèses, et une
@@ -3823,13 +3826,13 @@ window.diag3d = function () {
 };
 
 // Capture à la demande : `window.captureGlitch()` depuis Python, ou la touche G
-// dans la vue 3D. Sert de témoin — comparer une image saine à une image fautive
+// dans la vue 3D. Sert de témoin - comparer une image saine à une image fautive
 // est le seul moyen de trancher sur le tramage.
 //
 // DIFFÉRÉE d'une image, contrairement à la capture automatique : le contexte
 // n'a pas `preserveDrawingBuffer`, donc relire le canevas depuis un gestionnaire
-// de touche ou depuis `runJavaScript` — c'est-à-dire hors de la tâche qui a
-// rendu l'image — ne ramènerait que du noir. La boucle de rendu honore la
+// de touche ou depuis `runJavaScript` - c'est-à-dire hors de la tâche qui a
+// rendu l'image - ne ramènerait que du noir. La boucle de rendu honore la
 // demande juste après le prochain `render()`.
 let _shotPending = '';
 window.captureGlitch = function () {
@@ -3853,7 +3856,7 @@ window.getFps = function () { return _fpsValue; };
 // figée n'attirerait l'œil que par hasard.
 function _selBlink(t) {
   if (_selSet.size === 0) return;
-  // Battement doux entre 25 % et 100 % — un créneau franc fatigue vite.
+  // Battement doux entre 25 % et 100 % - un créneau franc fatigue vite.
   // Même phase pour tous : des projecteurs qui battent ensemble se lisent
   // comme un groupe, alors que des phases décalées ressembleraient à un effet.
   const k = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 6.0));
@@ -3875,7 +3878,7 @@ function _selBlinkOne(i, k) {
 //
 // Par défaut, Three.js les remet à zéro à CHAQUE `renderer.render()`. Avec le
 // bloom, l'EffectComposer enchaîne plusieurs passes : `info.render.calls` ne
-// rapportait donc que la DERNIÈRE — 1 draw, quelle que soit la scène. Or c'est
+// rapportait donc que la DERNIÈRE - 1 draw, quelle que soit la scène. Or c'est
 // justement ce compteur qui doit dire, pendant un glitch, si les objets ont
 // cessé d'être dessinés ou si c'est leur rendu qui se dégrade.
 renderer.info.autoReset = false;
@@ -3889,7 +3892,7 @@ renderer.info.autoReset = false;
   // Dérive du brouillard.
   //
   // L'offset est SOUSTRAIT de la position d'échantillonnage du bruit : une
-  // composante Y négative fait donc MONTER les volutes — c'est le sens dans
+  // composante Y négative fait donc MONTER les volutes - c'est le sens dans
   // lequel une fumée de scène se déplace, tirée par la chaleur des lampes.
   // Les termes en sinus, de périodes non harmoniques, ajoutent un balancement
   // latéral : sans eux, la fumée défile comme un tapis roulant, ce qui se
@@ -3906,7 +3909,7 @@ renderer.info.autoReset = false;
     }
   }
   // Inertie pan/tilt : rattrapage à la cadence d'AFFICHAGE, pas à celle des
-  // trames Python. dt plafonné — un onglet masqué puis réaffiché ne doit pas
+  // trames Python. dt plafonné - un onglet masqué puis réaffiché ne doit pas
   // faire sauter les têtes d'un coup (rAF est suspendu pendant ce temps).
   const _ptDt = _ptPrev ? Math.min(0.1, (_now - _ptPrev) / 1000) : 0;
   _ptPrev = _now;
@@ -3938,17 +3941,17 @@ renderer.info.autoReset = false;
   // ⚠️ Un écart de plusieurs secondes n'est PAS un à-coup : Chromium suspend
   // `requestAnimationFrame` dès que la page n'est plus visible (fenêtre
   // masquée, minimisée, autre onglet). Le premier journal était rempli de
-  // « images longues » de 16 s, 29 s, 53 s — c'était simplement l'utilisateur
+  // « images longues » de 16 s, 29 s, 53 s - c'était simplement l'utilisateur
   // travaillant dans la fenêtre principale. Les compter comme des à-coups
   // aurait envoyé l'enquête droit dans le mur.
   if (_diagPrev > 0 && !document.hidden) {
     const _dt = _now - _diagPrev;
     if (_dt > 2000) {
       console.log(`[3D] rendu repris après ${(_dt / 1000).toFixed(1)} s `
-                + `(vue masquée ou GPU suspendu) — pas un à-coup`);
+                + `(vue masquée ou GPU suspendu) - pas un à-coup`);
     } else if (_dt > 70) {
       // 70 ms = quatre images sautées à 60 Hz. Le seuil était à 150 ms, ce qui
-      // laissait passer le saut d'image le plus banal — or c'est exactement ce
+      // laissait passer le saut d'image le plus banal - or c'est exactement ce
       // qu'on cherche : un clignotement d'une seule image ne dure que 16 ms.
       _diagLongFrames++;
       console.log(`[3D] image longue : ${_dt.toFixed(0)} ms `
@@ -4022,20 +4025,20 @@ function _makeLEDScreen(x, z, w, h) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Retour vidéo — l'écran LED du fond de scène affiche le média du séquenceur
+// Retour vidéo - l'écran LED du fond de scène affiche le média du séquenceur
 // ─────────────────────────────────────────────────────────────────────────────
 // Les images arrivent DÉJÀ DÉCODÉES par Python (frames du QVideoSink du
 // lecteur, réduites et encodées en JPEG). On ne rouvre donc jamais le fichier
 // ici : un second décodeur sur le même média doublerait la charge CPU et
 // dériverait du son. Ce qu'on affiche est, à la frame près, ce qui part sur la
-// sortie vidéo — c'est ce qui rend la synchro gratuite.
+// sortie vidéo - c'est ce qui rend la synchro gratuite.
 const _screenGrp = new THREE.Group();
 scene.add(_screenGrp);
 
 // Retour vidéo coupé (case de l'onglet Scène) : TOUTES les dalles disparaissent
-// du décor — un écran éteint n'a rien à faire dans l'aperçu, l'utilisateur ne
+// du décor - un écran éteint n'a rien à faire dans l'aperçu, l'utilisateur ne
 // veut plus le voir. Ce que certaines remplaçaient (`userData.siPasVideo` sur
-// un accessoire — le néon de la cabine DJ mobile) revient à sa place.
+// un accessoire - le néon de la cabine DJ mobile) revient à sa place.
 let _videoRetour = true;
 function _appliquerRetourVideo() {
   _screenGrp.children.forEach(gr => { gr.visible = _videoRetour; });
@@ -4088,10 +4091,10 @@ function _uvCover(geo, aspect) {
 
 // Pose (ou retire) les écrans. Appelée par le preset de décor (chaque scène
 // sait où ses écrans tombent), puis par l'éditeur « Écrans vidéo » de l'onglet
-// Scène quand l'utilisateur a retouché ceux du décor — c'est le seul moyen
+// Scène quand l'utilisateur a retouché ceux du décor - c'est le seul moyen
 // d'avoir un écran sur un décor importé, qui n'en déclare aucun.
 // `cfg` : un objet, ou une LISTE (festival : fond de scène + écrans des
-// ailes). Toutes les dalles partagent la même texture — une seule image
+// ailes). Toutes les dalles partagent la même texture - une seule image
 // décodée par frame, quel que soit le nombre d'écrans.
 let _screenSel = -1;   // dalle surlignée par l'éditeur, -1 = aucune
 function _disposeScreens() {
@@ -4117,7 +4120,7 @@ window.setVideoScreen = function(cfg) {
     _screenTex = new THREE.CanvasTexture(_screenCanvas);
     _screenTex.colorSpace = THREE.SRGBColorSpace;
     // Au noir à la CRÉATION seulement. Le faire à chaque appel effaçait
-    // l'image à chaque retouche de l'éditeur — et une photo fixe ne revenait
+    // l'image à chaque retouche de l'éditeur - et une photo fixe ne revenait
     // jamais : le relais Python la croyait toujours affichée.
     _screenBlack();
   }
@@ -4128,7 +4131,7 @@ window.setVideoScreen = function(cfg) {
     g.userData.siVideo = !!c.siVideo;
     g.position.set(c.x ?? 0, c.y ?? 0, c.z ?? 5.0);
     // 180° par défaut : le fond de scène est du côté des Z POSITIFS (le backline
-    // du décor y est planté à z = +2,5), le public est donc en Z négatif — et
+    // du décor y est planté à z = +2,5), le public est donc en Z négatif - et
     // les dalles sont construites tournées vers +Z. Sans ce demi-tour, l'écran
     // jouait pour le mur du fond, dos à la salle.
     g.rotation.y = (c.rotY ?? 180) * Math.PI / 180;
@@ -4136,7 +4139,7 @@ window.setVideoScreen = function(cfg) {
     if (c.fit === 'cover') _uvCover(panel.geometry, w / h);
     // `emissiveMap` et non `map` : une dalle LED ÉMET, elle ne réfléchit pas.
     // En `map` seul, l'image s'assombrissait avec l'ambiance de la salle et
-    // disparaissait dès qu'on baissait la lumière — l'inverse d'un écran.
+    // disparaissait dès qu'on baissait la lumière - l'inverse d'un écran.
     panel.material.map = _screenTex;
     panel.material.emissiveMap = _screenTex;
     panel.material.emissive.setRGB(1, 1, 1);
@@ -4152,7 +4155,7 @@ window.setVideoScreen = function(cfg) {
 // Écrans en cours, lus par l'éditeur Python (`runJavaScript` avec rappel) :
 // c'est d'ici qu'il part quand le décor n'a pas encore été retouché.
 window.getVideoScreens = function() { return JSON.stringify(_screenCfg || []); };
-// Écrans d'origine d'un décor — bouton « Par défaut » de l'éditeur.
+// Écrans d'origine d'un décor - bouton « Par défaut » de l'éditeur.
 window.presetScreens = function(name) {
   return ((typeof SCENE_PRESETS !== 'undefined' && SCENE_PRESETS[name]) || {}).screen || null;
 };
@@ -4187,11 +4190,11 @@ window.setVideoFrame = function(dataUrl) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Festival plein air — toit à 4 tours, ailes PA et grands écrans latéraux
+// Festival plein air - toit à 4 tours, ailes PA et grands écrans latéraux
 // ─────────────────────────────────────────────────────────────────────────────
 // Le treillis passe par des InstancedMesh : ~1 500 barres pour 3 draw calls.
 // Un Mesh par barre, comme `buildTrusses`, en aurait coûté autant que de
-// barres — de quoi faire ramer le plan 3D pour un simple décor.
+// barres - de quoi faire ramer le plan 3D pour un simple décor.
 
 // Truss carré de section `w`, de A à B : 4 membrures et un treillis en zigzag
 // sur chaque face, un pas tous les 50 cm. Remplit les listes, ne crée rien.
@@ -4290,7 +4293,7 @@ function _makeFestivalStage() {
   g.add(roof);
 
   // Fond de scène : c'est un écran vidéo sur toute la largeur, posé par le
-  // preset (`screen`) — noir tant qu'aucun média ne joue. Plateau laissé nu.
+  // preset (`screen`) - noir tant qu'aucun média ne joue. Plateau laissé nu.
 
   // ── Ailes : 3 tours, poutre haute, line array en J, subs ──
   // Les grands écrans portrait, entre les deux tours extérieures, sont des
@@ -4337,12 +4340,12 @@ function _makeFestivalStage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Discothèque — salle noire, estrade DJ, cercle de truss au-dessus de la piste
+// Discothèque - salle noire, estrade DJ, cercle de truss au-dessus de la piste
 // ─────────────────────────────────────────────────────────────────────────────
 // Murs et plafond sont des faces SIMPLES tournées vers l'intérieur : vues de
 // dehors, elles ne sont pas rendues. Les caméras ISO, DESSUS et CÔTÉ regardent
 // donc dans la salle comme dans une maquette coupée, sans rien masquer à la
-// main — et en orbitant dedans, la salle redevient fermée.
+// main - et en orbitant dedans, la salle redevient fermée.
 function _makeDiscotheque() {
   const g = new THREE.Group();
   const mat = (c, r, m, extra = {}) =>
@@ -4442,7 +4445,7 @@ function _makeDiscotheque() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DJ mobile — cabine blanche à néon MyStrow, totems lycra blancs, colonnes PA
+// DJ mobile - cabine blanche à néon MyStrow, totems lycra blancs, colonnes PA
 // ─────────────────────────────────────────────────────────────────────────────
 // D'après une photo de presta de mariage fournie par l'utilisateur. Pas de
 // salle : l'installation est posée seule sur le sol du plan.
@@ -4452,7 +4455,7 @@ function _makeDiscotheque() {
 // (sur plaque noire, sinon noyé dans le blanc), tubes LED, pads du contrôleur.
 
 // Néon manuscrit : texte dessiné sur un canvas, halo compris. Deux passes, un
-// halo bleu large puis un cœur presque blanc — un tube néon est plus clair au
+// halo bleu large puis un cœur presque blanc - un tube néon est plus clair au
 // centre que sa lueur. La taille s'ajuste pour que le texte tienne en largeur.
 function _neonTexture(texte) {
   const cv = document.createElement('canvas');
@@ -4619,7 +4622,7 @@ function _makeDJMobile() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Conférence — amphithéâtre circulaire en gradins, grand écran au mur du fond
+// Conférence - amphithéâtre circulaire en gradins, grand écran au mur du fond
 // ─────────────────────────────────────────────────────────────────────────────
 // D'après une image fournie par l'utilisateur. Sans arbres (la verdure a été
 // retirée des décors à sa demande) ni faux spots sur les rails : ce sont les
@@ -4755,7 +4758,7 @@ function _makeConference() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sapin de Noël — grand sapin stylisé vert foncé
+// Sapin de Noël - grand sapin stylisé vert foncé
 // ─────────────────────────────────────────────────────────────────────────────
 // D'après `sapin de noel.png` fourni par l'utilisateur : branches en lames
 // plates rayonnant du tronc par étages. Sans boules ni cadeaux (retirés à la
@@ -4828,19 +4831,19 @@ const SCENE_PRESETS = {
   // Scène nue : aucun truss, aucun accessoire. Pour les décors importés (GLB),
   // sinon le rig du preset reste visible sous le modèle.
   vide: {
-    // Écran vidéo du fond de scène — cf. setVideoScreen()
+    // Écran vidéo du fond de scène - cf. setVideoScreen()
     screen: null,
     trusses: [],
     buildProps() {}
   },
   // Décors livrés en GLB : ils apportent leur propre structure, donc aucun
-  // truss dessiné ici — sinon un second rig flotterait dans le modèle. Le
+  // truss dessiné ici - sinon un second rig flotterait dans le modèle. Le
   // fichier est poussé par Python via loadSceneGLB().
   concert_glb: {
-    // Écran vidéo — cf. setVideoScreen(). Ici il RECOUVRE le fond de scène du
+    // Écran vidéo - cf. setVideoScreen(). Ici il RECOUVRE le fond de scène du
     // modèle : la nappe tendue du décor (mesurée : 14,6 m × 9,2 m, plantée à
     // z ≈ 4,25 et légèrement incurvée) ne peut pas être masquée, le GLB n'est
-    // qu'un seul maillage à un seul matériau — structure, plateau et fond
+    // qu'un seul maillage à un seul matériau - structure, plateau et fond
     // partagent la même géométrie. On la couvre donc, en se plaçant assez en
     // avant (z = 3,85) pour passer devant son point le plus proche (3,93).
     screen: { x:0, y:0.15, z:3.85, w:14.6, h:8.6 },
@@ -4849,7 +4852,7 @@ const SCENE_PRESETS = {
   },
   // Plateau 6 × 5 m (GLB `scene_6x5.glb`, à taille réelle via span 8,2).
   // L'écran RECOUVRE celui du modèle : 4 × 3 m, bas à 1 m (dessus du plateau),
-  // face avant à z = 3,02 après centrage — la dalle se pose juste devant.
+  // face avant à z = 3,02 après centrage - la dalle se pose juste devant.
   scene_6x5: {
     screen: [ { x:0, y:0.98, z:2.98, w:4.04, h:3.04, fit:'cover' } ],
     // Petite scène : caméras rapprochées, visée à hauteur d'écran.
@@ -4952,16 +4955,16 @@ window.clearImportedScene = function() { _importedGrp.clear(); };
 // Groupe SÉPARÉ de `_importedGrp` à dessein : le décor importé à la main par
 // l'utilisateur et celui qui accompagne un preset sont deux choses distinctes.
 // Partager le groupe ferait disparaître l'import personnel dès qu'on change de
-// scène — et le ferait réapparaître par-dessus le décor du preset à l'inverse.
+// scène - et le ferait réapparaître par-dessus le décor du preset à l'inverse.
 const _sceneGrp = new THREE.Group();
 scene.add(_sceneGrp);
 
 // `yawDeg` : demi-tour (ou quart de tour) autour de Y pour remettre le décor
-// dans le repère du plan — fond de scène vers les Z POSITIFS, public vers les
+// dans le repère du plan - fond de scène vers les Z POSITIFS, public vers les
 // Z négatifs. Les modèles ne sont pas tous bâtis dans ce sens ; l'angle est
 // déclaré par décor dans `_SCENE_PRESETS` (clé `yaw`), jamais en dur ici.
 // `spanM` : largeur en mètres à laquelle ramener le décor. C'est le plan de feu
-// 2D qui fait foi — un projecteur ne peut y être posé qu'entre 5 % et 95 % du
+// 2D qui fait foi - un projecteur ne peut y être posé qu'entre 5 % et 95 % du
 // cadre, soit ±8,1 m une fois converti : un décor ramené à 18 m avait donc sa
 // structure 90 cm trop large de chaque côté, et aligner une rangée de projos sur
 // le grill devenait impossible sans les sortir du rectangle de scène. On réduit
@@ -5008,7 +5011,7 @@ window.setStageFloor = function(visible) {
 };
 
 // Le cyclorama est un plan VERTICAL planté à z = +5,6 : un décor plus profond
-// que ça passe derrière et se fait trancher net — la structure apparaît coupée
+// que ça passe derrière et se fait trancher net - la structure apparaît coupée
 // par un « écran noir » en plein milieu. On peut donc l'éteindre seul, sans
 // perdre le sol ni la grille. À appeler APRÈS `setStageFloor`, qui le rallume.
 window.setCyclorama = function(visible) { cycMesh.visible = visible; };
@@ -5021,14 +5024,14 @@ window.setBloom = function(strength) {
 window.setScenePreset = function(name) {
   // Un preset inconnu ici est presque toujours un preset déclaré côté Python
   // (`_SCENE_PRESETS`) et oublié dans la liste ci-dessus. L'ancien `return`
-  // sortait AVANT le nettoyage : le décor précédent — trusses, totems,
-  // silhouettes — restait affiché par-dessus le nouveau, et le seul symptôme
+  // sortait AVANT le nettoyage : le décor précédent - trusses, totems,
+  // silhouettes - restait affiché par-dessus le nouveau, et le seul symptôme
   // était « ça n'efface pas les autres quand on clique dessus ». On nettoie
   // donc quoi qu'il arrive, et on se rabat sur une scène nue : un décor GLB
   // n'a de toute façon ni truss ni accessoire à dessiner.
   const preset = SCENE_PRESETS[name] || { trusses: [], screen: null, buildProps() {} };
   if (!SCENE_PRESETS[name]) {
-    console.warn(`[decor] preset « ${name} » absent de SCENE_PRESETS (html) — `
+    console.warn(`[decor] preset « ${name} » absent de SCENE_PRESETS (html) - `
                  + `scène nue. À déclarer si ce décor doit dessiner des trusses.`);
   }
   _propsGrp.clear();
@@ -5037,7 +5040,7 @@ window.setScenePreset = function(name) {
   preset.buildProps();
   // L'écran suit le décor : chaque scène sait où le sien tombe (fond de scène
   // pour un concert, derrière la régie pour un club). Un preset qui n'en
-  // déclare pas — « Aucun décor » — n'en a tout simplement pas.
+  // déclare pas - « Aucun décor » - n'en a tout simplement pas.
   window.setVideoScreen(preset.screen || null);
   window.currentTrusses = JSON.parse(JSON.stringify(preset.trusses));
   // Chaque scène a son cadrage : on réapplique la vue en cours avec celui-ci,
@@ -5050,7 +5053,7 @@ window.setScenePreset = function(name) {
 window.setScenePreset('festival_plein_air');   // = _SCENE_PAR_DEFAUT (Python)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// QWebChannel — communication JS → Python
+// QWebChannel - communication JS → Python
 // ─────────────────────────────────────────────────────────────────────────────
 if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined') {
   new QWebChannel(qt.webChannelTransport, function(channel) {

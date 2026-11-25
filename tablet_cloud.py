@@ -101,6 +101,11 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
         group_lists.setdefault(f.get("group"), []).append(i)
 
     for i, f in enumerate(pc_fixtures):
+        # MyStrow Up (téléphones du public) : fixture virtuelle du PC, sans
+        # sortie DMX. La tablette, qui émet elle-même le DMX, l'aurait sortie
+        # sur les câbles par-dessus un vrai appareil à la même adresse.
+        if f.get("manufacturer") == "MyStrow Up":
+            continue
         if int(f.get("universe", 0) or 0) != 0:
             warnings.append(f"{f.get('name', '?')} : univers {f.get('universe')} (la tablette ne sort que l'univers 1)")
             continue
@@ -125,7 +130,7 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
         if t.get("fixture_type") is None and "Pan" in profile:
             t["fixture_type"] = "Moving Head"
         # Débattement RÉSOLU (défaut par type : un laser n'est pas une lyre
-        # 540/270) — la tablette n'a pas à refaire la règle.
+        # 540/270) - la tablette n'a pas à refaire la règle.
         from types import SimpleNamespace
         from core import pan_tilt_ranges
         t["pan_range"], t["tilt_range"] = pan_tilt_ranges(SimpleNamespace(**{

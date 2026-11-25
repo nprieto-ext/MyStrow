@@ -1,5 +1,5 @@
 """
-test_effect_editor_ux.py — Editeur d'effets : deux pieges de la colonne de gauche.
+test_effect_editor_ux.py - Editeur d'effets : deux pieges de la colonne de gauche.
 
 1. Cliquer sur une autre carte pour la REGARDER jetait toutes les couches
    editees de l'effet precedent : `_apply_preset` vide `self._layers`, et rien

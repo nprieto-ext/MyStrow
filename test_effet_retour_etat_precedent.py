@@ -1,5 +1,5 @@
 """
-test_effet_retour_etat_precedent.py — Couper un effet doit rendre CE QU'IL Y AVAIT.
+test_effet_retour_etat_precedent.py - Couper un effet doit rendre CE QU'IL Y AVAIT.
 
 Trois symptomes remontes le 28/08/2026, une meme racine et deux voisines :
 
@@ -213,8 +213,8 @@ class TestCoupureSansRestitution(unittest.TestCase):
     def test_changement_de_pad_memoire_restitue_avant_de_nettoyer(self):
         """`_deactivate_memory_pad` : la restitution passe AVANT le nettoyage.
 
-        Ordre inverse, la restitution rendrait l'etat d'avant l'effet — memoire
-        allumee comprise — et ecraserait l'extinction de la memoire quittee.
+        Ordre inverse, la restitution rendrait l'etat d'avant l'effet - memoire
+        allumee comprise - et ecraserait l'extinction de la memoire quittee.
 
         Ce bloc vivait dans `_activate_memory_pad` ; il est devenu le corps de
         `_deactivate_memory_pad`, partage avec les pads solo et les momentanes

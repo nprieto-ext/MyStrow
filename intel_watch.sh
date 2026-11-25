@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# intel_watch.sh  —  Veilleur du build Mac Intel
+# intel_watch.sh  -  Veilleur du build Mac Intel
 #
 # Lancé automatiquement toutes les 10 minutes par launchd (voir
 # install_intel_watch.sh). À chaque passage :
@@ -51,7 +51,7 @@ STATE_DIR="$HOME/.mystrow_intel_watch"
 
 # Où vit le dépôt MyStrow. Le veilleur, lui, tourne depuis une COPIE dans
 # $STATE_DIR : `build_intel_mac.sh` fait `git reset --hard`, qui efface du
-# dossier tout fichier absent de la référence visée — le veilleur pourrait se
+# dossier tout fichier absent de la référence visée - le veilleur pourrait se
 # supprimer lui-même en plein build, et launchd ne trouverait plus rien au
 # passage suivant.
 REPO_DIR="${MYSTROW_REPO_DIR:-}"
@@ -69,7 +69,7 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S')  $*" >> "$WATCH_LOG"; }
 notify() {
   # Notification macOS. Silencieuse si l'utilisateur ne l'a pas autorisée : ce
   # n'est qu'un confort, jamais une raison d'échouer.
-  osascript -e "display notification \"$2\" with title \"MyStrow — build Intel\" subtitle \"$1\"" \
+  osascript -e "display notification \"$2\" with title \"MyStrow - build Intel\" subtitle \"$1\"" \
     >/dev/null 2>&1 || true
 }
 
@@ -95,13 +95,13 @@ fi
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   RUNNING_PID=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
   if [ -n "$RUNNING_PID" ] && kill -0 "$RUNNING_PID" 2>/dev/null; then
-    log "build déjà en cours (pid $RUNNING_PID) — passage ignoré"
+    log "build déjà en cours (pid $RUNNING_PID) - passage ignoré"
     exit 0
   fi
   # Pas de PID lisible ET verrou tout frais : l'autre passage vient de créer le
   # dossier et n'a pas encore écrit son PID. On lui laisse la place.
   if [ -z "$RUNNING_PID" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin -2 2>/dev/null)" ]; then
-    log "verrou en cours de création par un autre passage — ignoré"
+    log "verrou en cours de création par un autre passage - ignoré"
     exit 0
   fi
   # Sinon : processus mort (build tué, Mac redémarré en pleine notarisation…).
@@ -114,11 +114,11 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 
 # ── Prérequis ─────────────────────────────────────────────────────────────────
 if ! command -v gh >/dev/null 2>&1; then
-  log "gh introuvable — installe-le : brew install gh && gh auth login"
+  log "gh introuvable - installe-le : brew install gh && gh auth login"
   exit 1
 fi
 if ! gh auth status >/dev/null 2>&1; then
-  log "gh non authentifié — lance : gh auth login"
+  log "gh non authentifié - lance : gh auth login"
   exit 1
 fi
 if [ ! -f "$REPO_DIR/build_intel_mac.sh" ]; then
@@ -146,7 +146,7 @@ fi
 # ── Dernière release publiée ──────────────────────────────────────────────────
 RELEASE_JSON=$(gh api "repos/$GITHUB_REPO/releases/latest" 2>/dev/null || echo "")
 if [ -z "$RELEASE_JSON" ]; then
-  log "GitHub injoignable (ou aucune release) — on réessaiera au prochain passage"
+  log "GitHub injoignable (ou aucune release) - on réessaiera au prochain passage"
   exit 0
 fi
 
@@ -157,12 +157,12 @@ HAS_DMG=$(echo "$RELEASE_JSON" | python3 -c \
   2>/dev/null || echo "?")
 
 if [ -z "$TAG" ] || [ "$HAS_DMG" = "?" ]; then
-  log "réponse GitHub illisible — passage ignoré"
+  log "réponse GitHub illisible - passage ignoré"
   exit 0
 fi
 
 if [ "$HAS_DMG" = "oui" ]; then
-  log "$TAG : DMG Intel déjà en ligne — rien à faire"
+  log "$TAG : DMG Intel déjà en ligne - rien à faire"
   exit 0
 fi
 
@@ -180,7 +180,7 @@ fi
 [ "$PREV_TAG" = "$TAG" ] || ATTEMPTS=0
 
 if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
-  log "$TAG : $ATTEMPTS échecs — abandon. Voir $LOG_DIR/$TAG.log, puis : rm $STATE_FILE"
+  log "$TAG : $ATTEMPTS échecs - abandon. Voir $LOG_DIR/$TAG.log, puis : rm $STATE_FILE"
   exit 0
 fi
 
@@ -190,7 +190,7 @@ echo "$TAG $ATTEMPTS" > "$STATE_FILE"
 # ── main doit bien être la version de cette release ───────────────────────────
 # On build origin/main, pas le tag : `git reset --hard <tag>` remettrait le dépôt
 # du Mac sur une version ANCIENNE des scripts de build, relancée telle quelle au
-# passage suivant — toute correction serait perdue à chaque build. En échange, il
+# passage suivant - toute correction serait perdue à chaque build. En échange, il
 # faut vérifier que main est bien resté sur cette version : si la suivante est
 # déjà en préparation, le DMG produit ne correspondrait à aucune release.
 MAIN_VERSION=$(gh api "repos/$GITHUB_REPO/contents/core.py?ref=main" --jq '.content' 2>/dev/null \
@@ -200,7 +200,7 @@ m = re.search(r'VERSION\s*=\s*.(.*?).\s*$', src, re.M)
 print(m.group(1) if m else '')" 2>/dev/null || echo "")
 
 if [ -n "$MAIN_VERSION" ] && [ "v$MAIN_VERSION" != "$TAG" ]; then
-  log "$TAG : main est déjà en $MAIN_VERSION — DMG Intel de $TAG à faire à la main, on n'insiste pas"
+  log "$TAG : main est déjà en $MAIN_VERSION - DMG Intel de $TAG à faire à la main, on n'insiste pas"
   notify "$TAG" "main est en $MAIN_VERSION : DMG Intel à construire à la main"
   echo "$TAG $MAX_ATTEMPTS" > "$STATE_FILE"
   exit 0
@@ -215,7 +215,7 @@ mail_suivi debut "$TAG" --essai "$ATTEMPTS/$MAX_ATTEMPTS"
 # `caffeinate -i` empêche la mise en veille pendant le build : un Mac qui
 # s'endort au milieu de la notarisation laisse un verrou et un DMG à moitié fait.
 # MYSTROW_OUT_DIR : surtout PAS le Bureau. macOS interdit Bureau/Documents/
-# Téléchargements aux processus lancés par launchd — le build allait jusqu'au
+# Téléchargements aux processus lancés par launchd - le build allait jusqu'au
 # bout puis mourait sur « rm: ~/Desktop/MyStrow_intel.dmg: Operation not
 # permitted », alors qu'il passait très bien depuis le Terminal.
 MYSTROW_AUTO=1 MYSTROW_OUT_DIR="$STATE_DIR/out" \
@@ -236,11 +236,11 @@ if [ "$RC" -eq 0 ] && [ "$UPLOADED" = "oui" ]; then
   mail_suivi ok "$TAG" --taille "${TAILLE:-}"
   echo "$TAG 0" > "$STATE_FILE"
 elif [ "$RC" -eq 0 ]; then
-  log "$TAG : build OK mais DMG absent de la release — upload à vérifier ($BUILD_LOG)"
-  notify "$TAG" "Build OK, upload échoué — à vérifier"
+  log "$TAG : build OK mais DMG absent de la release - upload à vérifier ($BUILD_LOG)"
+  notify "$TAG" "Build OK, upload échoué - à vérifier"
   mail_suivi echec "$TAG" --essai "$ATTEMPTS/$MAX_ATTEMPTS" --log "$BUILD_LOG"
 else
-  log "$TAG : ❌ build en échec (code $RC) — voir $BUILD_LOG"
+  log "$TAG : ❌ build en échec (code $RC) - voir $BUILD_LOG"
   notify "$TAG" "Build en échec (essai $ATTEMPTS/$MAX_ATTEMPTS)"
   mail_suivi echec "$TAG" --essai "$ATTEMPTS/$MAX_ATTEMPTS" --log "$BUILD_LOG"
 fi

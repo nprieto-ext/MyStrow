@@ -1,10 +1,10 @@
 """
-test_canal_preset.py — Le canal « Preset », et la section qui va avec.
+test_canal_preset.py - Le canal « Preset », et la section qui va avec.
 
 MyStrow n'offrait des presets nommes que sur DEUX types de canaux, `Gobo1` et
 `ColorWheel`, et tous deux ont une signification VISUELLE. Qui voulait des
 presets sur un canal de programme (« Auto 1 », « Sound active ») declarait donc
-son canal en « Gobo » puis le renommait — et son PAR LED se couvrait de motifs
+son canal en « Gobo » puis le renommait - et son PAR LED se couvrait de motifs
 de gobo dans les plans 2D et 3D.
 
 Ce qui est verrouille ici :
@@ -13,13 +13,13 @@ Ce qui est verrouille ici :
     ganges, un « Preset » unique redonnerait la meme valeur a tous les canaux
     de programme d'un laser (le piege du « Mode fourre-tout ») ;
   * un canal de preset sort sa valeur, independamment de ses voisins ;
-  * 0 au repos — un canal de macro ne doit JAMAIS prendre une valeur tout seul,
+  * 0 au repos - un canal de macro ne doit JAMAIS prendre une valeur tout seul,
     sinon l'appareil lance un programme que personne n'a demande ;
   * la section « PRESETS » du clic droit s'affiche sur un PAR LED. C'est le
     coeur du sujet : la section roue/gobo, elle, est enfermee dans le bloc
     `if proj.fixture_type == "Moving Head"` et reste donc inatteignable sur les
     appareils qui ont justement des canaux de programme ;
-  * un seul curseur par canal — pas de doublon avec « Canaux avances », sinon
+  * un seul curseur par canal - pas de doublon avec « Canaux avances », sinon
     deux writers pour le meme canal DMX ;
   * le curseur ecrit l'ATTRIBUT dedie (`proj.preset1`), pas `channel_extras` ;
   * aucun effet sur le rendu : declarer un Preset ne fait pas projeter de gobo.
@@ -47,7 +47,7 @@ from core import fixture_projects_gobo
 
 
 # Le PAR LED du client : RGB + dimmer, et DEUX canaux de programme distincts
-# (le programme lui-meme et sa vitesse) — c'est ce qui exige plus d'un type.
+# (le programme lui-meme et sa vitesse) - c'est ce qui exige plus d'un type.
 PAR_CLIENT = ["R", "G", "B", "Dim", "Preset1", "Preset2"]
 
 
@@ -110,7 +110,7 @@ class TestSectionPresetSurParLed(_MenuHarness):
     def test_la_section_presets_apparait_sur_un_par_led(self):
         items = self._items()
         self.assertIn(("label", "PRESETS"), items,
-                      "la section PRESETS manque sur un PAR LED — c'est tout "
+                      "la section PRESETS manque sur un PAR LED - c'est tout "
                       "l'objet du canal : elle ne doit PAS etre enfermee dans "
                       "le bloc Moving Head comme l'est la roue de couleurs")
 
@@ -160,7 +160,7 @@ class TestSectionPresetSurParLed(_MenuHarness):
         blocs[0].click()
         self.assertEqual(self.proj.preset1, 137, "le bloc n'a pas ecrit la valeur")
         self.assertEqual(sli.value(), 137,
-                         "le curseur doit suivre le bloc cliqué — sinon le menu "
+                         "le curseur doit suivre le bloc cliqué - sinon le menu "
                          "affiche une valeur, la fixture en reçoit une autre")
 
         blocs[1].click()
@@ -243,7 +243,7 @@ class TestSortieDMX(unittest.TestCase):
         self.p.preset1, self.p.preset2 = 137, 42
         self.assertEqual(self._trame()[4:], [137, 42],
                          "les deux canaux de programme doivent etre "
-                         "independants — c'est la raison d'etre des 4 types")
+                         "independants - c'est la raison d'etre des 4 types")
 
     def test_aucun_effet_sur_le_rendu(self):
         self.p.preset1 = 200
@@ -253,7 +253,7 @@ class TestSortieDMX(unittest.TestCase):
 
 class TestBlocsEtCurseurSurLyre(unittest.TestCase):
     """Le meme defaut existait sur le gobo et la roue : le clic sur un bloc
-    ecrivait la lyre sans deplacer le curseur — le menu affichait une valeur,
+    ecrivait la lyre sans deplacer le curseur - le menu affichait une valeur,
     la fixture en recevait une autre."""
 
     def setUp(self):
@@ -319,7 +319,7 @@ class TestBlocsEtCurseurSurLyre(unittest.TestCase):
 
 
 class TestVocabulaire(unittest.TestCase):
-    """Les listes de types de canaux derivent — cf. l'audit du projet."""
+    """Les listes de types de canaux derivent - cf. l'audit du projet."""
 
     def test_les_quatre_listes_sont_alignees(self):
         from artnet_dmx import CHANNEL_TYPES, CHANNEL_DISPLAY, _MANUAL_ONLY

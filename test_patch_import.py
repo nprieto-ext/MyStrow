@@ -1,10 +1,10 @@
 """
-test_patch_import.py — Import d'un patch QLC+ / tableau, sans interface.
+test_patch_import.py - Import d'un patch QLC+ / tableau, sans interface.
 
     python test_patch_import.py
 
 Couvre ce qui se trompe en silence : la NUMEROTATION (QLC+ compte adresses et
-univers a partir de 0, un tableau ecrit par un humain a partir de 1 — une erreur
+univers a partir de 0, un tableau ecrit par un humain a partir de 1 - une erreur
 d'un cran decale tout le patch sans qu'aucun message ne le dise), la fixture
 introuvable qui doit garder le bon encombrement, et les controles qui empechent
 d'importer un patch impossible (univers au-dela des 4, debordement du canal 512).

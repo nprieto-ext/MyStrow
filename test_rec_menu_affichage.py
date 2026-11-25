@@ -1,9 +1,9 @@
 """
-test_rec_menu_affichage.py — Menu Affichage et en-tete de piste du REC Lumiere.
+test_rec_menu_affichage.py - Menu Affichage et en-tete de piste du REC Lumiere.
 
 L'en-tete de piste etait un pave : un QLabel encadre de 104 px, un bouton de
 repli, parfois un « × ». Trois widgets enfants par piste, a replacer a la main
-a chaque defilement horizontal — et sur un rig de 50 fixtures, cela faisait
+a chaque defilement horizontal - et sur un rig de 50 fixtures, cela faisait
 ~180 widgets pour afficher trois choses. Il est desormais PEINT dans
 `paintEvent`, sur le modele d'un en-tete de piste de montage :
 
@@ -12,7 +12,7 @@ a chaque defilement horizontal — et sur un rig de 50 fixtures, cela faisait
 Trois choses tiennent a cet en-tete, et c'est elles qu'on verrouille ici :
 
   * la GEOMETRIE. Le clic tape dans le meme rectangle que le rendu
-    (`_header_rects`), a n'importe quelle densite de lignes — sinon on
+    (`_header_rects`), a n'importe quelle densite de lignes - sinon on
     verrouillerait une piste en croyant viser a cote.
 
   * le CADENAS. Une piste verrouillee refuse tout ce qui modifie ses blocs,
@@ -117,7 +117,7 @@ class HauteurDesLignes(unittest.TestCase):
 
 
 class PariteDessinSurvol(unittest.TestCase):
-    """Ce qui est dessine est ce qu'on peut attraper — a toute densite."""
+    """Ce qui est dessine est ce qu'on peut attraper - a toute densite."""
 
     def setUp(self):
         self.t = _piste()
@@ -202,7 +202,7 @@ class EnTeteDePiste(unittest.TestCase):
         self.assertEqual(wf._header_rects(0)['lock'], self.t._header_rects(0)['lock'])
 
     def test_survol_du_cadenas(self):
-        """Le survol eclaircit l'icone — et ne repeint que si l'etat change."""
+        """Le survol eclaircit l'icone - et ne repeint que si l'etat change."""
         r = self.t._header_rects(0)
         self.assertIsNone(self.t._hdr_hover)
         self.t.update_header_hover(r['lock'].center().x(), r['lock'].center().y())

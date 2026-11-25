@@ -1,5 +1,5 @@
 """
-Éditeur de roue de couleur — MyStrow
+Éditeur de roue de couleur - MyStrow
 Permet de définir les positions DMX exactes de chaque couleur
 d'une roue de couleur fixture par fixture.
 """
@@ -111,7 +111,7 @@ class _SlotRow(QWidget):
     """Une ligne d'éditeur de blocs : couleur + nom + DMX + move + delete.
 
     `show_color=False` masque la pastille : un bloc de PRESET (« Auto 1 »,
-    « Sound active ») n'a pas de couleur — c'est une valeur de macro. Le champ
+    « Sound active ») n'a pas de couleur - c'est une valeur de macro. Le champ
     reste dans le modèle, à zéro coût, pour que `get_slot()` rende toujours la
     même forme de dictionnaire quel que soit l'éditeur qui l'utilise.
     """
@@ -141,8 +141,8 @@ class _SlotRow(QWidget):
         self._apply_color_style()
         self._color_btn.setToolTip(tr("cwe2_click_colour"))
         self._color_btn.clicked.connect(self._pick_color)
-        # Créé dans tous les cas — `_apply_color_style()` et `get_slot()` s'en
-        # servent — mais posé dans la ligne seulement quand la couleur a un sens.
+        # Créé dans tous les cas - `_apply_color_style()` et `get_slot()` s'en
+        # servent - mais posé dans la ligne seulement quand la couleur a un sens.
         if show_color:
             row.addWidget(self._color_btn)
         else:
@@ -235,7 +235,7 @@ class _SlotRow(QWidget):
     def _apply_shape_icon(self):
         from core import GOBO_SLOT_NAMES, gobo_slot_index
         # Sans choix explicite, on montre ce que le plan dessine DÉJÀ pour ce
-        # DMX — le bouton ne doit pas annoncer un motif qui n'est pas affiché.
+        # DMX - le bouton ne doit pas annoncer un motif qui n'est pas affiché.
         shown = self._shape if self._shape is not None else gobo_slot_index(self._dmx.value())
         self._shape_btn.setIcon(_gobo_shape_icon(shown))
         tip = GOBO_SLOT_NAMES[shown]
@@ -288,7 +288,7 @@ class _SlotRow(QWidget):
             self._color = c.name()
             self._apply_color_style()
             # `_update_bar()` n'a jamais existé sur cette classe : l'appel levait
-            # un AttributeError qui avalait le `_notify()` suivant — la couleur
+            # un AttributeError qui avalait le `_notify()` suivant - la couleur
             # changeait, mais l'aperçu en direct ne suivait pas.
             self._notify()
 
@@ -927,7 +927,7 @@ class ColorWheelCalibWizard(QDialog):
     """
     Wizard pas-à-pas pour calibrer les positions DMX d'une roue de couleur.
 
-    Étape -1 : intro — ouvre le faisceau (Dim + obturateur), roue à 0.
+    Étape -1 : intro - ouvre le faisceau (Dim + obturateur), roue à 0.
     Étapes 0-7 : pour chaque couleur, l'utilisateur règle le curseur jusqu'à
                  voir la bonne couleur sur la lyre, puis clique Suivant.
     À la fin, les slots sont sauvegardés et appliqués aux fixtures similaires.
@@ -935,7 +935,7 @@ class ColorWheelCalibWizard(QDialog):
 
     # Stratégies d'ouverture du faisceau, enchaînées par le bouton « Ma lyre ne
     # s'allume pas ». Chacune décrit un état COMPLET : (valeur forcée sur le
-    # canal Strobe — 0 = ne pas forcer, shutter inversé, libellé). On ne peut
+    # canal Strobe - 0 = ne pas forcer, shutter inversé, libellé). On ne peut
     # pas deviner où se trouve l'obturateur d'une lyre, alors on propose les
     # conventions rencontrées sur le terrain plutôt qu'une seule.
     _OPEN_MODES = [
@@ -965,13 +965,13 @@ class ColorWheelCalibWizard(QDialog):
         # Où est l'obturateur ? Beaucoup de lyres n'ont pas de canal Shutter
         # séparé : l'obturateur est INTÉGRÉ au canal Strobe, et il faut envoyer
         # ce canal à fond pour que la lyre émette. Or le moteur DMX sort
-        # Strobe = 0 quand aucun strobe n'est demandé — soit obturateur fermé
+        # Strobe = 0 quand aucun strobe n'est demandé - soit obturateur fermé
         # sur ces fixtures : la calibration se faisait dans le noir complet.
         _prof = getattr(proj, 'dmx_profile', None) or []
         self._has_shutter = 'Shutter' in _prof
         self._has_strobe  = 'Strobe'  in _prof
         # Mode de départ : forcer le Strobe seulement quand il n'y a PAS de
-        # canal Shutter distinct — sinon on ferait strober une lyre dont
+        # canal Shutter distinct - sinon on ferait strober une lyre dont
         # l'obturateur est déjà géré, et les couleurs clignoteraient.
         self._open_mode = 0 if (self._has_strobe and not self._has_shutter) else 3
 
@@ -1196,7 +1196,7 @@ class ColorWheelCalibWizard(QDialog):
             self._circle_wrap.setVisible(True)
 
             self._title_lbl.setText(
-                f"{label} — {tr('cwe_calib_optional')}" if optional else label)
+                f"{label} - {tr('cwe_calib_optional')}" if optional else label)
             # Use the color directly; if it's dark against our dark background,
             # fall back to a lighter tint by reducing darkness threshold.
             lum = sum(int(color.lstrip('#')[i*2:i*2+2], 16) * w
@@ -1246,7 +1246,7 @@ class ColorWheelCalibWizard(QDialog):
         # Blanc plein : régler `level` ne suffit PAS à ouvrir le dimmer. Le
         # moteur DMX compare `color` à `base_color × level` pour détecter un
         # effet en cours ; en partant d'une lyre éteinte (color noire) il
-        # concluait « effet actif, luminosité nulle » et sortait Dim = 0 — la
+        # concluait « effet actif, luminosité nulle » et sortait Dim = 0 - la
         # calibration se faisait donc dans le noir sur toute fixture à canal Dim.
         self._proj.base_color       = QColor(255, 255, 255)
         self._proj.color            = QColor(255, 255, 255)

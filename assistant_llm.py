@@ -1,5 +1,5 @@
 """
-assistant_llm.py — Compréhension par un petit modèle local (option, bêta).
+assistant_llm.py - Compréhension par un petit modèle local (option, bêta).
 
 Un modèle Qwen3-0.6B entraîné sur les commandes MyStrow (~400 Mo, GGUF) lit la
 phrase et rend des commandes JSON, que l'on traduit ici dans le format

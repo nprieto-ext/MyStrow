@@ -37,7 +37,7 @@
   const SHAPES = [["cercle", "○ Cercle"], ["huit", "8 Huit"], ["infini", "∞ Infini"], ["balancier", "↔ Balancier"],
                   ["pendule", "↕ Pendule"], ["carre", "□ Carré"]];
   // core.SPREAD_MODES du PC
-  const SPREAD = [["lineaire", "Linéaire", "1, 2, 3, 4… — chenillard classique"],
+  const SPREAD = [["lineaire", "Linéaire", "1, 2, 3, 4… - chenillard classique"],
                   ["miroir", "Miroir (centre)", "part du centre vers les extrémités"],
                   ["miroir_in", "Miroir (bords)", "1&8, puis 2&7, puis 3&6"],
                   ["pair_impair", "Pair / impair", "une fixture sur deux, en alternance"],

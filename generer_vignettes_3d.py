@@ -1,7 +1,7 @@
 """Régénère les miniatures des cartes Vue / Scène du plan 3D.
 
 Photographie chaque scène de `_SCENE_PRESETS` sous les 4 angles de caméra avec
-le vrai moteur (plan_3d_web.html) — sans projecteur ni retour vidéo — et écrit
+le vrai moteur (plan_3d_web.html) - sans projecteur ni retour vidéo - et écrit
 scenes3d/vignettes/<scène>_<vue>.png en 320 × 180.
 
 À relancer après toute retouche d'un décor ou l'ajout d'une scène : une

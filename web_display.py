@@ -1,5 +1,5 @@
 """
-web_display.py — Pages web affichées par la playlist (ligne « 🌐 Site internet »).
+web_display.py - Pages web affichées par la playlist (ligne « 🌐 Site internet »).
 
 Une page par URL, chargée UNE fois (dès que la ligne existe) puis gardée
 vivante : un mur de messages qui défile garde son état, et passer sur la ligne
@@ -7,7 +7,7 @@ l'affiche instantanément, sans écran de chargement.
 
 La vue n'a qu'UN parent à la fois : le préview quand la sortie vidéo est
 fermée, la fenêtre de sortie sinon (le préview montre alors des captures).
-Deux vues sur la même URL doubleraient le réseau, la mémoire — et le son.
+Deux vues sur la même URL doubleraient le réseau, la mémoire - et le son.
 Déplacer une vue d'un parent à l'autre ne recharge pas la page (vérifié).
 """
 

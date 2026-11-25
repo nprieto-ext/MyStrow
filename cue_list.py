@@ -1,5 +1,5 @@
 """
-CueListPanel — éditeur de cues, panneau flottant.
+CueListPanel - éditeur de cues, panneau flottant.
 """
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -31,7 +31,7 @@ _ACCENT = "#00d4ff"
 _SEL_BG = "#1e3a4a"
 _TEXT   = "#e0e0e0"
 _MUTED  = "#666666"
-_WARN   = "#ffb84d"   # fondu plus long que la durée du cue — signalé, pas corrigé
+_WARN   = "#ffb84d"   # fondu plus long que la durée du cue - signalé, pas corrigé
 
 _BTN = f"""
     QPushButton {{
@@ -65,7 +65,7 @@ _TABLE = f"""
 
 # ── Échelle 4 segments : 0–10 s / 10 s–1 min / 1 min–10 min / 10 min–1 h ──
 # Chaque segment : (seconde de départ, pas en secondes, nombre de crans).
-# Le cran 0 vaut 0 s (« — ») ; le segment n couvre les crans qui suivent.
+# Le cran 0 vaut 0 s (« - ») ; le segment n couvre les crans qui suivent.
 _SEGMENTS = (
     (0.0,   0.1, 100),   # 0.1 s → 10 s
     (10.0,  0.5, 100),   # 10 s  → 1 min
@@ -100,7 +100,7 @@ def _secs_to_ticks(s: float) -> int:
     return _MAX_TICKS
 
 def _fmt_ticks(t: int) -> str:
-    if t == 0: return "—"
+    if t == 0: return "-"
     s = _ticks_to_secs(t)
     if s < 10:  return f"{s:.1f}s"
     if s < 60:  return f"{s:.1f}".rstrip("0").rstrip(".") + "s"
@@ -267,7 +267,7 @@ class _SliderPopup(QWidget):
         self._key_lbl.setStyleSheet("color:#666; font-size:10px; font-weight:bold; background:transparent;")
         top.addWidget(self._key_lbl)
         top.addStretch()
-        self._val_lbl = QLabel("—")
+        self._val_lbl = QLabel("-")
         self._val_lbl.setStyleSheet("color:#00d4ff; font-size:15px; font-weight:bold; background:transparent;")
         top.addWidget(self._val_lbl)
         vl.addLayout(top)
@@ -524,7 +524,7 @@ class CueListPanel(QWidget):
         """Met à jour la cellule Effet d'une ligne (appelé depuis main_window)."""
         item = self._table.item(row, 4)
         if item:
-            item.setText(f"{_effect_emoji(eff_name)} {eff_name}" if eff_name else "—")
+            item.setText(f"{_effect_emoji(eff_name)} {eff_name}" if eff_name else "-")
             item.setForeground(QBrush(QColor(_ACCENT) if eff_name else QColor(_MUTED)))
 
     def set_progress(self, ratio: float):
@@ -587,7 +587,7 @@ class CueListPanel(QWidget):
         self._style_time_cell(idx, 3)
 
         eff_name = (cue.get("effect") or {}).get("name", "")
-        eff_item = QTableWidgetItem(f"{_effect_emoji(eff_name)} {eff_name}" if eff_name else "—")
+        eff_item = QTableWidgetItem(f"{_effect_emoji(eff_name)} {eff_name}" if eff_name else "-")
         eff_item.setTextAlignment(Qt.AlignCenter)
         eff_item.setFlags(_ro)
         eff_item.setForeground(QBrush(QColor(_ACCENT) if eff_name else QColor(_MUTED)))
@@ -617,12 +617,12 @@ class CueListPanel(QWidget):
             self.effect_pick_requested.emit(row)
 
     def _on_popup_committed(self, secs: float):
-        """Écrit la valeur réglée au curseur — et RIEN d'autre.
+        """Écrit la valeur réglée au curseur - et RIEN d'autre.
 
         Ce gestionnaire « corrigeait » auparavant l'autre colonne de la même
         ligne : régler la durée rabotait le fondu qui la dépassait, régler le
         fondu allongeait la durée, et poser un fondu sur un cue manuel
-        (durée 0) lui inventait une durée — c'est-à-dire qu'il transformait un
+        (durée 0) lui inventait une durée - c'est-à-dire qu'il transformait un
         cue attendant le GO en cue qui part tout seul. Rien à l'écran ne le
         signalait : l'utilisateur voyait bouger un réglage auquel il n'avait
         pas touché.
@@ -632,7 +632,7 @@ class CueListPanel(QWidget):
         des projecteurs au lancement du fondu :
         un cue qui enchaîne au milieu du fondu précédent repart proprement de
         là où les lampes en sont. Un fondu plus long que la durée est donc
-        parfaitement jouable — il est désormais simplement signalé à l'œil.
+        parfaitement jouable - il est désormais simplement signalé à l'œil.
         """
         row, col = self._popup_row, self._popup_col
         if not (0 <= row < len(self.cues)) or col not in (2, 3):
@@ -667,7 +667,7 @@ class CueListPanel(QWidget):
             item.setToolTip("")
         self._table.blockSignals(False)
 
-    # — Navigation ▲▼
+    # - Navigation ▲▼
     def _nav_prev(self):
         i = self._current_idx()
         n = len(self.cues)
@@ -686,7 +686,7 @@ class CueListPanel(QWidget):
         if target != i:
             self._table.selectRow(target)
 
-    # — Réordonnancement (drag & drop + clic droit)
+    # - Réordonnancement (drag & drop + clic droit)
     def _on_rows_reordered(self, src: int, dst: int):
         if not self.mem_data or not (0 <= src < len(self.cues)) or not (0 <= dst < len(self.cues)):
             return

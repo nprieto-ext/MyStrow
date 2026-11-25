@@ -1,5 +1,5 @@
 """
-Pixel map — effets spatiaux sur le plan de feu 2D.
+Pixel map - effets spatiaux sur le plan de feu 2D.
 
 Principe d'un LED mapper : on peint une « toile » qui défile et chaque
 projecteur prend la couleur de l'endroit où il est posé sur le plan. On ne
@@ -35,7 +35,7 @@ SHAPES = ("linear", "radial", "radial_in", "random")
 #   degrade     les couleurs défilent en continu (bouclé)
 #   vague       une bosse douce de couleur sur le fond
 #   chenillard  un bloc étroit qui court
-#   bloc        un bloc large (moitié du cycle) — « carré »
+#   bloc        un bloc large (moitié du cycle) - « carré »
 #   rampe       une comète : tête vive, traîne qui s'éteint derrière
 MOTIFS = ("degrade", "vague", "chenillard", "bloc", "rampe")
 
@@ -52,7 +52,7 @@ class GradientSpec:
              bords), "radial_in" (bords → centre), "random" (chaque fixture à
              une place tirée au hasard, mais stable).
     angle    Degrés, 0 = gauche → droite, 90 = haut → bas (sens écran).
-    gap      0..0.9 — « Noir » : part du cycle passée sur le fond. Plus il
+    gap      0..0.9 - « Noir » : part du cycle passée sur le fond. Plus il
              est haut, plus le noir traîne entre deux passages.
     repeat   Nombre de motifs visibles sur la sélection.
     speed    Tours par seconde du défilement. 0 = figé.
@@ -214,7 +214,7 @@ def periodic_positions(pos):
     """Scalaires d'un MOTIF (chenillard, vague, bloc, rampe) : ramenés à [0, 1[.
 
     Le motif boucle tous les 1.0 : avec s de 0 à 1, le premier et le dernier
-    appareil tombaient au même point du cycle et s'allumaient ENSEMBLE — le
+    appareil tombaient au même point du cycle et s'allumaient ENSEMBLE - le
     chenillard « sautait » la fin (remontée de Nico, 04/11/26 : barres aux deux
     bouts du plan). On réserve un pas pour le retour : N positions distinctes
     → s × (N-1)/N, le dernier allumé juste avant que le premier reparte.
@@ -246,7 +246,7 @@ def spatial_positions(points, shape="linear", angle=0.0):
     (repli au centre). Retourne une liste de floats, même ordre.
 
     Linéaire : projection sur l'axe `angle`, ramenée à l'étendue réelle de
-    la sélection — le premier projecteur rencontré vaut 0, le dernier 1.
+    la sélection - le premier projecteur rencontré vaut 0, le dernier 1.
     Radial : distance au centre de la sélection, le plus éloigné vaut 1.
     Aléatoire : une place fixe par fixture, tirée de sa position.
     """
@@ -303,7 +303,7 @@ def motif_value(motif, u, gap=0.0):
         return (1.0 - math.cos(2 * math.pi * v)) / 2.0
     if motif == "rampe":
         # Le motif avance vers les s croissants : la tête (vive) est devant,
-        # la traîne s'éteint derrière — une comète.
+        # la traîne s'éteint derrière - une comète.
         return v
     return 1.0                         # bloc, chenillard
 

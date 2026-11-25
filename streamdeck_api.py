@@ -1,5 +1,5 @@
 """
-streamdeck_api.py — Serveur HTTP local pour l'integration StreamDeck.
+streamdeck_api.py - Serveur HTTP local pour l'integration StreamDeck.
 
 Permet au plugin Elgato StreamDeck de controler MyStrow via HTTP REST
 sur http://127.0.0.1:8765/api/...
@@ -64,7 +64,7 @@ STREAMDECK_API_PORT = 8765
 # change pour eux.
 #
 # La clé est stockée EN CLAIR : on doit pouvoir la réafficher pour la copier
-# dans la box domotique, et ce fichier n'est lisible que depuis le PC — qui
+# dans la box domotique, et ce fichier n'est lisible que depuis le PC - qui
 # pilote de toute façon l'API sans clé.
 
 _NET_FILE = Path.home() / ".mystrow_api_network.json"
@@ -129,7 +129,7 @@ def _is_loopback(ip: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Bridge Qt — assure que les appels arrivent dans le thread principal Qt
+# Bridge Qt - assure que les appels arrivent dans le thread principal Qt
 # ---------------------------------------------------------------------------
 
 class _StreamDeckBridge(QObject):
@@ -491,7 +491,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     for i, p in enumerate(w.projectors)
                 ]
 
-                # Memoires — liste plate
+                # Memoires - liste plate
                 memories = []
                 for mc in range(8):
                     col_akai = w._mem_col_to_fader(mc)
@@ -507,7 +507,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                             "color":  color.name() if color else "#000000",
                         })
 
-                # Scenes (compat — format matriciel 8×8)
+                # Scenes (compat - format matriciel 8×8)
                 scenes = []
                 for mc in range(8):
                     col_akai = w._mem_col_to_fader(mc)
@@ -614,7 +614,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                         bridge.level_requested.emit(idx, val)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
-                    self._send_error(f"Usage: /api/level/{{0-8}}/{{0-100}} — {exc}")
+                    self._send_error(f"Usage: /api/level/{{0-8}}/{{0-100}} - {exc}")
 
             elif action == "effect":
                 # POST /api/effect/{idx 0-7}  → toggle slot bouton
@@ -661,7 +661,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.mute_requested.emit(idx, active)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
-                    self._send_error(f"Usage: /api/mute/{{0-7}}/{{0|1}} — {exc}")
+                    self._send_error(f"Usage: /api/mute/{{0-7}}/{{0|1}} - {exc}")
 
             elif action == "scene":
                 # POST /api/scene/{mem_col 0-7}/{row 0-7}  (compatibilite)
@@ -675,7 +675,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.scene_requested.emit(mc, row)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
-                    self._send_error(f"Usage: /api/scene/{{0-7}}/{{0-7}} — {exc}")
+                    self._send_error(f"Usage: /api/scene/{{0-7}}/{{0-7}} - {exc}")
 
             elif action == "memory":
                 # POST /api/memory/{id}  où id = "1.1" … "8.8"
@@ -691,7 +691,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.scene_requested.emit(mc, row)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError, AttributeError) as exc:
-                    self._send_error(f'Usage: /api/memory/1.1 … /api/memory/8.8 — {exc}')
+                    self._send_error(f'Usage: /api/memory/1.1 … /api/memory/8.8 - {exc}')
 
             elif action == "goto":
                 # POST /api/goto/{row}
@@ -700,7 +700,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.goto_seq_requested.emit(row)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
-                    self._send_error(f"Usage: /api/goto/{{row}} — {exc}")
+                    self._send_error(f"Usage: /api/goto/{{row}} - {exc}")
 
             elif action == "cartouche":
                 # POST /api/cartouche/{idx 0-3}
@@ -711,7 +711,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.cartouche_requested.emit(idx)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
-                    self._send_error(f"Usage: /api/cartouche/{{0-3}} — {exc}")
+                    self._send_error(f"Usage: /api/cartouche/{{0-3}} - {exc}")
 
             elif action == "go":
                 # POST /api/go → GO+ mémoire suivante
@@ -758,7 +758,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     bridge.speed_requested.emit(val)
                     self._send_json({"ok": True})
                 except (IndexError, ValueError) as exc:
-                    self._send_error(f"Usage: /api/speed/{{0-100}} — {exc}")
+                    self._send_error(f"Usage: /api/speed/{{0-100}} - {exc}")
 
             elif action == "fixture_import":
                 # POST /api/fixture_import  {"fixture": {...format mystrow-fixture...}}
@@ -797,7 +797,7 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
 
 
 # ---------------------------------------------------------------------------
-# Classe principale — instanciee par MainWindow
+# Classe principale - instanciee par MainWindow
 # ---------------------------------------------------------------------------
 
 class StreamDeckAPIServer:
@@ -974,7 +974,7 @@ class StreamDeckAPIServer:
             name="streamdeck-api",
         )
         self._thread.start()
-        print(f"[StreamDeck API] Serveur demarre — http://{host}:{port}/api/")
+        print(f"[StreamDeck API] Serveur demarre - http://{host}:{port}/api/")
         return True
 
     def is_network(self) -> bool:

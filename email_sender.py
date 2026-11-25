@@ -1,6 +1,6 @@
 """
 Envoi d'emails transactionnels MyStrow via SMTP Hostinger.
-Utilise smtplib stdlib — pas de dépendance externe.
+Utilise smtplib stdlib - pas de dépendance externe.
 """
 
 import smtplib
@@ -25,7 +25,7 @@ def send_email(to: str, subject: str, html: str, text: str = "") -> bool:
     Retourne True si succès, lève une Exception sinon.
     """
     if not SMTP_HOST:
-        raise Exception("smtp_config.py introuvable — email non envoyé.")
+        raise Exception("smtp_config.py introuvable - email non envoyé.")
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -119,7 +119,7 @@ Voici vos identifiants de connexion :</p>
         f"Licence valide jusqu'au : {exp_str}\n\n"
         "Lancez MyStrow et connectez-vous avec ces identifiants.\n"
     )
-    return send_email(to, "Bienvenue sur MyStrow — Vos identifiants de connexion", _render(content), text)
+    return send_email(to, "Bienvenue sur MyStrow - Vos identifiants de connexion", _render(content), text)
 
 
 def send_renewal(to: str, expiry_ts: float) -> bool:
@@ -137,7 +137,7 @@ Aucune action de votre part n'est requise.</p>"""
         f"Votre licence MyStrow a été renouvelée.\n"
         f"Nouvelle expiration : {exp_str}\n"
     )
-    return send_email(to, "MyStrow — Licence renouvelée", _render(content), text)
+    return send_email(to, "MyStrow - Licence renouvelée", _render(content), text)
 
 
 def send_expiry_warning(to: str, expiry_ts: float, days_left: int) -> bool:
@@ -156,4 +156,4 @@ continuer à utiliser MyStrow sans interruption.</p>"""
         f"Votre licence MyStrow expire dans {days_left} jour(s) ({exp_str}).\n"
         "Contactez votre revendeur pour renouveler.\n"
     )
-    return send_email(to, f"MyStrow — Licence expire dans {days_left} jour(s)", _render(content), text)
+    return send_email(to, f"MyStrow - Licence expire dans {days_left} jour(s)", _render(content), text)

@@ -34,7 +34,7 @@ SHOP = "https://mystrow.fr/shop"
 DL = "https://mystrow.fr/telecharger"
 # PAS "https://mystrow.fr/shop/" : /shop est l'URL de la PAGE boutique (une
 # réécriture), pas un dossier. La page répond bien en 200, mais /shop/<fichier>
-# renvoie 500 — les quatre vignettes des annonces matériel Discord étaient donc
+# renvoie 500 - les quatre vignettes des annonces matériel Discord étaient donc
 # toutes cassées. Les images sont servies depuis /img-shop/.
 IMG = "https://mystrow.fr/img-shop/"
 YELLOW = 0xE2CE16
@@ -57,9 +57,9 @@ MESSAGES = [
         "color": YELLOW,
         "description": (
             "Pour piloter une scène entière avec MyStrow, il te faut **deux choses** :\n\n"
-            "**1. Une interface DMX** — obligatoire. C'est elle qui transmet le signal "
+            "**1. Une interface DMX** - obligatoire. C'est elle qui transmet le signal "
             "à tes projecteurs.\n"
-            "**2. Un contrôleur MIDI** — optionnel. Pour jouer tes lumières au doigt "
+            "**2. Un contrôleur MIDI** - optionnel. Pour jouer tes lumières au doigt "
             "plutôt qu'à la souris.\n\n"
             "MyStrow parle l'**Art-Net** et le **DMX512** standard : tout matériel ouvert "
             "fonctionne. Les modèles ci-dessous sont ceux qu'on a vérifiés."
@@ -70,8 +70,8 @@ MESSAGES = [
     # 2. Les deux interfaces recommandées
     [
         {
-            "author": {"name": "1 · Interface DMX — au choix (une seule suffit)"},
-            "title": "📡  Node ArtNet DMX — 59 €",
+            "author": {"name": "1 · Interface DMX - au choix (une seule suffit)"},
+            "title": "📡  Node ArtNet DMX - 59 €",
             "url": SHOP,
             "color": YELLOW,
             "description": (
@@ -86,7 +86,7 @@ MESSAGES = [
             ],
         },
         {
-            "title": "🔌  USB Node DMX ArtNet — 59 €",
+            "title": "🔌  USB Node DMX ArtNet - 59 €",
             "url": SHOP,
             "color": YELLOW,
             "description": (
@@ -136,12 +136,12 @@ MESSAGES = [
     # 4. Contrôleurs MIDI
     [
         {
-            "author": {"name": "2 · Contrôleur MIDI — optionnel"},
-            "title": "⭐  AKAI APC mini mk2 — 89 €",
+            "author": {"name": "2 · Contrôleur MIDI - optionnel"},
+            "title": "⭐  AKAI APC mini mk2 - 89 €",
             "url": SHOP,
             "color": YELLOW,
             "description": (
-                "**Recommandé — MyStrow est conçu autour.** Plug & play, aucun driver : "
+                "**Recommandé - MyStrow est conçu autour.** Plug & play, aucun driver : "
                 "MyStrow le détecte au démarrage. Chaque pad et chaque fader a sa "
                 "correspondance directe, avec retour LED en temps réel."
             ),
@@ -153,13 +153,13 @@ MESSAGES = [
             ],
         },
         {
-            "title": "🎹  Novation Launchpad Mini MK3 — 89 €",
+            "title": "🎹  Novation Launchpad Mini MK3 - 89 €",
             "url": SHOP,
             "color": YELLOW,
             "description": (
                 "Alternative compacte, reconnue plug & play. Grille 8×8 de pads RGB au "
                 "retour LED éclatant.\n\n"
-                "**À noter : pas de faders physiques** — l'intensité se règle via les pads, "
+                "**À noter : pas de faders physiques** - l'intensité se règle via les pads, "
                 "la tablette ou le plan de scène."
             ),
             "thumbnail": {"url": IMG + "Novation.png"},
@@ -239,7 +239,7 @@ def do_post(webhook):
         ids.append(res.get("id"))
         print("  message %d/%d publie (id %s)" % (i, len(MESSAGES), res.get("id")))
     save_state({"webhook_tail": webhook[-12:], "message_ids": ids})
-    print("\nIDs enregistres dans %s — utilise --update pour corriger sans reposter."
+    print("\nIDs enregistres dans %s - utilise --update pour corriger sans reposter."
           % STATE_FILE)
 
 

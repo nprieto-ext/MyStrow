@@ -1,6 +1,6 @@
 """
 Serveur local HTTP pour le contrôleur tablette MyStrow.
-Protocole : Flask + Server-Sent Events (SSE) — aucune dépendance JS externe.
+Protocole : Flask + Server-Sent Events (SSE) - aucune dépendance JS externe.
 
 La tablette se connecte via : http://<IP_LOCAL>:5000
 """
@@ -216,7 +216,7 @@ _state: dict = {
         {"title": "", "state": 0},
     ],
     "projectors": [],  # [{"name","group","color","level","muted","x","y"}]
-    "layout": [],       # [{"label": "A", "type": "group"}, ...]  — 8 colonnes AKAI
+    "layout": [],       # [{"label": "A", "type": "group"}, ...]  - 8 colonnes AKAI
     "rec_active": False,
     # Surface d'exécuteurs (fenêtre EXT « surface pad ») reflétée sur la tablette.
     "surface": {"blocks": [], "cols": 0, "rows": 0},
@@ -345,7 +345,7 @@ def _build_app():
 
     @_app.route("/whoami")
     def whoami():
-        """Signature du serveur — permet de verifier que c'est bien MyStrow qui
+        """Signature du serveur - permet de verifier que c'est bien MyStrow qui
         repond sur ce port, et pas un autre logiciel qui l'occupait deja (sur
         Mac, le « Recepteur AirPlay » squatte le port 5000 et renvoie 403/401)."""
         return Response(
@@ -403,7 +403,7 @@ def _build_app():
                 # AssertionError → /stream renvoie 500 → tout le flux SSE
                 # desktop→tablette meurt (projos/playlist/surface/couleurs muets)
                 # alors que /api/event (POST) marche encore. Le serveur de dev de
-                # Flask, lui, tolère ce header — d'où « OK en Python, KO en exe ».
+                # Flask, lui, tolère ce header - d'où « OK en Python, KO en exe ».
                 # Le serveur gère la persistance de connexion lui-même.
             },
         )
@@ -432,8 +432,8 @@ def _broadcast(event: dict):
     """Envoie un event SSE à tous les clients connectés.
 
     Un client dont la file est PLEINE ne consomme plus : il est evince. Sans
-    ca, une connexion morte restait inscrite indefiniment — le diagnostic
-    tablette en laissait justement une derriere lui a chaque execution — et
+    ca, une connexion morte restait inscrite indefiniment - le diagnostic
+    tablette en laissait justement une derriere lui a chaque execution - et
     chaque push de l'appli empilait un event de plus dans une file que
     personne ne vidait."""
     with _clients_lock:
@@ -733,7 +733,7 @@ def port_is_free(port: int) -> bool:
 
     Test par bind REEL, sans SO_REUSEADDR : c'est le seul verdict fiable.
     Un simple « connect qui reussit » dit qu'un serveur repond, pas que c'est
-    le notre — sur Mac, le « Recepteur AirPlay » (Reglages ▸ General ▸ AirDrop
+    le notre - sur Mac, le « Recepteur AirPlay » (Reglages ▸ General ▸ AirDrop
     et Handoff) ecoute en permanence sur le port 5000 et renvoie 403/401 a
     tout le monde, tablette comprise."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

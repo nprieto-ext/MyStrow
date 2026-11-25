@@ -32,14 +32,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core import FIREBASE_PROJECT_ID          # noqa: E402
 
 ICI = os.path.dirname(os.path.abspath(__file__))
-LISTE_CLIENTS = 4          # « Clients MyStrow » — PAS la newsletter (id 3)
+LISTE_CLIENTS = 4          # « Clients MyStrow » - PAS la newsletter (id 3)
 UA = "Mozilla/5.0 (compatible; MyStrow-Backfill/1.0; +https://mystrow.fr)"
 
 # Domaines qui n'entrent JAMAIS dans Brevo.
 #
 # tuifrance.com est un contrat B2B : une soixantaine de boites d'hotels, toutes
 # a la meme echeance, gerees par un interlocuteur unique. Les relancer une par
-# une n'a aucun sens — au mieux c'est du bruit, au pire soixante messages
+# une n'a aucun sens - au mieux c'est du bruit, au pire soixante messages
 # arrivent le meme jour chez le meme groupe. Le renouvellement se traite comme
 # un marche, pas comme un cycle de vie client.
 DOMAINES_EXCLUS = {"tuifrance.com"}
@@ -152,7 +152,7 @@ def statut(doc: dict, maintenant: float) -> str:
     la fin de la periode courante, repoussee a chaque paiement par
     `_on_invoice_paid`. Segmenter sur la date seule ferait envoyer « votre
     licence expire dans 15 jours » a des clients dont l'abonnement se renouvelle
-    tout seul — le message qui declenche une resiliation.
+    tout seul - le message qui declenche une resiliation.
 
     Meme regle que `license_manager._is_auto_renew` : recurrent ET identifiant
     d'abonnement present. La condition sur l'identifiant est essentielle, une
@@ -190,7 +190,7 @@ def contact(doc: dict, maintenant: float) -> dict | None:
             # qu'un champ vide, sur lequel aucune segmentation n'est possible.
             "PLAN": doc.get("plan_type") or doc.get("plan") or "",
             # AAAA-MM-JJ : seul format accepte par un attribut date de Brevo.
-            # Vide au-dela de 2099, borne haute de Brevo — c'est le cas des
+            # Vide au-dela de 2099, borne haute de Brevo - c'est le cas des
             # licences A VIE (expiry_utc vers 2126). Brevo ecrete a 2099-12-31
             # sur une mise a jour mais ABANDONNE la valeur a la creation, sans
             # rien dire. Une licence a vie n'ayant pas d'echeance, l'attribut
@@ -244,7 +244,7 @@ if __name__ == "__main__":
     print(f"  plan   : {dict(plans)}")
 
     if not a.go:
-        print("\nSIMULATION — rien n'a ete ecrit. Relancer avec --go pour appliquer.")
+        print("\nSIMULATION - rien n'a ete ecrit. Relancer avec --go pour appliquer.")
         for c in prets[:5]:
             print("   ", c["email"], c["attributes"])
         if len(prets) > 5:

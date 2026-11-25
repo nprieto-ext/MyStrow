@@ -1,5 +1,5 @@
 """
-test_amp_x4_migration.py — Outil « Amplitudes 3.1.91 » (amp_migration.py).
+test_amp_x4_migration.py - Outil « Amplitudes 3.1.91 » (amp_migration.py).
 
 Contexte (17/09/2026) : un client a réglé beaucoup d'effets sous la 3.1.91
 (AMP 100 = ±32768). Depuis la 3.1.92 (±8192) ils bougent 4 fois moins, et il
@@ -259,7 +259,7 @@ class TestFenetre(unittest.TestCase):
 
 
 class TestDeclencheurCache(unittest.TestCase):
-    """Ctrl + clic long sur le ⚙ AKAI ouvre l'outil — aucune entrée de menu."""
+    """Ctrl + clic long sur le ⚙ AKAI ouvre l'outil - aucune entrée de menu."""
 
     def setUp(self):
         from PySide6.QtWidgets import QPushButton

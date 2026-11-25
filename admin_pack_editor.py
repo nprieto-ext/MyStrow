@@ -1,5 +1,5 @@
 """
-Éditeur de packs de fixtures — Admin Panel MyStrow.
+Éditeur de packs de fixtures - Admin Panel MyStrow.
 
 Widget autonome intégré dans l'onglet "Packs" de l'admin panel.
 Permet de créer / modifier des packs de fixtures et de les publier sur Firestore.
@@ -141,7 +141,7 @@ class _PackPublishWorker(QObject):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NoScrollCombo — QComboBox sans scroll accidentel
+# NoScrollCombo - QComboBox sans scroll accidentel
 # ──────────────────────────────────────────────────────────────────────────────
 
 class _NoScroll(QComboBox):
@@ -379,7 +379,7 @@ def _extract_tokens(text: str) -> list[tuple[int | None, str]]:
     for ch in "│┃║┆┇┊┋":
         text = text.replace(ch, "|")
     # Tirets longs / boîte → -
-    for ch in "─━═—–":
+    for ch in "─━═-–":
         text = text.replace(ch, "-")
     # Espaces insécables → espace normale
     text = text.replace(" ", " ").replace(" ", " ")
@@ -492,7 +492,7 @@ class _FootprintImportDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Importer un footprint — IA")
+        self.setWindowTitle("Importer un footprint - IA")
         self.setMinimumSize(600, 580)
         self.setStyleSheet(_STYLE_EDITOR)
         self._result: list[tuple[str, str, str]] = []  # (raw, type, confiance)
@@ -691,7 +691,7 @@ class _FootprintImportDialog(QDialog):
         self._btn_analyze.setEnabled(True)
 
         if not self._result:
-            self._status_input.setText("Rien compris — reformule ou essaie un autre format.")
+            self._status_input.setText("Rien compris - reformule ou essaie un autre format.")
             return
 
         self._populate_confirm_page()
@@ -957,7 +957,7 @@ class AdminPackEditorWidget(QWidget):
         self._pack_desc_edit.textChanged.connect(self._on_pack_meta_changed)
         lay.addWidget(self._pack_desc_edit, 1)
 
-        self._pack_version_lbl = QLabel("v—")
+        self._pack_version_lbl = QLabel("v-")
         self._pack_version_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
         lay.addWidget(self._pack_version_lbl)
 
@@ -1326,7 +1326,7 @@ class AdminPackEditorWidget(QWidget):
         mfrs = sorted({f.get("manufacturer", "") for f in fixtures if f.get("manufacturer")})
         self._mfr_list.blockSignals(True)
         self._mfr_list.clear()
-        all_item = QListWidgetItem("— Tous —")
+        all_item = QListWidgetItem("- Tous -")
         all_item.setData(Qt.UserRole, "")
         self._mfr_list.addItem(all_item)
         for m in mfrs:
@@ -1352,7 +1352,7 @@ class AdminPackEditorWidget(QWidget):
         for i, fx in enumerate(fixtures):
             if mfr_filter and fx.get("manufacturer", "") != mfr_filter:
                 continue
-            label = fx.get("name", "—")
+            label = fx.get("name", "-")
             ch_count = len(fx.get("profile", []))
             item = QListWidgetItem(f"{label}  [{ch_count}ch]")
             item.setData(Qt.UserRole, i)   # index réel dans fixtures[]
@@ -1555,7 +1555,7 @@ class AdminPackEditorWidget(QWidget):
 
     def _update_pack_status(self):
         n = len(self._current_pack.get("fixtures", [])) if self._current_pack else 0
-        self._status_lbl.setText(f"{n} fixture(s) dans ce pack — non publié")
+        self._status_lbl.setText(f"{n} fixture(s) dans ce pack - non publié")
         # Mettre à jour le label dans la liste des packs
         row = self._pack_list.currentRow()
         if 0 <= row < self._pack_list.count():
@@ -1653,7 +1653,7 @@ class AdminPackEditorWidget(QWidget):
         self._pack_version_lbl.setText(f"v{new_version}")
         n = len(self._current_pack.get("fixtures", []))
         self._status_lbl.setText(
-            f"✓ Pack publié avec succès — v{new_version}  •  {n} fixture(s)"
+            f"✓ Pack publié avec succès - v{new_version}  •  {n} fixture(s)"
         )
         self._status_lbl.setStyleSheet(f"color:#4CAF50; font-size:11px;")
         QTimer.singleShot(4000, lambda: self._status_lbl.setStyleSheet(

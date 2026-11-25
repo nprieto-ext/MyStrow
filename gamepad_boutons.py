@@ -1,5 +1,5 @@
 """
-gamepad_boutons.py — Les BOUTONS de la manette : dessin, assignation, action.
+gamepad_boutons.py - Les BOUTONS de la manette : dessin, assignation, action.
 
 `gamepad_client` lit le peripherique et publie des fronts appui/relache ;
 `gamepad_link` cable le tout. Ici on repond a trois questions : a quoi
@@ -10,7 +10,7 @@ POURQUOI UN DESSIN, ET PAS UNE LISTE DEROULANTE
 ------------------------------------------------
 Une liste « bouton A → MEM 3.2 » est illisible manette en main : personne ne
 sait ou est « A » sur sa manette, et surtout personne ne relit une liste en
-plein show. Le dessin repond a la seule question qui se pose reellement —
+plein show. Le dessin repond a la seule question qui se pose reellement -
 « qu'est-ce que je declenche si j'appuie LA ? ». C'est le principe des ecrans
 d'assignation des jeux de sport, et il vaut ici pour la meme raison.
 
@@ -22,14 +22,14 @@ L'IDENTIFIANT D'UN BOUTON EST CELUI DE SDL, PAS SON DESSIN
 ----------------------------------------------------------
 `a` est la croix sur PlayStation et A sur Xbox : meme bouton physique, meme
 place sous le pouce. On enregistre donc l'identifiant SDL et on n'adapte que
-l'affichage — un mapping fait avec une DualSense reste juste si on branche une
+l'affichage - un mapping fait avec une DualSense reste juste si on branche une
 Xbox le lendemain. C'est aussi ce qui permet de ne dessiner qu'une geometrie.
 
 LE MODIFICATEUR
 ---------------
 L2 maintenue donne une 2e page d'assignations, comme la touche de tactique
 d'un jeu de sport : 15 touches deviennent 30 raccourcis sans rien changer au
-geste. L2 ne porte donc jamais d'action a elle seule — c'est marque sur le
+geste. L2 ne porte donc jamais d'action a elle seule - c'est marque sur le
 dessin, sinon l'utilisateur essaierait de lui en donner une et croirait a un
 bug quand rien ne se declenche.
 """
@@ -51,7 +51,7 @@ NB_PAGES = 2
 # Actions de la colonne PLAY, reprises telles quelles de `_PLAY_ROWS` dans
 # main_window : la manette passe par `_activate_play_pad`, exactement comme les
 # pads de l'AKAI. Un seul chemin, donc un seul comportement a corriger le jour
-# ou le transport change — et pas de deuxieme writer sur le lecteur.
+# ou le transport change - et pas de deuxieme writer sur le lecteur.
 ACTIONS_TRANSPORT = ("playpause", "prev", "next", "stop")
 NB_CARTOUCHES = 4
 ACTIONS_PLAY = ACTIONS_TRANSPORT + tuple("cart%d" % i for i in range(NB_CARTOUCHES))
@@ -95,7 +95,7 @@ BOUTONS = (
 # Identifiants assignables : tous sauf le modificateur.
 ASSIGNABLES = tuple(b[0] for b in BOUTONS if b[0] != MODIFICATEUR)
 
-# Couleurs des symboles PlayStation — c'est a elles qu'on reconnait la manette
+# Couleurs des symboles PlayStation - c'est a elles qu'on reconnait la manette
 # au premier coup d'oeil, bien avant la forme des boutons.
 _COULEURS_PS = {
     "y": "#4ad991",   # triangle
@@ -119,7 +119,7 @@ _C_TRAIT        = "#2a2a34"
 
 
 def style_manette(nom: str) -> str:
-    """« ps » ou « xbox » — quels symboles dessiner.
+    """« ps » ou « xbox » - quels symboles dessiner.
 
     Deduit du nom SDL et de rien d'autre : une DualShock 4 passee par DS4Windows
     se presente en manette Xbox, et c'est bien les libelles Xbox qu'il faut
@@ -196,7 +196,7 @@ def effets_bibliotheque() -> list:
     """Noms de TOUS les effets disponibles, sans doublon.
 
     Meme source et meme ordre de resolution que vMix, OBS et le Stream Deck :
-    les integres d'abord, les personnels ensuite. L'ordre compte — c'est le
+    les integres d'abord, les personnels ensuite. L'ordre compte - c'est le
     PREMIER nom trouve qui sera joue. On de-doublonne donc ici aussi, sinon le
     menu proposerait deux entrees identiques dont une injouable.
     """
@@ -422,7 +422,7 @@ def construire_menu(window, parent, courante) -> QMenu:
         sous_pad.setTitle(tr("gpb_menu_fxpad_empty"))
 
     # Toute la bibliotheque, comme vMix et OBS la proposent. Decoupee par
-    # initiale : plus de cent effets a plat, ca ne se parcourt pas — alors
+    # initiale : plus de cent effets a plat, ca ne se parcourt pas - alors
     # qu'on sait toujours par quelle lettre commence celui qu'on cherche.
     sous_lib = menu.addMenu(tr("gpb_menu_library"))
     lettres = {}
@@ -637,7 +637,7 @@ class ManetteWidget(QWidget):
         p.setPen(QPen(QColor(_C_BORD_CORPS), 2.0))
         p.drawPath(corps)
 
-        # Pave tactile — aucune action possible dessus (SDL n'expose pas son
+        # Pave tactile - aucune action possible dessus (SDL n'expose pas son
         # clic comme un bouton de manette), il est la pour la ressemblance.
         p.setBrush(QColor(_C_CREUX))
         p.setPen(QPen(QColor(_C_BORD_BOUTON), 1.2))
@@ -708,7 +708,7 @@ class ManetteWidget(QWidget):
 
         Un caractere comme la croix ou le triangle depend de la police
         installee : sur un poste ou elle manque, l'utilisateur verrait un carre
-        vide au milieu du bouton — impossible a diagnostiquer a distance. Un
+        vide au milieu du bouton - impossible a diagnostiquer a distance. Un
         trace geometrique, lui, ne depend de rien.
         """
         if self._style == "xbox":

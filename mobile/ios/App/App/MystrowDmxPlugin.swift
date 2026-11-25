@@ -295,7 +295,7 @@ public class MystrowDmxPlugin: CAPPlugin, CAPBridgedPlugin {
             return list
         }
 
-        /// Client et port MIDI de l'app, créés une fois — SUR LE FIL PRINCIPAL.
+        /// Client et port MIDI de l'app, créés une fois - SUR LE FIL PRINCIPAL.
         /// CoreMIDI ne tient à jour la liste des appareils d'un processus que par
         /// des notifications livrées sur la boucle d'événements du fil qui a créé
         /// le client. Créé sur un fil de Capacitor ou de la boucle DMX (sans

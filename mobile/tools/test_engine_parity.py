@@ -72,7 +72,7 @@ def run_node(script, payload):
 GROUP_NAMES = {"A": "face", "B": "lat", "C": "contre", "D": "douche1",
                "E": "douche2", "F": "douche3", "G": "groupe_g", "H": "groupe_h"}
 # Un rig varié : profils avec et sans Dim, niveaux et couleurs différents,
-# projecteurs éteints (niveau 0, couleur noire) — l'effet les rallume.
+# projecteurs éteints (niveau 0, couleur noire) - l'effet les rallume.
 RIG = [("RGBDS", "A", "#ff0000", 100), ("RGBDS", "A", "#ff0000", 100),
        ("RGB", "A", "#0000ff", 60), ("DRGB", "B", "#ffdd00", 37),
        ("RGBW", "B", "#ffffff", 100), ("RGBWD", "C", "#00dddd", 0),

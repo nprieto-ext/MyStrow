@@ -1,5 +1,5 @@
 """
-test_effet_changement_vitesse.py — Changer la vitesse ne doit pas faire SAUTER l'effet.
+test_effet_changement_vitesse.py - Changer la vitesse ne doit pas faire SAUTER l'effet.
 
 Symptome (28/08/2026) : « quand je change la vitesse de l'effet via mon AKAI, ca a
 tendance a bouger tres vite, pour se caler a la bonne vitesse ».
@@ -7,7 +7,7 @@ tendance a bouger tres vite, pour se caler a la bonne vitesse ».
 La position dans le cycle valait `freq x temps ecoule`, la vitesse generale etant
 enfermee dans `freq` (`layer_frequency(..., fader_mult=...)`). Bouger le fader FX
 changeait donc `freq` sous un `t` deja grand : la phase sautait de `Δfreq x t` d'un
-coup — plusieurs tours entiers apres quelques dizaines de secondes. En balayant le
+coup - plusieurs tours entiers apres quelques dizaines de secondes. En balayant le
 fader, une salve de sauts, d'ou l'impression d'emballement avant de se caler.
 
 Fix : une HORLOGE DE PHASE. On accumule le temps DEFORME par la vitesse

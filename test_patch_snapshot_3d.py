@@ -1,5 +1,5 @@
 """
-test_patch_snapshot_3d.py — Fenetre Patch : Ctrl+Z / « Ignorer » effacaient le
+test_patch_snapshot_3d.py - Fenetre Patch : Ctrl+Z / « Ignorer » effacaient le
 placement 3D.
 
 `_restore_snap` recree les Projector de zero. Il restaurait la zone pan/tilt et

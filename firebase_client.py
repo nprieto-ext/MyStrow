@@ -58,7 +58,7 @@ class CloudFunctionUnreachable(Exception):
     """La Cloud Function n'a pas répondu du tout (réseau, DNS, TLS, déploiement).
 
     Type dédié et non un test sur le texte du message : l'appelant doit pouvoir
-    distinguer « je n'ai pas pu poser la question » — où un repli est légitime —
+    distinguer « je n'ai pas pu poser la question » - où un repli est légitime -
     de « le serveur a répondu non », qu'il faut montrer à l'utilisateur tel quel.
     """
 
@@ -67,7 +67,7 @@ def has_internet(timeout: float = 3.0) -> bool:
     """Test rapide de connectivité HTTPS vers les serveurs Firebase (port 443).
 
     ⚠️ Les hôtes sont essayés EN PARALLÈLE et `timeout` borne le tout : en
-    série, hors-ligne, c'était 3 × `timeout` — et `settimeout` ne couvre pas la
+    série, hors-ligne, c'était 3 × `timeout` - et `settimeout` ne couvre pas la
     résolution DNS, qui peut traîner bien plus sur un Mac sans serveur DNS
     (lien direct vers le node). Le démarrage dépassait son délai et l'app se
     déclarait « non activée ». Un fil bloqué dans le DNS meurt avec l'app.
@@ -111,7 +111,7 @@ def _net_error_msg(e: Exception) -> str:
     Delegue a `core` pour que TOUS les modules reseau (Firebase, Brevo, boite a
     idees...) disent la meme chose : ces messages etaient ecrits en dur en
     francais ici, donc affiches en francais a un utilisateur allemand ou
-    espagnol, et la panne DNS — de loin la plus frequente en salle — tombait
+    espagnol, et la panne DNS - de loin la plus frequente en salle - tombait
     dans le cas generique « pas de connexion » sans dire quoi verifier.
     """
     from core import message_erreur_reseau
@@ -134,11 +134,36 @@ def _post_json(url, payload: dict, id_token: str = None) -> dict:
         raise Exception(_net_error_msg(e))
 
 
+# Écart (secondes) entre l'heure des serveurs Google et l'horloge du PC, relevé
+# dans l'en-tête Date des réponses. La règle Firestore d'activation d'un poste
+# compare `adds_window_utc` à SON heure (±1 jour) : un PC à la mauvaise date
+# ne pouvait pas s'activer - « Erreur mise à jour machines : Missing or
+# insufficient permissions » (client du 23/11/2026, compte et règles sains).
+_server_offset = None
+
+
+def _note_server_time(resp) -> None:
+    global _server_offset
+    try:
+        from email.utils import parsedate_to_datetime
+        d = resp.headers.get("Date")
+        if d:
+            _server_offset = parsedate_to_datetime(d).timestamp() - time.time()
+    except Exception:
+        pass
+
+
+def server_now() -> float:
+    """Heure UTC (epoch) des serveurs si connue, sinon celle du PC."""
+    return time.time() + (_server_offset or 0.0)
+
+
 def _get_json(url, id_token: str) -> dict:
     """GET JSON avec Bearer token."""
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
+            _note_server_time(resp)
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError:
         raise
@@ -202,7 +227,7 @@ def _from_firestore(field: dict):
         return field["stringValue"]
     if "timestampValue" in field:
         # Timestamp Firestore : chaîne RFC3339 (ex "2026-07-08T12:34:56.789Z").
-        # Renvoyée telle quelle (ISO 8601) — le code consommateur fait ts[:10] ou fromisoformat().
+        # Renvoyée telle quelle (ISO 8601) - le code consommateur fait ts[:10] ou fromisoformat().
         return field["timestampValue"]
     if "integerValue" in field:
         return int(field["integerValue"])
@@ -355,10 +380,10 @@ def send_credentials_email(email: str) -> bool:
 
     Préféré à `send_password_reset` (Firebase natif) pour deux raisons :
       • le client reçoit directement son email + son mot de passe, au lieu d'un
-        lien à cliquer — c'est ce qu'il a perdu, pas un moyen d'en choisir un ;
+        lien à cliquer - c'est ce qu'il a perdu, pas un moyen d'en choisir un ;
       • surtout, cette fonction REMONTE les échecs. Firebase natif répond 200
         quoi qu'il arrive (protection anti-énumération activée sur le projet),
-        donc l'app annonçait « email envoyé » même quand rien ne partait — un
+        donc l'app annonçait « email envoyé » même quand rien ne partait - un
         client sans identifiants ET sans le moindre message d'erreur.
 
     Lève une Exception avec le message du serveur si l'envoi échoue (rejet SMTP,
@@ -390,7 +415,7 @@ def send_credentials_email(email: str) -> bool:
 def send_password_reset(email: str) -> bool:
     """
     Envoie un email de réinitialisation via l'API Firebase Auth native (sendOobCode).
-    Firebase génère un lien sécurisé — aucun mot de passe n'est envoyé en clair.
+    Firebase génère un lien sécurisé - aucun mot de passe n'est envoyé en clair.
 
     ⚠️ Ne remonte JAMAIS d'échec d'acheminement : conservée comme repli de
     `send_credentials_email` (Cloud Function injoignable). Voir sa docstring.
@@ -488,8 +513,10 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
     # Changements d'ordinateur limités (règle Firestore identique, c'est elle
     # qui fait foi). Sans ça, un compte pouvait faire tourner ses 2 places :
     # couper un PC d'Internet, le retirer depuis le site, en activer un autre…
-    # — le PC retiré continue tant que dure la tolérance hors-ligne.
-    now_s = datetime.now(timezone.utc).timestamp()
+    # - le PC retiré continue tant que dure la tolérance hors-ligne.
+    # Heure du SERVEUR (relevée par get_license_doc juste au-dessus) : c'est
+    # elle que la règle Firestore utilise, pas l'horloge du PC.
+    now_s = server_now()
     win_start = float(doc.get("adds_window_utc", 0) or 0)
     win_count = int(doc.get("adds_count", 0) or 0)
     if now_s - win_start > MACHINE_ADDS_WINDOW_S:
@@ -502,7 +529,7 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
     machines.append({
         "id": machine_id,
         "label": label or machine_id[:16],
-        "activated_at": datetime.now(timezone.utc).timestamp(),
+        "activated_at": now_s,
     })
 
     # Mettre à jour machines + compteur de changements (même écriture : la
@@ -526,7 +553,7 @@ def add_machine(uid: str, id_token: str, machine_id: str, label: str = "") -> bo
 def update_newsletter_consent(uid: str, id_token: str, consent: bool, lang: str = "") -> bool:
     """
     Met à jour newsletter_consent (et optionnellement lang) dans /licenses/{uid}.
-    lang : 'fr' ou 'en' — utilisé par la Cloud Function pour envoyer dans la bonne langue.
+    lang : 'fr' ou 'en' - utilisé par la Cloud Function pour envoyer dans la bonne langue.
     Retourne True si succès, lève une Exception sinon.
     """
     fields = {"newsletter_consent": _to_firestore(consent)}
@@ -565,7 +592,7 @@ def remove_machine(uid: str, id_token: str, machine_id: str) -> bool:
 
 
 # ---------------------------------------------------------------
-# Token service account (admin — bypass les règles Firestore)
+# Token service account (admin - bypass les règles Firestore)
 # ---------------------------------------------------------------
 
 def get_admin_token(sa_path: str) -> str:
@@ -639,7 +666,7 @@ def write_fixture_pack(pack_id: str, pack_data: dict, id_token: str) -> dict:
     except urllib.error.HTTPError as e:
         if e.code == 403:
             raise Exception(
-                "Accès refusé (403) — ajoutez la règle Firestore pour fixture_packs :\n\n"
+                "Accès refusé (403) - ajoutez la règle Firestore pour fixture_packs :\n\n"
                 "  match /fixture_packs/{packId} {\n"
                 "    allow read: if true;\n"
                 "    allow write: if request.auth != null;\n"
@@ -696,7 +723,7 @@ def fetch_fixture_packs_index(id_token: str = None) -> list:
         msg = str(e)
         if "403" in msg or "PERMISSION_DENIED" in msg:
             raise Exception(
-                "Accès refusé (403) — ajoutez la règle Firestore pour fixture_packs :\n\n"
+                "Accès refusé (403) - ajoutez la règle Firestore pour fixture_packs :\n\n"
                 "  match /fixture_packs/{packId} {\n"
                 "    allow read: if true;\n"
                 "    allow write: if request.auth != null;\n"
@@ -794,7 +821,7 @@ def submit_fixture_contribution(
             detail = json.loads(e.read().decode()).get("error", "")
         except Exception:
             pass
-        raise Exception(detail or f"HTTP {e.code} — {e.reason}")
+        raise Exception(detail or f"HTTP {e.code} - {e.reason}")
     except (urllib.error.URLError, OSError) as e:
         raise Exception(_net_error_msg(e))
 
@@ -815,7 +842,7 @@ def submit_controller_profile(fingerprint: str, profile: dict, id_token: str) ->
     soumission dans `controller_submissions` au statut "pending". Un
     administrateur valide ensuite depuis l'admin panel.
 
-    Retourne : {"ok", "status", "quota_left"} — `status` vaut "pending" pour un
+    Retourne : {"ok", "status", "quota_left"} - `status` vaut "pending" pour un
     profil accepté dans la file, "duplicate" si ce modèle est déjà couvert.
     Lève une Exception si le serveur refuse (profil invalide, quota, jeton).
     """
@@ -841,7 +868,7 @@ def submit_controller_profile(fingerprint: str, profile: dict, id_token: str) ->
             detail = json.loads(e.read().decode()).get("error", "")
         except Exception:
             pass
-        raise Exception(detail or f"HTTP {e.code} — {e.reason}")
+        raise Exception(detail or f"HTTP {e.code} - {e.reason}")
     except (urllib.error.URLError, OSError) as e:
         raise Exception(_net_error_msg(e))
 
@@ -999,7 +1026,7 @@ def fetch_all_gdtf_fixtures(id_token: str = None) -> list:
     Fonctionne SANS authentification : la bibliothèque est en lecture publique
     (`firestore.rules` : `match /gdtf_fixtures/{doc} { allow read: if true; }`),
     au même titre que `fixture_packs`. Le jeton reste envoyé quand on en a un,
-    mais il n'est pas requis — sinon un utilisateur dont le jeton ne peut pas
+    mais il n'est pas requis - sinon un utilisateur dont le jeton ne peut pas
     être rafraîchi (antivirus interceptant le TLS) se retrouve bloqué sur un 403
     affiché en « Erreur Firestore ».
     """

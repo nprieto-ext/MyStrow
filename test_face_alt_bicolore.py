@@ -1,5 +1,5 @@
 """
-test_face_alt_bicolore.py — la face doit alterner ses couleurs comme les contres.
+test_face_alt_bicolore.py - la face doit alterner ses couleurs comme les contres.
 
 `audio_ai.get_state_at` calcule `face_alt` (mode bicolore, tous les ~6 beats)
 et l'emet dans l'etat a chaque image depuis toujours. Personne ne le lisait :
@@ -8,8 +8,8 @@ et l'emet dans l'etat a chaque image depuis toujours. Personne ne le lisait :
 restait d'un seul bloc.
 
 Ca ne se voyait pas tant que la face comptait deux ou trois projecteurs. Sur
-une facade de 8 PAR — tous dans le groupe A, ce qui est le cas par defaut
-depuis que toute fixture importee y atterrit — la rampe entiere tenait UNE
+une facade de 8 PAR - tous dans le groupe A, ce qui est le cas par defaut
+depuis que toute fixture importee y atterrit - la rampe entiere tenait UNE
 seule teinte : « les Par LED ne changeaient pas enormement de couleurs »
 (retour client, 02/09/2026).
 

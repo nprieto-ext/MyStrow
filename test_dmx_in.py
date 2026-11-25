@@ -1,5 +1,5 @@
 """
-test_dmx_in.py — Entree DMX (artnet_input.py + dmx_in_link.py).
+test_dmx_in.py - Entree DMX (artnet_input.py + dmx_in_link.py).
 
 Tout se teste sans reseau ni pupitre : les trames sont fabriquees a la main et
 poussees dans `ArtNetReceiver.feed()`, et la fenetre MyStrow est remplacee par
@@ -54,7 +54,7 @@ class FausseFenetre:
     """Mouchard : enregistre ce que la liaison appelle, sans rien faire.
 
     Page 1 : les groupes A a H. Page 2 : MEM 1, FX 1, PLAY, puis D a H. C'est ce
-    qui permet de verifier les deux chemins — la cible est a l'ecran, ou pas.
+    qui permet de verifier les deux chemins - la cible est a l'ecran, ou pas.
     """
 
     def __init__(self, page_active=0):
@@ -102,7 +102,7 @@ class TestParseArtDmx(unittest.TestCase):
         self.assertEqual(uni, 260)
 
     def test_compatible_avec_les_trames_emises_par_mystrow(self):
-        """Le decodeur doit lire ce que notre propre encodeur produit —
+        """Le decodeur doit lire ce que notre propre encodeur produit -
         c'est ce qui garantit qu'un MyStrow peut en piloter un autre."""
         import artnet_dmx
         dmx = artnet_dmx.ArtNetDMX.__new__(artnet_dmx.ArtNetDMX)
@@ -660,7 +660,7 @@ class TestAiguillageEntree(unittest.TestCase):
                          "l'univers 2 ne doit PAS partir : son port est une entree")
 
     def test_une_sortie_desactivee_emet_toujours_des_zeros(self):
-        """Le contraire d'une entree — et c'est voulu."""
+        """Le contraire d'une entree - et c'est voulu."""
         import artnet_dmx
         envois = []
 

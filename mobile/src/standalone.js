@@ -1,7 +1,7 @@
 // Mode autonome de l'app : la tablette pilote les projecteurs SANS PC.
 //
 // Chargé à la fin de remote.html (voir scripts/build-www.mjs), actif seulement
-// avec ?solo=1. Même contrat que demo.js : il remplace le PC — les actions de
+// avec ?solo=1. Même contrat que demo.js : il remplace le PC - les actions de
 // l'interface (window.MYSTROW_SEND) modifient l'état, renvoyé à la page sous
 // forme de messages identiques au flux SSE (_handleMsg). Mais ici l'état est
 // réel : engine.js le traduit en DMX, envoyé par le module natif MystrowDmx
@@ -210,12 +210,12 @@
   const slotAt = (col) => curPage()[col] || null;
 
   function slotLabel(s) {
-    if (!s) return "—";
+    if (!s) return "-";
     if (s.type === "group") return s.group;          // comme le PC : la lettre seule
     if (s.type === "memory") return "M" + String(s.mem_col + 1).padStart(2, "0");
     if (s.type === "fx") return "FX " + (s.fx_col + 1);
     if (s.type === "pos") return "POS " + (s.pos_col + 1);
-    return "—";                                     // colonne vide
+    return "-";                                     // colonne vide
   }
 
   // ── Mémoires : une photo du rig, projecteur par projecteur ──────────────────
@@ -383,7 +383,7 @@
   function output() {
     const { mems, states } = baseStates();
     // LIVE (live.js) à l'écoute : la musique pilote tout, comme le PC en
-    // « Musical IA » — l'AKAI, les mémoires et les effets attendent.
+    // « Musical IA » - l'AKAI, les mémoires et les effets attendent.
     if (liveHook && liveHook.active()) {
       liveHook.apply(states);
       return finishOutput(states);
@@ -1470,7 +1470,7 @@
   // Nom de l'effet dans chaque bouton + appui long = changer d'effet.
   const effBtns = [...document.querySelectorAll("#effects .eff-btn")];
   function labelEffects() {
-    effBtns.forEach((el, r) => { el.textContent = play.buttons[r] || "—"; });
+    effBtns.forEach((el, r) => { el.textContent = play.buttons[r] || "-"; });
   }
   function assignButton(r, name, launch) {
     play.buttons[r] = name;
@@ -1708,7 +1708,7 @@
   if (pp) { pp.style.maxHeight = "92vh"; pp.style.overflowY = "auto"; }
 
   // Pad POSITION : un point par lyre sélectionnée (la page ne dessine que
-  // celle qu'on pilote). Les autres viennent de la visée réelle — en SYM on
+  // celle qu'on pilote). Les autres viennent de la visée réelle - en SYM on
   // les voit partir en miroir.
   if (typeof drawPanTiltPad === "function") {
     const drawOne = drawPanTiltPad;

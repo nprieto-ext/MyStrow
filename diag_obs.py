@@ -1,4 +1,4 @@
-"""diag_obs.py — Que repond vraiment le port sur lequel MyStrow cherche OBS ?
+"""diag_obs.py - Que repond vraiment le port sur lequel MyStrow cherche OBS ?
 
 A lancer quand la connexion OBS echoue sans qu'on sache pourquoi :
 
@@ -168,7 +168,7 @@ def main():
         print("       ecoute n'est pas obs64.exe, c'est lui le coupable.")
         return 1
 
-    print("[OK] Poignee de main WebSocket valide — la couche reseau est saine.\n")
+    print("[OK] Poignee de main WebSocket valide - la couche reseau est saine.\n")
 
     # ── Etape 3 : Hello + authentification ──────────────────────────────────
     # Seuls les octets QUI SUIVENT les en-tetes : OBS envoie son Hello dans le
@@ -182,7 +182,7 @@ def main():
 
 
 def _trame_texte(charge: bytes) -> bytes:
-    """Trame texte MASQUEE — un serveur conforme coupe si le client ne masque pas."""
+    """Trame texte MASQUEE - un serveur conforme coupe si le client ne masque pas."""
     masque = os.urandom(4)
     corps = bytes(o ^ masque[i % 4] for i, o in enumerate(charge))
     n = len(charge)
@@ -229,7 +229,7 @@ def _authentifier(sock, buf: bytes, mdp):
         return 1
     hello = json.loads(charge.decode("utf-8"))
     d = hello.get("d") or {}
-    print(f"[OK] Hello recu — obs-websocket {d.get('obsWebSocketVersion', '?')}, "
+    print(f"[OK] Hello recu - obs-websocket {d.get('obsWebSocketVersion', '?')}, "
           f"rpc {d.get('rpcVersion', '?')}")
 
     auth = d.get("authentication")
@@ -287,7 +287,7 @@ def _authentifier(sock, buf: bytes, mdp):
 
     msg = json.loads(charge.decode("utf-8"))
     if msg.get("op") == 2:
-        print("[OK] MOT DE PASSE ACCEPTE — session identifiee.")
+        print("[OK] MOT DE PASSE ACCEPTE - session identifiee.")
         print("     La liaison OBS de MyStrow doit fonctionner avec ces valeurs.")
         return 0
     print(f"[?] Reponse inattendue : {msg}")

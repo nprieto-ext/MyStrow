@@ -1,19 +1,19 @@
 """
-test_pads_couleur_momentanes.py — Pads couleur momentanes tant que FLASH est tenu.
+test_pads_couleur_momentanes.py - Pads couleur momentanes tant que FLASH est tenu.
 
 Scenario reel (signale le 28/08/2026) : groupes A B C D montes, les 4 pads
 BLANC allumes. En tenant le bouton FLASH (bas-droite du controleur, ou la
 touche F), appuyer sur le pad ROUGE de la colonne D doit :
 
-  * a l'appui   — envoyer le rouge sur D (modele + DMX), allumer le pad ROUGE
+  * a l'appui   - envoyer le rouge sur D (modele + DMX), allumer le pad ROUGE
                   et eteindre le pad BLANC de cette colonne SEULEMENT ;
-  * au relache  — rendre EXACTEMENT l'etat d'avant : couleur de base, couleur
+  * au relache  - rendre EXACTEMENT l'etat d'avant : couleur de base, couleur
                   courante, roue de couleurs, pad BLANC rallume, pad ROUGE
                   eteint. Les colonnes A, B et C ne bougent jamais.
 
 Hors FLASH, le pad couleur reste un latch : appuyer pose la couleur, relacher
 ne fait rien. C'est la regle qui separe les deux comportements, et c'est l'etat
-AU MOMENT DE L'APPUI qui compte — lacher FLASH avant le pad ne colle pas la
+AU MOMENT DE L'APPUI qui compte - lacher FLASH avant le pad ne colle pas la
 couleur.
 
     python test_pads_couleur_momentanes.py

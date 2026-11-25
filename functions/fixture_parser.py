@@ -3,7 +3,7 @@ Parseur de fichiers fixture pour MyStrow.
 
 Formats supportes :
   - GrandMA2/3 XML (.xml)
-  - MyStrow fixture (.mystrow) — JSON natif
+  - MyStrow fixture (.mystrow) - JSON natif
 
 Usage :
     from fixture_parser import parse_file, export_mystrow
@@ -176,7 +176,7 @@ def _parse_ma_channels(parent_el) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Parseur XMLP (GrandMA2 — XML gzippé avec header "MA DATA?")
+# Parseur XMLP (GrandMA2 - XML gzippé avec header "MA DATA?")
 # ---------------------------------------------------------------------------
 
 def parse_xmlp(data: bytes) -> dict:

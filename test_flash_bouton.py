@@ -1,16 +1,16 @@
 """
-test_flash_bouton.py — Le bouton bas-droite du controleur gagne FLASH / FLASH KILL.
+test_flash_bouton.py - Le bouton bas-droite du controleur gagne FLASH / FLASH KILL.
 
 Il n'avait que deux fonctions, choisies par une case a cocher : TAP BPM, ou GO.
 Il en a maintenant quatre, choisies dans « Configuration du controleur » :
 
-  * TAP BPM     — inchange, tape en rythme pour regler la vitesse des effets ;
-  * GO          — inchange, avance a la memoire suivante ;
-  * FLASH       — momentane : tenu, toutes les memoires actives passent a 100 % ;
-  * FLASH KILL  — momentane : tenu, toutes les memoires actives sont coupees.
+  * TAP BPM     - inchange, tape en rythme pour regler la vitesse des effets ;
+  * GO          - inchange, avance a la memoire suivante ;
+  * FLASH       - momentane : tenu, toutes les memoires actives passent a 100 % ;
+  * FLASH KILL  - momentane : tenu, toutes les memoires actives sont coupees.
 
 Les deux momentanes ne touchent AUCUN fader : ils forcent le niveau lu par
-`_recompute_memory_mix`. Le relacher n'a donc rien a restaurer — un simple
+`_recompute_memory_mix`. Le relacher n'a donc rien a restaurer - un simple
 recalcul rend, au bit pres, l'etat d'avant. C'est ce que ce test verifie :
 l'aller ET le retour.
 
@@ -246,7 +246,7 @@ class FlashKill(unittest.TestCase):
         self.assertTrue(0 < self.avant[0] < 100, self.avant)
 
     def test_pendant_le_kill(self):
-        """Tenir KILL s'arme, mais ne coupe RIEN — ni modele, ni niveau lu.
+        """Tenir KILL s'arme, mais ne coupe RIEN - ni modele, ni niveau lu.
 
         La coupure est un SOLO : elle est decidee a l'appui d'un pad couleur et
         appliquee par PROJECTEUR, le temps d'une frame, juste avant l'envoi
@@ -295,7 +295,7 @@ class NiveauxDuPupitre(unittest.TestCase):
         """Le KILL ne passe plus par `_flash_level` : il ne baisse rien.
 
         Sa coupure est un solo par projecteur (PorteDuSolo), pas un niveau lu
-        par colonne — le pupitre n'a donc aucune raison de bouger.
+        par colonne - le pupitre n'a donc aucune raison de bouger.
         """
         self.w.tap_button_mode = "flash_kill"
         self.w._recompute_memory_mix()
@@ -674,7 +674,7 @@ class TestKillNeToucheJamaisLeModele(unittest.TestCase):
     juste avant l'envoi DMX (test_flash_kill_reel.py), plus un drapeau
     d'affichage sur le plan 2D (test_flash_kill_affichage.py). Appeler
     `_recompute_memory_mix` en plus etait destructeur : sous KILL toutes les
-    memoires sont ramenees a 0, le mix est donc VIDE et noircit le modele —
+    memoires sont ramenees a 0, le mix est donc VIDE et noircit le modele -
     le look manuel partait pour de bon, l'appui blackait et le relache ne
     rendait rien.
     """

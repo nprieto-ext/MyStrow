@@ -23,7 +23,7 @@ except ImportError:
 # G et H les ont rejoints le 10/09/2026. Avant, `get_state_at` ne renvoyait
 # AUCUNE cle pour eux : `_apply_live_state_inner` sautait leurs projecteurs
 # (`if p.group not in state: continue`), donc un PAR pose en G ou H restait
-# FIGE sur sa derniere couleur en mode LIVE — meme pas eteint.
+# FIGE sur sa derniere couleur en mode LIVE - meme pas eteint.
 ACCENT_GROUPS = ('douche1', 'douche2', 'douche3', 'groupe_g', 'groupe_h')
 
 
@@ -39,7 +39,7 @@ class AudioColorAI:
         self.window_ms = 50
 
         # Sections detectees
-        self.drops = []    # [time_ms] — instants de drop detectes
+        self.drops = []    # [time_ms] - instants de drop detectes
         self.sections = [] # [(start_ms, 'quiet'|'verse'|'build'|'high'|'drop')]
 
         # Etat courant pour les changements de couleur
@@ -63,7 +63,7 @@ class AudioColorAI:
         self._face_color_idx = 0
         self._face_alt_color_idx = 0
 
-        # Douches — chase sequentiel (D→H)
+        # Douches - chase sequentiel (D→H)
         # Index DANS le pool d'accent effectif, pas dans ACCENT_GROUPS :
         # le pool ne retient que les groupes reellement peuples (cf.
         # `accent_groups` de `get_state_at`), sinon l'accent s'arreterait
@@ -195,7 +195,7 @@ class AudioColorAI:
             print(f"IA Lumiere: Erreur WAV: {e}")
 
         # Essai 2 : ffmpeg (embarqué). Le SEUL décodeur qui couvre l'ALAC,
-        # l'AIFF, l'Opus et le WMA — miniaudio s'arrête à wav/mp3/flac/ogg et
+        # l'AIFF, l'Opus et le WMA - miniaudio s'arrête à wav/mp3/flac/ogg et
         # renvoie « failed to decode file » sur tout le reste. Sans ce passage,
         # l'IA Lumière restait muette sur ces formats alors que le lecteur les
         # jouait normalement.
@@ -227,7 +227,7 @@ class AudioColorAI:
         """Décode n'importe quel format vers du mono 22050 Hz via ffmpeg.
 
         Même recette que la forme d'onde du REC Lumière : WAV temporaire, et
-        surtout `-nostdin` + stderr vers un FICHIER — un PIPE non drainé se
+        surtout `-nostdin` + stderr vers un FICHIER - un PIPE non drainé se
         remplit à ~64 Ko et fige ffmpeg en écriture.
         """
         try:
@@ -457,7 +457,7 @@ print(json.dumps(energy))
 
         Repli : on avance dans la palette jusqu'a trouver une teinte qui
         differe. Si la palette entiere est monochrome (cas degenere), on rend
-        la couleur d'origine — l'alternance est alors invisible, mais rien ne
+        la couleur d'origine - l'alternance est alors invisible, mais rien ne
         casse.
         """
         if not self.palette:
@@ -626,7 +626,7 @@ print(json.dumps(energy))
             if not strobe_on:
                 lat_level = 0
 
-        # === GROUPES D→H : tous actifs — accent qui tourne sur les beats ===
+        # === GROUPES D→H : tous actifs - accent qui tourne sur les beats ===
         def_base_level = int((70 + energy * 30) * global_fade)
         pal = self.palette if self.palette else [self.dominant_color]
         accent_level = def_base_level
@@ -652,7 +652,7 @@ print(json.dumps(energy))
         # pendant les ~4 beats qui suivent. Les deux se rejoignaient donc en
         # cours de route : mesure sur 30 s de beats reguliers, 33 images
         # bicolores sur 74 sortaient une alternative IDENTIQUE a la couleur
-        # principale — l'alternance un-sur-deux disparaissait pres d'une fois
+        # principale - l'alternance un-sur-deux disparaissait pres d'une fois
         # sur deux, sans que rien ne le signale. On garantit ici que l'autre
         # teinte en est bien une.
         contre_alt = None

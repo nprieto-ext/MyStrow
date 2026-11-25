@@ -1,5 +1,5 @@
 """
-gamepad_client.py — Lecture d'une manette de jeu (PlayStation, Xbox…).
+gamepad_client.py - Lecture d'une manette de jeu (PlayStation, Xbox…).
 
 Sert a piloter le PAN/TILT des lyres au stick, comme la trackball d'une console
 d'eclairage. C'est le geste juste pour pointer un projecteur : bien plus fin
@@ -12,7 +12,7 @@ aucune API manette. Il faut donc lire le peripherique nous-memes.
 
 Contrairement au WebSocket d'OBS, l'ecrire a la main ne ferait economiser
 AUCUNE dependance : lire du HID brut demande `hidapi`, qui est aussi une
-extension C. Et la surface serait bien plus grande — DualShock 4 et DualSense
+extension C. Et la surface serait bien plus grande - DualShock 4 et DualSense
 ont des formats de rapport differents, eux-memes differents en USB et en
 Bluetooth, soit quatre variantes a valider avec le materiel en main. SDL (que
 pygame embarque) gere deja tout cela, sur Windows comme sur macOS.
@@ -35,7 +35,7 @@ tilt sur le stick droit chez l'un et un pan chez l'autre.
 
 Le sondage tourne sur un QTimer DANS LE THREAD Qt, sans thread reseau : SDL
 demande que son etat soit rafraichi depuis le thread principal sur macOS, et la
-lecture est purement locale — aucune attente, donc rien qui puisse voler des
+lecture est purement locale - aucune attente, donc rien qui puisse voler des
 images a la trame DMX.
 """
 
@@ -51,7 +51,7 @@ _AXE_MAX = 32767.0
 # Boutons exposes, avec le nom de la constante SDL correspondante.
 #
 # L'IDENTIFIANT EST NEUTRE, PAS « LA CROIX » : SDL nomme « A » le bouton du bas,
-# qui est la croix sur PlayStation et A sur Xbox — meme bouton physique, seul
+# qui est la croix sur PlayStation et A sur Xbox - meme bouton physique, seul
 # son dessin change. Garder l'identifiant SDL evite qu'un mapping enregistre
 # avec une manette parte de travers avec une autre ; c'est l'affichage qui
 # s'adapte (cf. gamepad_boutons.py).
@@ -83,7 +83,7 @@ _GACHETTES = (
 
 # Deux seuils, pas un seul : une gachette relachee ne retombe pas franchement a
 # zero sur une manette usee. Avec un seuil unique, une gachette qui flotte
-# autour de la valeur de bascule enverrait une rafale d'appuis — et si elle
+# autour de la valeur de bascule enverrait une rafale d'appuis - et si elle
 # porte le modificateur, la page changerait dix fois par seconde.
 SEUIL_GACHETTE_ON  = 0.60
 SEUIL_GACHETTE_OFF = 0.40
@@ -96,7 +96,7 @@ class GamepadClient(QObject):
     connection_changed = Signal(bool, str)
     # Manette reconnue mais qui n'emettra jamais rien (cf. `avertissement_pour`)
     avertissement      = Signal(str)
-    # lx, ly, rx, ry — normalises entre -1.0 et 1.0, bruts (sans zone morte)
+    # lx, ly, rx, ry - normalises entre -1.0 et 1.0, bruts (sans zone morte)
     axes_changed       = Signal(float, float, float, float)
     # Fronts d'un bouton (identifiants de `_BOUTONS` / `_GACHETTES`)
     bouton_presse      = Signal(str)
@@ -203,7 +203,7 @@ class GamepadClient(QObject):
     # ── boutons ─────────────────────────────────────────────────────────────
 
     def est_enfonce(self, bouton: str) -> bool:
-        """Etat courant d'un bouton — sert au modificateur, qui se lit au
+        """Etat courant d'un bouton - sert au modificateur, qui se lit au
         moment ou un AUTRE bouton est presse, pas au moment ou lui-meme l'est."""
         return bouton in self._enfonces
 
@@ -333,7 +333,7 @@ def avertissement_pour(index: int) -> str:
 
     Le cas verifie ici est le DualShock 3 sous Windows avec le pilote HID
     d'origine : il s'enumere normalement, SDL le reconnait meme comme
-    « PS3 Controller » avec un mapping complet — et il n'emet aucun rapport,
+    « PS3 Controller » avec un mapping complet - et il n'emet aucun rapport,
     parce que personne ne lui a ecrit son rapport de fonctionnalite 0xF4.
     Mesure faite avec la manette en main : tous les axes figes, aucun bouton, et
     `HidD_SetFeature` refuse par Windows (erreur 87) meme a la taille exacte que

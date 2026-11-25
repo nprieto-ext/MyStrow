@@ -1,5 +1,5 @@
 """
-Test ENTTEC isole — compare les 3 methodes de break sur le port FTDI.
+Test ENTTEC isole - compare les 3 methodes de break sur le port FTDI.
 Usage :
     python test_enttec.py sendbreak   # methode live actuelle  : send_break(1 ms)
     python test_enttec.py breakcond   # methode diag actuelle  : break_condition 176 us
@@ -87,7 +87,7 @@ try:
             errors += 1
             print(f"  ERREUR frame {sent}: {e}")
             if errors > 5:
-                print("  >5 erreurs — arret")
+                print("  >5 erreurs - arret")
                 break
         elapsed = time.monotonic() - t0
         if elapsed < 0.040:

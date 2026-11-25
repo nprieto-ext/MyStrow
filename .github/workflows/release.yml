@@ -47,7 +47,7 @@ jobs:
           # runner, qui peut être un build "shared" (dépendances DLL à côté).
           #
           # Plusieurs sources + réessais : une release ne doit pas échouer parce
-          # qu'un hébergeur tiers renvoie un 503 passager — c'est exactement ce
+          # qu'un hébergeur tiers renvoie un 503 passager - c'est exactement ce
           # qui est arrivé avec gyan.dev. La source primaire est hébergée par
           # GitHub, donc sur le même réseau que le runner. Les deux fournissent
           # un build statique GPL équivalent.
@@ -62,7 +62,7 @@ jobs:
             if ($obtenu) { break }
             foreach ($essai in 1..3) {
               try {
-                Write-Host "ffmpeg — $url  (essai $essai/3)"
+                Write-Host "ffmpeg - $url  (essai $essai/3)"
                 if (Test-Path ffmpeg.zip) { Remove-Item ffmpeg.zip -Force }
                 Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing -TimeoutSec 300
                 # Une page d'erreur HTML enregistrée en .zip pèse quelques Ko :
@@ -79,7 +79,7 @@ jobs:
             }
           }
           if (-not $obtenu) {
-            throw "ffmpeg indisponible sur toutes les sources — build interrompu (mieux vaut échouer que livrer un exe sans ffmpeg)"
+            throw "ffmpeg indisponible sur toutes les sources - build interrompu (mieux vaut échouer que livrer un exe sans ffmpeg)"
           }
 
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_dl -Force
@@ -99,26 +99,26 @@ jobs:
           # La sortie est collectée EN ENTIER avant de lire $LASTEXITCODE.
           # Un « | Select-Object -First 1 » interrompt le pipeline en amont dès
           # la 1re ligne : la commande native est stoppée et $LASTEXITCODE n'est
-          # jamais renseigné — il vaut alors $null, ce que « -ne 0 » lit comme
+          # jamais renseigné - il vaut alors $null, ce que « -ne 0 » lit comme
           # un échec. C'est ce qui faisait échouer le build sur un ffmpeg sain.
           $ErrorActionPreference = 'Continue'
           $sortie = & "$tmp\ffmpeg.exe" -version
           $code   = $LASTEXITCODE
           $ErrorActionPreference = 'Stop'
           if ($code -ne 0) {
-            throw "ffmpeg.exe ne s'exécute pas isolé (build non statique ?) — code $code"
+            throw "ffmpeg.exe ne s'exécute pas isolé (build non statique ?) - code $code"
           }
           $v = @($sortie)[0]
           Remove-Item $tmp -Recurse -Force
           $sz = [math]::Round((Get-Item ffmpeg.exe).Length/1MB, 1)
-          Write-Host "ffmpeg statique prêt ($sz Mo) — source : $obtenu"
+          Write-Host "ffmpeg statique prêt ($sz Mo) - source : $obtenu"
           Write-Host "  $v"
 
       - name: Build EXE
-        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "boitier_1an.png;." --add-data "boitier_2mois.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "controllers_bundle.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "vendor/three;vendor/three" --add-data "scenes3d;scenes3d" --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --collect-all=pygame --hidden-import=pygame._sdl2.controller --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --hidden-import=truststore --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "boitier_1an.png;." --add-data "boitier_2mois.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --add-data "controllers_bundle.json.gz;." --add-data "fixtures_qlcplus.json;." --add-data "plan_3d_web.html;." --add-data "vendor/three;vendor/three" --add-data "scenes3d;scenes3d" --add-data "tablet/index.html;tablet" --add-data "tablet/manifest.json;tablet" --add-data "tablet/sw.js;tablet" --add-binary "ftd2xx.dll;." --add-binary "ffmpeg.exe;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=sounddevice --collect-all=_sounddevice_data --collect-all=pyaudiowpatch --exclude-module=faster_whisper --exclude-module=ctranslate2 --exclude-module=av --exclude-module=tokenizers --exclude-module=onnxruntime --exclude-module=llama_cpp --collect-all=pygame --hidden-import=pygame._sdl2.controller --hidden-import=numpy --collect-all=serial --hidden-import=serial.tools.list_ports --collect-all=ftd2xx --hidden-import=ftd2xx --hidden-import=ftd2xx.defines --hidden-import=truststore --noupx --noconfirm main.py --name MyStrow
 
       # ─────────────────────────────────────────────
-      # SIGNATURE DE CODE WINDOWS — SSL.com eSigner (cloud, CSC)
+      # SIGNATURE DE CODE WINDOWS - SSL.com eSigner (cloud, CSC)
       # Non bloquant : si les secrets ES_* sont absents, on saute la signature.
       # IMPORTANT : signer l'EXE AVANT de générer le .sig (sinon le hash
       # d'intégrité interne ne correspond plus au binaire signé) et AVANT
@@ -134,7 +134,7 @@ jobs:
             echo "has_sign=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_sign=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Secrets ES_* absents — MyStrow.exe NON signé (Windows)."
+            echo "::warning::Secrets ES_* absents - MyStrow.exe NON signé (Windows)."
           fi
 
       - name: Sign MyStrow.exe (SSL.com eSigner)
@@ -165,25 +165,62 @@ jobs:
           Write-Host "SHA256: $hash"
           python _gen_sig.py $exe.FullName
 
-      - name: Build Installer (Inno Setup)
-        run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\maestro.iss
-        shell: pwsh
-
-      - name: Sign MyStrow_Setup.exe (SSL.com eSigner)
+      # CodeSignTool en direct : c'est Inno Setup qui signe l'installeur (voir
+      # l'étape suivante), via installer\sign_sslcom.cmd. Même téléchargement
+      # et même configuration PROD que test-esigner.yml.
+      - name: Download CodeSignTool
         if: steps.check-win-sign.outputs.has_sign == 'true'
-        # BLOQUANT (voir commentaire sur la signature de l'exe ci-dessus).
-        uses: sslcom/esigner-codesign@develop
-        with:
-          command: sign
-          username: ${{ secrets.ES_USERNAME }}
-          password: ${{ secrets.ES_PASSWORD }}
-          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
-          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
-          file_path: ${{ github.workspace }}/installer/installer_output/MyStrow_Setup.exe
-          override: true
-          malware_block: false
-          environment_name: PROD
+        shell: pwsh
+        run: |
+          $url = "https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.0/CodeSignTool-v1.3.0-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile cst.zip
+          Expand-Archive -LiteralPath cst.zip -DestinationPath cst -Force
+          $bat = Get-ChildItem -Path cst -Filter CodeSignTool.bat -Recurse | Select-Object -First 1
+          if (-not $bat) { throw "CodeSignTool.bat introuvable dans le zip" }
+          $root = $bat.Directory.FullName
+          "CST_ROOT=$root" | Out-File -Encoding ascii -Append $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path "$root\conf" | Out-Null
+          @'
+          CLIENT_ID=kaXTRACNijSWsFdRKg_KAfD3fqrBlzMbWs6TwWHwAn8
+          OAUTH2_ENDPOINT=https://login.ssl.com/oauth2/token
+          CSC_API_ENDPOINT=https://cs.ssl.com
+          TSA_URL=http://ts.ssl.com
+          TSA_LEGACY_URL=http://ts.ssl.com/legacy
+          '@ | Out-File -Encoding ascii "$root\conf\code_sign_tool.properties"
+
+      # Inno Setup SIGNE LUI-MÊME l'installeur et sa copie temporaire setup.tmp
+      # (= désinstalleur). Avant, on signait MyStrow_Setup.exe APRÈS coup :
+      # setup.tmp restait non signé et le Contrôle intelligent des applications
+      # de Windows 11 le bloquait (« Erreur 4551 »). Coût : 3 signatures eSigner
+      # par release (MyStrow.exe + setup.tmp + installeur) au lieu de 2.
+      # BLOQUANT : si une signature échoue, ISCC échoue → pas de release.
+      - name: Build Installer (Inno Setup)
+        shell: pwsh
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if ("${{ steps.check-win-sign.outputs.has_sign }}" -eq "true") {
+            $wrapper = (Resolve-Path installer\sign_sslcom.cmd).Path
+            # $f (littéral, d'où les apostrophes) = fichier à signer, mis entre
+            # guillemets par Inno. Les secrets restent dans l'environnement.
+            $tool = '/Ssslcom=cmd /c "' + $wrapper + '" $f'
+            & $iscc $tool /DSIGN installer\maestro.iss
+          } else {
+            & $iscc installer\maestro.iss
+          }
+          if ($LASTEXITCODE -ne 0) { throw "ISCC a échoué ($LASTEXITCODE)" }
+
+      - name: Verify installer signature
+        if: steps.check-win-sign.outputs.has_sign == 'true'
+        shell: pwsh
+        run: |
+          $s = Get-AuthenticodeSignature installer\installer_output\MyStrow_Setup.exe
+          Write-Host "MyStrow_Setup.exe : $($s.Status) - $($s.SignerCertificate.Subject)"
+          if ($s.Status -ne 'Valid') { throw "MyStrow_Setup.exe n'est pas signé correctement" }
 
 
       - name: Collect artifacts (dossier plat)
@@ -204,7 +241,7 @@ jobs:
           path: artifacts/
 
   # ─────────────────────────────────────────────
-  # BUILD MAC — Apple Silicon arm64 (macos-15)
+  # BUILD MAC - Apple Silicon arm64 (macos-15)
   # ─────────────────────────────────────────────
   build-mac:
     runs-on: macos-15
@@ -258,7 +295,7 @@ jobs:
           ls -lh "dist/MyStrow.app/Contents/MacOS/"
           [ -f "$EXEC" ] || { echo "Exécutable manquant"; exit 1; }
           SIZE_MB=$(du -m "$EXEC" | cut -f1)
-          [ "$SIZE_MB" -gt 30 ] || { echo "EXE trop petit — onefile probablement cassé"; exit 1; }
+          [ "$SIZE_MB" -gt 30 ] || { echo "EXE trop petit - onefile probablement cassé"; exit 1; }
           echo "Taille OK : ${SIZE_MB} MB"
 
       - name: Check signing secrets availability
@@ -435,7 +472,7 @@ jobs:
           ok, msg = notify_discord_latest(version)
           # Jamais bloquant : la release est deja publiee. Mais jamais muet non
           # plus, sinon un canal fige repasse inapercu.
-          print(("OK  " if ok else "::warning::Discord — ") + msg)
+          print(("OK  " if ok else "::warning::Discord - ") + msg)
           PY
 
       - name: Supprimer les anciennes releases (garder les 3 dernières)
@@ -461,6 +498,6 @@ jobs:
       - name: Verifier la presence du DMG arm64
         run: |
           if [ ! -f "mac-dmg/MyStrow_arm64.dmg" ]; then
-            echo "::error::MyStrow_arm64.dmg absent de la release (build-mac : ${{ needs.build-mac.result }}) — le telechargement Mac Apple Silicon renvoie 404. Relancer : gh run rerun ${{ github.run_id }} --failed"
+            echo "::error::MyStrow_arm64.dmg absent de la release (build-mac : ${{ needs.build-mac.result }}) - le telechargement Mac Apple Silicon renvoie 404. Relancer : gh run rerun ${{ github.run_id }} --failed"
             exit 1
           fi

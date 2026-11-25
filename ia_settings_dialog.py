@@ -1,5 +1,5 @@
 """
-Fenêtre de réglage IA Lumière d'un média — MyStrow
+Fenêtre de réglage IA Lumière d'un média - MyStrow
 
 Ouverte depuis la colonne DMX (choix « IA Lumière ») ou par un clic sur le carré
 de couleur de la ligne. Elle règle l'`IASettings` de CETTE ligne.
@@ -9,7 +9,7 @@ La première version réutilisait les tuiles du panneau LIVE (`_ColorTile`,
 `_MovTile`). Elles peignent leur violet EN DUR (#cc88ff, #6633bb, halo
 180,100,255), et comme le panneau LIVE ne doit pas bouger, il n'y avait pas
 moyen de les calmer sans le toucher. D'où des tuiles réécrites ici : même
-principe, mais une seule couleur d'accent — le bleu du badge « IA » de la
+principe, mais une seule couleur d'accent - le bleu du badge « IA » de la
 colonne DMX (`Sequencer._SS_BTN`), pour qu'on retrouve la même identité entre
 le bouton sur lequel on clique et la fenêtre qui s'ouvre.
 
@@ -19,8 +19,8 @@ Le panneau portait douze réglages ; il en porte sept.
   · Les deux « Tenue » (couleur et mouvement) portaient le même nom pour deux
     choses différentes dans la même fenêtre. Fusionnés en un seul CHANGEMENT
     qui pilote les deux : c'est de toute façon le même geste musical.
-  · Le stroboscope se réglait en deux endroits — trois boutons pour le strobe
-    automatique, cinq pour l'effet tenu — alors que l'un conditionnait l'autre.
+  · Le stroboscope se réglait en deux endroits - trois boutons pour le strobe
+    automatique, cinq pour l'effet tenu - alors que l'un conditionnait l'autre.
     Un seul choix à quatre entrées les remplace.
 """
 
@@ -71,10 +71,10 @@ _BTN_OFF = (f"QPushButton {{ background:#1a1a1a; color:{_TEXTE_DIM};"
 
 
 class _Pastille(QWidget):
-    """Pastille de couleur — pleine, bicolore, ou « AUTO » (l'IA choisit).
+    """Pastille de couleur - pleine, bicolore, ou « AUTO » (l'IA choisit).
 
     Deux états seulement : dans la palette, ou hors palette. La tuile du panneau
-    LIVE en distinguait un troisième (« en cours de lecture ») avec un halo — ici
+    LIVE en distinguait un troisième (« en cours de lecture ») avec un halo - ici
     la fenêtre sert à préparer, pas à suivre le direct, et ce troisième état
     n'apportait qu'une couleur de plus à l'écran.
     """
@@ -155,7 +155,7 @@ class _Pastille(QWidget):
 
 
 class _Figure(QFrame):
-    """Tuile de figure de mouvement — glyphe + nom, deux états."""
+    """Tuile de figure de mouvement - glyphe + nom, deux états."""
 
     def __init__(self, cle, glyphe, libelle, on_clic, parent=None):
         super().__init__(parent)
@@ -488,7 +488,7 @@ class IASettingsDialog(QDialog):
         annuler = QPushButton(tr("btn_cancel"))
         # ⚠️ Toutes les portions doivent être des f-strings : dans un morceau non
         # préfixé, `}}` reste littéralement `}}` et Qt rejette la feuille entière
-        # (« Could not parse stylesheet ») — le bouton s'affiche alors sans style.
+        # (« Could not parse stylesheet ») - le bouton s'affiche alors sans style.
         annuler.setStyleSheet(
             f"QPushButton {{ background:#242424; color:{_TEXTE_DIM}; border:none;"
             f" border-radius:5px; padding:8px 20px; font-size:12px; }}"
@@ -505,5 +505,5 @@ class IASettingsDialog(QDialog):
         return ligne
 
     def resultat(self):
-        """Préréglage édité — à ne lire qu'après un exec() accepté."""
+        """Préréglage édité - à ne lire qu'après un exec() accepté."""
         return self._s

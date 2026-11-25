@@ -1,13 +1,13 @@
 """
 Gestion des profils de contrôleurs MIDI personnalisés.
-Format JSON — stockés dans %APPDATA%/MyStrow/controllers/ (Windows) ou ~/.mystrow/controllers/.
+Format JSON - stockés dans %APPDATA%/MyStrow/controllers/ (Windows) ou ~/.mystrow/controllers/.
 
 Deux sources, jamais mélangées en écriture :
 
-  * le dossier utilisateur — mappings faits maison ou installés depuis la
+  * le dossier utilisateur - mappings faits maison ou installés depuis la
     bibliothèque communautaire, seuls modifiables (`save_profile`, `rename_`,
     `delete_profile`) ;
-  * `controllers_bundle.json.gz`, embarqué dans l'exe — les profils approuvés
+  * `controllers_bundle.json.gz`, embarqué dans l'exe - les profils approuvés
     en modération, figés à la date de la release. C'est lui qui fait qu'un
     contrôleur validé est reconnu AU BRANCHEMENT, sans compte ni réseau, au
     lieu d'attendre que l'utilisateur trouve la bibliothèque communautaire.
@@ -60,7 +60,7 @@ def _bundle_path() -> Path:
 
 
 def list_bundled_profiles() -> list:
-    """Profils livrés AVEC l'application — lecture seule, `file` à None.
+    """Profils livrés AVEC l'application - lecture seule, `file` à None.
 
     Un catalogue absent n'est pas une erreur : c'est l'état d'un build fait
     avant la première approbation, et d'une exécution depuis les sources.
@@ -94,7 +94,7 @@ def all_profiles() -> list:
 
     Le local passe toujours devant. Un profil livré avec l'app qui partage un
     mot-clé avec un mapping fait maison détournerait la détection sans rien
-    afficher, et l'utilisateur croirait son propre travail écrasé — c'est le cas
+    afficher, et l'utilisateur croirait son propre travail écrasé - c'est le cas
     que `conflicting_local_profiles` fait remonter à l'installation, tranché ici
     en silence puisqu'il n'y a personne à prévenir au branchement.
     """
@@ -139,7 +139,7 @@ def _safe_stem(name: str) -> str:
 
 
 def validate_profile(data) -> tuple[bool, str]:
-    """(ok, raison) — un profil importé vient d'un tiers, on ne lui fait pas confiance.
+    """(ok, raison) - un profil importé vient d'un tiers, on ne lui fait pas confiance.
 
     Un JSON malformé accepté ici ne casserait pas l'import mais la connexion du
     contrôleur, bien plus tard et sans rapport visible avec le fichier fautif.
@@ -179,7 +179,7 @@ def profile_path_for_name(name: str) -> str | None:
 
 
 def unique_profile_path(name: str) -> str:
-    """Chemin libre pour ce nom — n'écrase jamais un profil existant."""
+    """Chemin libre pour ce nom - n'écrase jamais un profil existant."""
     stem = _safe_stem(name)
     directory = get_profiles_dir()
     candidate = directory / f"{stem}.json"
@@ -274,7 +274,7 @@ def conflicting_local_profiles(keywords: list, fingerprint: str = "") -> list:
     `find_profile_for_port` rend le PREMIER profil dont un mot-clé apparaît dans
     le nom du port, dans l'ordre alphabétique des fichiers. Installer un profil
     communautaire qui partage un mot-clé avec un mapping fait maison peut donc
-    détourner la détection sans rien afficher — et l'utilisateur croit que son
+    détourner la détection sans rien afficher - et l'utilisateur croit que son
     propre mapping a été écrasé.
     """
     wanted = {str(k).strip().upper() for k in (keywords or []) if str(k).strip()}
@@ -297,7 +297,7 @@ def install_community_profile(data: dict, fingerprint: str, version: int) -> tup
 
     Retourne (chemin, mise_a_jour). L'empreinte et la version sont estampillées
     dans le fichier : sans elles, un mapping corrigé après coup ne pourrait
-    jamais redescendre chez ceux qui l'ont déjà installé — ils resteraient sur
+    jamais redescendre chez ceux qui l'ont déjà installé - ils resteraient sur
     la version fautive sans moyen de le savoir.
 
     Une réinstallation écrase le fichier d'origine plutôt que d'en créer un

@@ -1,5 +1,5 @@
 """
-test_cartouches_superposer.py — Option « Superposer par-dessus la playlist ».
+test_cartouches_superposer.py - Option « Superposer par-dessus la playlist ».
 
 Une case commune aux 4 cartouches, DÉCOCHÉE par défaut.
 
@@ -13,7 +13,7 @@ Ce que ces tests verrouillent :
   * réappui = stop, appui suivant = relance depuis le début ;
   * le pad STOP coupe tout, même cochée ;
   * une cartouche VIDÉO superposée prend l'image (player principal détaché,
-    playlist empêchée de reprendre l'aperçu), et la rend à la fin — en
+    playlist empêchée de reprendre l'aperçu), et la rend à la fin - en
     réaffichant la ligne où la playlist est ARRIVÉE entre-temps.
 
     python test_cartouches_superposer.py

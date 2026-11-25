@@ -254,7 +254,7 @@ class LiveTile(QWidget):
 
 
 class LiveQuickBar(QWidget):
-    """Grille 3×N de LiveTile draggables — modes lyre + presets couleur."""
+    """Grille 3×N de LiveTile draggables - modes lyre + presets couleur."""
 
     lyre_mode_changed = Signal(str)   # '' | 'circle' | 'eight'
     color_selected    = Signal(str)   # hex color (#rrggbb)
@@ -435,7 +435,7 @@ class LiveSettingsDialog(QDialog):
         root.addWidget(self._sep())
 
         # ── Groupes éclairage ───────────────────────────────────────────────────
-        root.addWidget(self._slbl("GROUPES ÉCLAIRAGE  —  vide = tous autorisés", LS))
+        root.addWidget(self._slbl("GROUPES ÉCLAIRAGE  -  vide = tous autorisés", LS))
         grp_row = QHBoxLayout()
         grp_row.setSpacing(8)
         self._grp_btns = {}
@@ -679,7 +679,7 @@ class _MovTile(QFrame):
         # ⚠️ Le titre est ÉLIDÉ, pas simplement pose dans le QLabel : les tuiles
         # de gobo portent maintenant le nom du motif (« Étoile 4 branches »,
         # « Logo MyStrow »…) et plus un « G4 » de deux caractères. Un QLabel
-        # tronque sans prévenir — on lisait « Étoile 4 bra » — alors qu'une
+        # tronque sans prévenir - on lisait « Étoile 4 bra » - alors qu'une
         # élision met les points de suspension et garde le nom entier en
         # infobulle.
         self._title_full = label
@@ -725,7 +725,7 @@ class _MovTile(QFrame):
                 " background:transparent; border:none;")
 
     def set_active(self, active: bool):
-        """Compat ascendante — utiliser set_state() de préférence."""
+        """Compat ascendante - utiliser set_state() de préférence."""
         self.set_state(selected=active, playing=active)
 
     def mousePressEvent(self, event):
@@ -733,7 +733,7 @@ class _MovTile(QFrame):
         super().mousePressEvent(event)
 
 class _ColorTile(QWidget):
-    """Tuile couleur ronde — cercle peint + label.
+    """Tuile couleur ronde - cercle peint + label.
 
     AUTO      → cercle sombre avec contour cyan
     Mono      → cercle plein coloré
@@ -852,7 +852,7 @@ class _ColorTile(QWidget):
 
 
 class _SpecialTile(_MovTile):
-    """Tuile d'effet spécial — même design que _MovTile.
+    """Tuile d'effet spécial - même design que _MovTile.
     Comportement toggle : cliquer sur l'actif le désactive.
     """
 
@@ -869,7 +869,7 @@ class _SpecialTile(_MovTile):
 class _SeqTile(QFrame):
     """Tuile d'une mémoire de pad, dans l'onglet SÉQUENCE du panneau LIVE.
 
-    Trois états, exactement comme `_MovTile` — c'est le même geste : on
+    Trois états, exactement comme `_MovTile` - c'est le même geste : on
     constitue un POOL, et le moteur en joue une à la fois.
       - idle     : hors pool
       - selected : dans le pool (sera jouée)
@@ -928,7 +928,7 @@ class _SeqTile(QFrame):
         self._lbl.setWordWrap(False)
         # Un nom de mémoire est libre (« Refrain chaud contre-jour ») : sans ces
         # deux lignes, la largeur mini du LABEL remonte jusqu'au panneau, qui
-        # exigeait alors 1026 px au lieu de 624 — le panneau LIVE déborde et le
+        # exigeait alors 1026 px au lieu de 624 - le panneau LIVE déborde et le
         # séquenceur avec. La politique `Ignored` coupe cette remontée, et
         # `resizeEvent` écourte le texte à la largeur réellement disponible.
         # Le nom complet reste lisible en infobulle (posée ci-dessus).
@@ -941,7 +941,7 @@ class _SeqTile(QFrame):
         super().resizeEvent(event)
         # Largeur mesurée sur la TUILE, pas sur le label : quand cet événement
         # arrive, la mise en page interne n'a pas encore redimensionné le label,
-        # qui rend donc encore son ancienne largeur — et rien n'était écourté.
+        # qui rend donc encore son ancienne largeur - et rien n'était écourté.
         dispo = max(10, self.width() - 12)   # marges du QVBoxLayout (4 + 4) + air
         self._lbl.setText(
             QFontMetrics(self._lbl.font()).elidedText(
@@ -1033,7 +1033,7 @@ class _VuSensWidget(QWidget):
         p.setPen(QPen(QColor('#1a3050'), 1))
         p.drawRoundedRect(0, 0, w, h, 3, 3)
 
-        # Barre VU — niveau affiché réduit proportionnellement à la sensibilité
+        # Barre VU - niveau affiché réduit proportionnellement à la sensibilité
         _displayed = self._level * (self._sens / 100.0)
         fill_w = int(w * _displayed / 100)
         if fill_w > 0:
@@ -1169,7 +1169,7 @@ class LiveModePanel(QWidget):
         self._color_restrict   = True       # toujours restreindre à la sélection
         # Les périphériques audio NE sont PAS énumérés ici : les lister charge
         # PortAudio, dont l'initialisation peut tuer le process (access
-        # violation non rattrapable) selon les pilotes de la machine — et donc
+        # violation non rattrapable) selon les pilotes de la machine - et donc
         # empêcher MyStrow de démarrer alors que l'utilisateur ne veut même pas
         # du mode LIVE. L'énumération se fait au premier affichage du panneau
         # (showEvent), c'est-à-dire quand on passe vraiment en mode LIVE.
@@ -1203,7 +1203,7 @@ class LiveModePanel(QWidget):
         # Le panneau ne connaît pas `main_window` : il reçoit la liste des
         # mémoires par un getter injecté (même patron que `_pos_getter`) et
         # renvoie son pool par signal. La grille est reconstruite à chaque
-        # entrée en LIVE — une mémoire enregistrée entre-temps y apparaît sans
+        # entrée en LIVE - une mémoire enregistrée entre-temps y apparaît sans
         # redémarrage.
         self._seq_getter    = None
         self._seq_tiles     = {}     # (mem_col, row) -> _SeqTile
@@ -1292,7 +1292,7 @@ class LiveModePanel(QWidget):
 
         Toujours oui côté panneau LIVE : « Couleurs simultanées » y compte les
         couleurs présentes EN MÊME TEMPS sur le plan, pas le nombre de couleurs
-        que le morceau a le droit de traverser — c'est le curseur DURÉE qui
+        que le morceau a le droit de traverser - c'est le curseur DURÉE qui
         règle le défilement. À 1, on veut donc une couleur à la fois, qui
         défile ; le préréglage d'un média (`IASettings`), lui, entend « 1 » au
         sens d'une couleur tenue, et rend `False`.
@@ -1412,7 +1412,7 @@ class LiveModePanel(QWidget):
             self._movement_duration = int(cfg.get('mov_duration', self._movement_duration))
             # ⚠️ Migration 8 → 16 slots : un panneau enregistré avant
             # l'élargissement gardait ses index tels quels et serait reparti sur
-            # la moitié basse de la roue — d'autres gobos qu'à l'enregistrement.
+            # la moitié basse de la roue - d'autres gobos qu'à l'enregistrement.
             # Les huit motifs d'origine sont passés aux index PAIRS, d'où le
             # doublement.
             _n_slots  = int(cfg.get('gobo_slots', 8))
@@ -1451,7 +1451,7 @@ class LiveModePanel(QWidget):
 
         lbl_style = "color: #888; font-size: 10px; font-weight: bold; letter-spacing: 1.5px;"
 
-        # ── Source : combo caché (état interne) — affiché dans la carte INPUT ──
+        # ── Source : combo caché (état interne) - affiché dans la carte INPUT ──
         # Le sélecteur visible est la carte INPUT elle-même (clique → ⚙ paramètres).
         self.source_combo = ComboSansMolette()
         for label, key in self.SOURCES:
@@ -1481,10 +1481,10 @@ class LiveModePanel(QWidget):
         self._conn_dot.setFixedSize(10, 10)
         self._conn_dot.setToolTip(tr("seq_conn_status"))
         self._set_conn_dot('off')
-        # MIDI setup — affiché après la carte INPUT si MIDI Clock sélectionné
+        # MIDI setup - affiché après la carte INPUT si MIDI Clock sélectionné
         self._midi_setup = self._build_midi_setup_widget()
 
-        # ── PARAMETRE LIVE (style carteson) + BPM — côte à côte ─────────────
+        # ── PARAMETRE LIVE (style carteson) + BPM - côte à côte ─────────────
         layout.addLayout(self._build_settings_bpm_row())
         layout.addWidget(self._midi_setup)
         self._midi_setup.hide()
@@ -1497,13 +1497,13 @@ class LiveModePanel(QWidget):
         layout.addWidget(self._separator())
 
         # ── Luminosité ──────────────────────────────────────────────────────
-        # Slider luminosité caché — conservé pour compatibilité signaux
+        # Slider luminosité caché - conservé pour compatibilité signaux
         self.lumi_slider = QSlider(Qt.Horizontal)
         self.lumi_slider.setRange(0, 100)
         self.lumi_slider.setValue(100)
         self.lumi_slider.hide()
 
-        # nerv_slider et sens_slider créés ailleurs — fallback si absent
+        # nerv_slider et sens_slider créés ailleurs - fallback si absent
         if not hasattr(self, 'nerv_slider'):
             self.nerv_slider = QSlider(Qt.Horizontal)
             self.nerv_slider.setRange(0, 100)
@@ -1535,7 +1535,7 @@ class LiveModePanel(QWidget):
                `QFrame { border: 1px solid #1a1a1a; }` (main_window.apply_styles)
                dessinait donc un petit rectangle autour de CHAQUE texte du
                panneau. Les 22 labels concernes ne s'en excluaient pas un par
-               un — on neutralise ici pour tout le panneau, y compris les
+               un - on neutralise ici pour tout le panneau, y compris les
                labels ajoutes plus tard. Un label qui definit sa propre
                bordure garde la sienne (son style prime sur celui du parent). */
             QLabel { border: none; background: transparent; }
@@ -1614,7 +1614,7 @@ class LiveModePanel(QWidget):
         key = self.source_combo.itemData(idx) or "loopback"
         self._source_info_lbl.setText(self._SOURCE_INFO.get(key, ""))
         self._set_conn_dot('off')
-        self.device_lbl.setText("—")
+        self.device_lbl.setText("-")
         if hasattr(self, '_input_name_lbl'):
             self._input_name_lbl.setText(self._source_display_name())
         # Le guide de configuration est désormais en ligne (bouton "?" de la carte INPUT) :
@@ -1678,7 +1678,7 @@ class LiveModePanel(QWidget):
         self._midi_status_lbl.setWordWrap(False)
         bot_row.addWidget(self._midi_status_lbl, 1)
 
-        # Bouton caché — conservé pour compatibilité
+        # Bouton caché - conservé pour compatibilité
         self._midi_btn = QPushButton()
         self._midi_btn.hide()
         self._midi_btn.clicked.connect(self._on_midi_btn_clicked)
@@ -1967,7 +1967,7 @@ class LiveModePanel(QWidget):
         self.device_lbl.setStyleSheet(
             f"color: {color}; font-size: 10px; font-style: italic; padding-left: 104px;")
         # Aussi mettre à jour le sous-titre de la carte INPUT
-        if hasattr(self, '_input_device_lbl') and text and text != "—":
+        if hasattr(self, '_input_device_lbl') and text and text != "-":
             self._input_device_lbl.setText(text)
             self._input_device_lbl.setStyleSheet(
                 f"color:{color}; font-size:9px; font-style:italic;"
@@ -2020,7 +2020,7 @@ class LiveModePanel(QWidget):
 
     # Onglets du panneau d'effets. Source UNIQUE : la barre de boutons et la
     # pile de pages étaient deux listes recopiées à la main, qui divergeaient au
-    # premier onglet ajouté (bouton présent, page absente — ou l'inverse).
+    # premier onglet ajouté (bouton présent, page absente - ou l'inverse).
     _EFFECT_TABS = ("MOUVEMENT", "DIMMER", "COULEURS", "GOBO",
                     "STROB", "SPÉCIAL", "SÉQUENCE")
 
@@ -2072,7 +2072,7 @@ class LiveModePanel(QWidget):
         # Les sept onglets sur UNE ligne, sans titre à gauche.
         #
         # Le titre « EFFETS » a sauté : il ne nommait rien que les onglets ne
-        # disent déjà, et il coûtait 68 px de largeur minimale — de quoi faire
+        # disent déjà, et il coûtait 68 px de largeur minimale - de quoi faire
         # basculer la barre sur deux lignes une fois le 7e onglet ajouté. Le
         # padding passe de 8 à 6 px dans la foulée. Ces deux gestes ramènent la
         # largeur minimale du panneau à 617 px, soit MOINS que les 624 px qu'il
@@ -2080,7 +2080,7 @@ class LiveModePanel(QWidget):
         #
         # Ce n'est pas cosmétique : le panneau LIVE vit dans un QScrollArea dont
         # la barre horizontale est désactivée (cf. `_live_scroll`). Ce qui
-        # dépasse est COUPÉ, pas atteignable — un onglet hors champ serait un
+        # dépasse est COUPÉ, pas atteignable - un onglet hors champ serait un
         # onglet mort. Toute modification de cette barre doit donc se mesurer,
         # pas s'estimer.
         # Un vrai bandeau d'onglets, pas sept boutons côte à côte : segments
@@ -2159,7 +2159,7 @@ class LiveModePanel(QWidget):
     def set_sequence_overrides(self, cles):
         """Onglets dont la mémoire en cours reprend les réglages (clés stables).
 
-        Appelée par le moteur à chaque changement de mémoire ou de cue — jamais
+        Appelée par le moteur à chaque changement de mémoire ou de cue - jamais
         par image. Purement informatif : les onglets restent cliquables et
         continuent d'agir là où la mémoire ne va pas (elle ne s'empare que des
         projecteurs qu'elle allume et des canaux qu'elle a réglés).
@@ -2176,7 +2176,7 @@ class LiveModePanel(QWidget):
         Le marquage passe par la COULEUR (texte + soulignement), jamais par un
         caractère ajouté au libellé : la barre doit tenir sur une ligne dans un
         QScrollArea sans défilement horizontal, un libellé qui s'allonge la
-        ferait déborder — et ce qui déborde est coupé, pas atteignable.
+        ferait déborder - et ce qui déborde est coupé, pas atteignable.
         """
         if not hasattr(self, '_effect_tab_btns'):
             return
@@ -2222,12 +2222,12 @@ class LiveModePanel(QWidget):
     def sequence_duration(self) -> int:
         """Tenue d'une mémoire sans minutage propre, en SECONDES.
 
-        En secondes et non en mesures — contrairement au pool de mouvements —
+        En secondes et non en mesures - contrairement au pool de mouvements -
         parce que l'horloge du LIVE avance même dans le silence (cf.
         `live_audio._process_chunk`, +50 ms par bloc que le RMS soit nul ou
         non) alors que le BPM, lui, retombe à son plancher de 60. Compté en
         mesures, le même réglage aurait donné 20 s sans musique et 9 s sur un
-        morceau à 128 — pour un simple changement de look, c'est déroutant
+        morceau à 128 - pour un simple changement de look, c'est déroutant
         sans rien apporter.
         """
         return self._seq_duration
@@ -2308,7 +2308,7 @@ class LiveModePanel(QWidget):
 
         # ── Interrupteur POSITIONS ────────────────────────────────────────
         # Une mémoire capture aussi le pan/tilt des lyres. Appliqué tel quel en
-        # LIVE, il les FIGE tant que la mémoire tourne — et comme l'onglet
+        # LIVE, il les FIGE tant que la mémoire tourne - et comme l'onglet
         # MOUVEMENT refuse de rester vide (`_on_movement_selected` interdit de
         # retirer le dernier motif), un mouvement tourne toujours : la mémoire
         # l'écraserait systématiquement. D'où cet interrupteur, décoché par
@@ -2534,7 +2534,7 @@ class LiveModePanel(QWidget):
     ]
 
     def _build_dimmer_content(self) -> QWidget:
-        """Sliders de dimmer max par groupe — contrôle en temps réel."""
+        """Sliders de dimmer max par groupe - contrôle en temps réel."""
         if not hasattr(self, '_dimmer_values'):
             self._dimmer_values = {g: 100 for g, _ in self._DIMMER_GROUPS}
 
@@ -2968,7 +2968,7 @@ class LiveModePanel(QWidget):
     # ── Page 3 : Gobo ────────────────────────────────────────────────────────
 
     def _build_gobo_content(self) -> QWidget:
-        """Grille de slots gobo + toggle rotation + vitesse — design _MovTile."""
+        """Grille de slots gobo + toggle rotation + vitesse - design _MovTile."""
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(0, 4, 0, 4)
@@ -2976,7 +2976,7 @@ class LiveModePanel(QWidget):
 
         # Grille 4×4 : les seize crans de la roue symbolique.
         #
-        # ⚠️ Les tuiles étaient au nombre de HUIT, étiquetées « G1 » à « G7 » —
+        # ⚠️ Les tuiles étaient au nombre de HUIT, étiquetées « G1 » à « G7 » -
         # des numéros qui n'apprenaient rien sur le motif projeté. Elles portent
         # maintenant le pictogramme et le nom de `core.GOBO_SLOT_NAMES`, donc ce
         # que les plans 2D et 3D vont réellement dessiner. La grille reste large
@@ -2998,7 +2998,7 @@ class LiveModePanel(QWidget):
                 row.addWidget(tile)
             vbox.addLayout(row)
 
-        # Rotation — tuile _MovTile façon toggle
+        # Rotation - tuile _MovTile façon toggle
         rot_row = QHBoxLayout()
         rot_row.setSpacing(5)
         self._gobo_rot_tile = _MovTile('rot', '↻', tr("seq_rotation"))
@@ -3218,7 +3218,7 @@ class LiveModePanel(QWidget):
     ]
 
     def _build_settings_bpm_row(self) -> QHBoxLayout:
-        """Carte PARAMETRE LIVE (style carteson) — BPM retiré."""
+        """Carte PARAMETRE LIVE (style carteson) - BPM retiré."""
         row = QHBoxLayout()
         row.setSpacing(10)
         row.addWidget(self._build_settings_block(), 1)
@@ -3227,7 +3227,7 @@ class LiveModePanel(QWidget):
         return row
 
     def _build_settings_block(self) -> QFrame:
-        """Carte PARAMETRE LIVE style carteson.png — cliquable, ouvre les paramètres."""
+        """Carte PARAMETRE LIVE style carteson.png - cliquable, ouvre les paramètres."""
         card = QFrame()
         card.setObjectName("settingsCard")
         card.setCursor(Qt.PointingHandCursor)
@@ -3282,7 +3282,7 @@ class LiveModePanel(QWidget):
             "color:#e0e0e0; font-size:16px; font-weight:bold;")
         mid.addWidget(self._input_name_lbl)
 
-        # Bouton "?" — visible pour les sources MIDI (VDJ, Rekordbox, MIDI Clock)
+        # Bouton "?" - visible pour les sources MIDI (VDJ, Rekordbox, MIDI Clock)
         self._source_help_btn = QPushButton("?")
         self._source_help_btn.setFixedSize(20, 20)
         self._source_help_btn.setCursor(Qt.PointingHandCursor)
@@ -3341,7 +3341,7 @@ class LiveModePanel(QWidget):
         vbox.addSpacing(2)
         vbox.addWidget(self._vu_sens)
 
-        # Label BPM — visible uniquement en source MIDI Clock
+        # Label BPM - visible uniquement en source MIDI Clock
         self._midi_bpm_lbl = QLabel("")
         self._midi_bpm_lbl.setAlignment(Qt.AlignCenter)
         self._midi_bpm_lbl.setStyleSheet(
@@ -3373,7 +3373,7 @@ class LiveModePanel(QWidget):
         card_vbox.setContentsMargins(8, 6, 8, 7)
         card_vbox.setSpacing(4)
 
-        self._bpm_display = QLabel("—  BPM")
+        self._bpm_display = QLabel("-  BPM")
         self._bpm_display.setAlignment(Qt.AlignCenter)
         self._bpm_display.setStyleSheet(self._BPM_CARD_NORMAL)
         card_vbox.addWidget(self._bpm_display)
@@ -3409,7 +3409,7 @@ class LiveModePanel(QWidget):
         bpm_col.addWidget(bpm_card)
 
         # Widgets cachés pour compatibilité
-        self._bpm_val_lbl = QLabel("—")
+        self._bpm_val_lbl = QLabel("-")
         self._bpm_val_lbl.hide()
         self._bpm_auto_btn = QPushButton("AUTO ↺")
         self._bpm_auto_btn.clicked.connect(self._on_bpm_auto_reset)
@@ -3448,7 +3448,7 @@ class LiveModePanel(QWidget):
                          " background:transparent; border:none;")
 
     def flash_beat(self):
-        """Flash le bouton beat — appelé par le moteur à chaque beat détecté."""
+        """Flash le bouton beat - appelé par le moteur à chaque beat détecté."""
         self._beat_btn.setStyleSheet(self._beat_active_style)
         QTimer.singleShot(80, lambda: self._beat_btn.setStyleSheet(self._beat_idle_style))
 
@@ -3461,8 +3461,8 @@ class LiveModePanel(QWidget):
             self._bpm_slider.setValue(int(min(200, max(60, bpm))))
             self._bpm_slider.blockSignals(False)
         try:
-            self._bpm_val_lbl.setText(f"{bpm:.0f}" if bpm > 0 else "—")
-            self._bpm_display.setText(f"{bpm:.0f}  BPM" if bpm > 0 else "—  BPM")
+            self._bpm_val_lbl.setText(f"{bpm:.0f}" if bpm > 0 else "-")
+            self._bpm_display.setText(f"{bpm:.0f}  BPM" if bpm > 0 else "-  BPM")
         except RuntimeError:
             pass
 
@@ -3471,7 +3471,7 @@ class LiveModePanel(QWidget):
             is_midi = self.source_key == 'midi_clock'
             self._midi_bpm_lbl.setVisible(is_midi)
             if is_midi:
-                self._midi_bpm_lbl.setText(f"{bpm:.0f} BPM" if bpm > 0 else "—")
+                self._midi_bpm_lbl.setText(f"{bpm:.0f} BPM" if bpm > 0 else "-")
 
     def _on_sync_clicked(self):
         """SYNC tap tempo : appuyez 2+ fois pour calculer le BPM depuis les taps."""
@@ -3566,7 +3566,7 @@ class LiveModePanel(QWidget):
     # ── Detected software ─────────────────────────────────────────────────────
 
     def set_detected_software(self, name: str, source_key: str):
-        """Appelé par SoftwareDetector — auto-sélectionne la source et met à jour la carte INPUT."""
+        """Appelé par SoftwareDetector - auto-sélectionne la source et met à jour la carte INPUT."""
         if name:
             # Auto-sélectionner la source correspondante dans le combo (interne)
             for i, (_, key) in enumerate(self.SOURCES):
@@ -3629,8 +3629,8 @@ class LiveModePanel(QWidget):
 
 # Feuille de style UNIQUE des menus du séquenceur.
 #
-# Il y en avait quatre différentes — clic droit sur une ligne, clic droit sur un
-# média, menu de la ligne PAUSE et menu du bouton DMX — avec des bordures, des
+# Il y en avait quatre différentes - clic droit sur une ligne, clic droit sur un
+# média, menu de la ligne PAUSE et menu du bouton DMX - avec des bordures, des
 # rayons et des couleurs de survol qui ne se ressemblaient pas. Le menu changeait
 # donc d'allure selon l'endroit exact du clic, ce qui donnait l'impression que
 # ce n'était pas le même logiciel. Un seul style ici, utilisé partout.
@@ -3671,7 +3671,7 @@ class Sequencer(QFrame):
     _LOOP_PREFIX = "\U0001f501 "   # « 🔁 » affiché devant le nom dans la playlist
 
     # Fondus audio de la ligne, en MILLISECONDES, portés par le même item que
-    # LOOP_ROLE — donc suivis lors d'un déplacement de ligne et conservés au
+    # LOOP_ROLE - donc suivis lors d'un déplacement de ligne et conservés au
     # renommage. 0 = pas de fondu.
     FADE_IN_ROLE  = Qt.UserRole + 2
     FADE_OUT_ROLE = Qt.UserRole + 3
@@ -3710,7 +3710,7 @@ class Sequencer(QFrame):
         # Couleurs IA Lumiere par ligne
         self.ia_colors = {}  # {row: QColor}
         self.ia_analysis = {}  # {row: {"energy_map": [...], "beats": [...]}}
-        # Prereglages IA Lumiere par ligne — couleurs, mouvements de lyres,
+        # Prereglages IA Lumiere par ligne - couleurs, mouvements de lyres,
         # gobos et nervosite propres a CE media. `ia_colors` ne portait qu'une
         # couleur dominante ; il est conserve pour l'indicateur de la colonne et
         # pour relire les shows enregistres avant les prereglages.
@@ -3747,7 +3747,7 @@ class Sequencer(QFrame):
             }
         """
 
-        # Bouton LIVE toggle — tout à gauche
+        # Bouton LIVE toggle - tout à gauche
         self.live_btn = QPushButton("● LIVE")
         self.live_btn.setFixedHeight(32)
         self.live_btn.setCheckable(True)
@@ -3793,7 +3793,7 @@ class Sequencer(QFrame):
         self.live_btn.setStyleSheet(self._live_btn_style_off)
         self.live_btn.clicked.connect(self._toggle_live)
 
-        # Bouton paramètres Live (⚙) — à gauche de LIVE, visible uniquement quand LIVE actif
+        # Bouton paramètres Live (⚙) - à gauche de LIVE, visible uniquement quand LIVE actif
         self._live_settings_btn = QPushButton("⚙")
         self._live_settings_btn.setFixedSize(26, 26)
         self._live_settings_btn.setCursor(Qt.PointingHandCursor)
@@ -3936,7 +3936,7 @@ class Sequencer(QFrame):
             self.live_btn.setStyleSheet(self._live_btn_style_on)
             self.content_stack.setCurrentIndex(1)
             self._live_settings_btn.setVisible(True)
-            # Cacher les boutons playlist — inutiles en mode LIVE
+            # Cacher les boutons playlist - inutiles en mode LIVE
             for btn in _playlist_btns:
                 btn.setVisible(False)
         else:
@@ -4285,7 +4285,7 @@ class Sequencer(QFrame):
         layout.setSpacing(4)
         layout.setAlignment(Qt.AlignCenter)
 
-        # Combo caché — toute la logique interne continue à l'utiliser
+        # Combo caché - toute la logique interne continue à l'utiliser
         combo = QComboBox(container)
         combo.addItems(["Manuel", "IA Lumiere"])
         combo.setCurrentText("Manuel")
@@ -4525,7 +4525,7 @@ class Sequencer(QFrame):
     def _delete_rows(self, rows):
         """Chemin UNIQUE de suppression de lignes : retire chaque ligne (de bas en
         haut) et réindexe sequences / ia_colors / ia_analysis / image_durations via
-        _reindex_ia_colors. Toute suppression DOIT passer par ici — dupliquer la
+        _reindex_ia_colors. Toute suppression DOIT passer par ici - dupliquer la
         réindexation ailleurs a déjà causé une perte de REC Lumière."""
         for row in sorted(set(rows), reverse=True):
             self.table.removeRow(row)
@@ -4572,7 +4572,7 @@ class Sequencer(QFrame):
                 new_durations[old_row - 1] = dur
         self.image_durations = new_durations
 
-        # Réindexer les rec lumière (sequences) — même logique
+        # Réindexer les rec lumière (sequences) - même logique
         if deleted_row in self.sequences:
             del self.sequences[deleted_row]
         new_seqs = {}
@@ -4587,7 +4587,7 @@ class Sequencer(QFrame):
         """Décale d'un cran vers le bas TOUTES les données indexées par ligne après
         insertion d'une ligne à `inserted_row` : sequences (REC Lumière) + ia_colors
         + ia_analysis + image_durations. Contrepartie de _reindex_ia_colors (côté
-        suppression) — sans ça, insérer une pause au milieu désalignait les
+        suppression) - sans ça, insérer une pause au milieu désalignait les
         couleurs/analyses IA et durées des médias situés en dessous."""
         def _shift(d):
             return {(old + 1 if old >= inserted_row else old): v for old, v in d.items()}
@@ -4613,12 +4613,12 @@ class Sequencer(QFrame):
             self.is_dirty = True
 
     # Noms des modes DMX dans les menus. Volontairement COURTS : une phrase
-    # d'explication en face de chaque ligne (« Manuel — faders et pads ») allonge
+    # d'explication en face de chaque ligne (« Manuel - faders et pads ») allonge
     # le menu, le rend bavard, et n'apprend rien à quelqu'un qui s'en sert tous
     # les jours. Le nom seul suffit ; le pictogramme reprend celui du badge de la
     # colonne, pour qu'on retrouve la même chose au même endroit.
     #
-    # Les CODES restent ceux du combo — voir `_SS_BTN` et la note du chargement de
+    # Les CODES restent ceux du combo - voir `_SS_BTN` et la note du chargement de
     # show : on manipule le code, jamais le libellé, sinon `setCurrentText` échoue
     # et le mode retombe silencieusement sur Manuel.
     # Clé i18n de chaque mode. Les libellés étaient écrits en dur en français :
@@ -4671,7 +4671,7 @@ class Sequencer(QFrame):
             groupe.addAction(act)
             actions.append(act)
 
-        # Réglages IA : seulement quand la ligne est en IA — ailleurs, l'entrée
+        # Réglages IA : seulement quand la ligne est en IA - ailleurs, l'entrée
         # ouvrirait une fenêtre qui ne piloterait rien.
         if courant == "IA Lumiere":
             act = menu.addAction(tr("seq_mode_ai_settings"))
@@ -4725,7 +4725,7 @@ class Sequencer(QFrame):
             man_act = menu.addAction(self._mode_menu_label("Manuel"))
 
             # Fondus de toute la sélection. C'est CE menu qui s'ouvre dès qu'il
-            # y a plus d'une ligne — l'entrée posée dans le menu à une seule
+            # y a plus d'une ligne - l'entrée posée dans le menu à une seule
             # ligne n'y apparaissait jamais, donc régler vingt morceaux d'un
             # coup était impossible alors même que le code savait le faire.
             fade_rows = self.fade_target_rows(row)
@@ -5221,7 +5221,7 @@ class Sequencer(QFrame):
         print(f"IA Lumiere: analyse pre-calculee pour ligne {row}")
 
     def _on_color_indicator_clicked(self, row):
-        """Clic sur le carre couleur — rouvre les reglages IA sans re-analyser."""
+        """Clic sur le carre couleur - rouvre les reglages IA sans re-analyser."""
         color = self._open_ia_settings(row)
         if color:
             self.ia_colors[row] = color
@@ -5233,7 +5233,7 @@ class Sequencer(QFrame):
         """Ouvre les reglages IA de la ligne. Rend la couleur d'indicateur, ou None si annule.
 
         La couleur rendue sert a deux choses : le carre de la colonne DMX, et la
-        `dominant_color` de l'analyse audio — dont l'IA derive encore sa palette
+        `dominant_color` de l'analyse audio - dont l'IA derive encore sa palette
         pour la tuile AUTO et pour les fixtures qu'aucune tuile ne couvre. On la
         prend sur la premiere couleur UNIE du pool : c'est celle que
         l'utilisateur voit jouer en premier, donc celle qui represente le mieux
@@ -5288,6 +5288,9 @@ class Sequencer(QFrame):
                 else:
                     original = item.data(Qt.UserRole)
                     item.setText(original if original else "")
+        # Après play_row() (qui fixe current_row plus loin) : le bandeau
+        # « ce média joue en boucle » suit le média lancé.
+        QTimer.singleShot(0, self._refresh_loop_banner)
 
     def _pause_screen_black(self):
         """Noir à l'écran pour une ligne PAUSE : aperçu ET sortie vidéo externe."""
@@ -5319,7 +5322,7 @@ class Sequencer(QFrame):
                 if hasattr(self, 'timeline_playback_row'):
                     del self.timeline_playback_row
 
-                # Arreter les cartouches — sauf si elles jouent par-dessus la playlist
+                # Arreter les cartouches - sauf si elles jouent par-dessus la playlist
                 if (hasattr(self.player_ui, '_stop_all_cartouches')
                         and not getattr(self.player_ui, 'cart_superposer', False)):
                     self.player_ui._stop_all_cartouches()
@@ -5406,7 +5409,7 @@ class Sequencer(QFrame):
                                     self.player_ui.player.setSource(QUrl.fromLocalFile(path))
                                 self.current_row = next_row
                                 self.player_ui.trigger_pause_mode()
-                                # Masquer la 1re frame du media precharge — le preview doit rester noir
+                                # Masquer la 1re frame du media precharge - le preview doit rester noir
                                 if hasattr(self.player_ui, 'show_black_preview'):
                                     self.player_ui.show_black_preview()
                     return
@@ -5465,7 +5468,7 @@ class Sequencer(QFrame):
                             self.player_ui.audio_ai.load_analysis(self.ia_analysis[row])
                             self._ia_loaded_row = row
 
-                    # Gestion des images — et des sites, qui s'affichent pareil
+                    # Gestion des images - et des sites, qui s'affichent pareil
                     # (durée optionnelle, mode DMX, REC Lumière)
                     if media_icon(path) in ("image", "web"):
                         self.player_ui.player.stop()
@@ -5569,7 +5572,7 @@ class Sequencer(QFrame):
             pass
 
     def update_tempo_timeline(self):
-        """Callback QTimer (100 ms) — protégé : une exception non rattrapée
+        """Callback QTimer (100 ms) - protégé : une exception non rattrapée
         dans un slot de timer fait crasher tout MyStrow (PySide6 abort). On
         logge au lieu de crasher pour ne jamais interrompre un show."""
         try:
@@ -5629,6 +5632,10 @@ class Sequencer(QFrame):
         next_row = self.next_step_row(tempo_row)
         if next_row < self.table.rowCount():
             self.play_row(next_row)
+        elif (hasattr(self.player_ui, 'playlist_first_row')
+              and self.player_ui.playlist_first_row() is not None):
+            # Playlist en boucle : la dernière ligne était une image / un TEMPO
+            self.play_row(self.player_ui.playlist_first_row())
         else:
             print("Fin de la sequence")
             self.player_ui.update_play_icon(QMediaPlayer.StoppedState)
@@ -5734,12 +5741,12 @@ class Sequencer(QFrame):
 
         `play_row()` était le SEUL endroit qui armait la lumière : appuyer sur
         Play sur un média DÉJÀ chargé (bouton, barre d'espace, pad PLAY de
-        l'APC, tablette, fenêtre EXT — tout passe par `MainWindow.toggle_play`)
+        l'APC, tablette, fenêtre EXT - tout passe par `MainWindow.toggle_play`)
         se contentait de `player.play()`, donc le son repartait sans la lumière.
 
-        Le cas typique remonté : on enregistre un REC Lumière, on sauvegarde —
+        Le cas typique remonté : on enregistre un REC Lumière, on sauvegarde -
         ce qui bascule la ligne en « Play Lumiere » et referme l'éditeur, en
-        laissant le lecteur en pause —, on revient à l'écran principal et on
+        laissant le lecteur en pause -, on revient à l'écran principal et on
         fait Play. Sans re-double-cliquer le média, la séquence ne partait
         jamais. Elle n'existait même pas encore au moment du dernier `play_row`.
 
@@ -5779,7 +5786,7 @@ class Sequencer(QFrame):
         une ligne PAUSE précharge le média suivant SANS `play_row` (elle pose
         juste `current_row`), et la fin d'un morceau IA fait `audio_ai.reset()`.
         Lancer ce média par Play (bouton, espace…) jouait le son avec une IA
-        vide, donc sans lumière — il fallait double-cliquer (client danois,
+        vide, donc sans lumière - il fallait double-cliquer (client danois,
         02/10/26). `_ia_loaded_row` dit à quelle
         ligne appartient l'analyse en mémoire : celle d'une autre ligne (passée
         en IA entre-temps, ce qui l'analyse) ne doit pas piloter ce morceau.
@@ -5836,7 +5843,7 @@ class Sequencer(QFrame):
 
         # Positions : resynchroniser les copies AKAI sur les presets du plan de
         # feu AVANT de jouer. Un show lancé sans repasser par REC Lumière
-        # rejouerait sinon une copie figée — une lyre ajoutée au rig puis
+        # rejouerait sinon une copie figée - une lyre ajoutée au rig puis
         # fusionnée dans la position resterait immobile. Parité avec l'aperçu.
         if hasattr(main_win, 'sync_pdf_positions_into_akai'):
             main_win.sync_pdf_positions_into_akai()
@@ -5878,7 +5885,7 @@ class Sequencer(QFrame):
             # 40 ms et PreciseTimer, à parité avec l'aperçu de l'éditeur
             # (`timeline_editor.playback_timer`). Le timer était à 50 ms en type
             # Coarse, que Windows arrondit à 62,5 ms : la restitution tournait à
-            # 16 images/s quand l'aperçu en faisait 21 — d'où « fluide en
+            # 16 images/s quand l'aperçu en faisait 21 - d'où « fluide en
             # montage, saccadé en show » (mesuré le 08/09/2026).
             self.timeline_playback_timer = make_precise_timer()
             self.timeline_playback_timer.timeout.connect(self.update_timeline_playback)
@@ -5887,7 +5894,7 @@ class Sequencer(QFrame):
         self.timeline_playback_timer.start(TIMELINE_FRAME_MS)
 
     def update_timeline_playback(self):
-        """Callback QTimer (50 ms) — protégé : une exception non rattrapée dans
+        """Callback QTimer (50 ms) - protégé : une exception non rattrapée dans
         ce slot (clip malformé, couleur invalide, attribut projecteur manquant…)
         ferait crasher tout MyStrow en plein show (PySide6 abort). On logge."""
         try:
@@ -5904,7 +5911,7 @@ class Sequencer(QFrame):
         le son. Réglé une fois par machine (menu Réglages → Synchro lumière/vidéo).
 
         IMPORTANT : l'offset ne compense QUE la latence vidéo. On ne l'applique
-        donc que si le média courant a une piste vidéo — les fichiers audio (mp3…)
+        donc que si le média courant a une piste vidéo - les fichiers audio (mp3…)
         étaient déjà parfaitement synchro et ne doivent surtout pas être décalés.
         """
         pos = self.player_ui.player.position()
@@ -5963,7 +5970,7 @@ class Sequencer(QFrame):
             if self.tempo_running and not self.tempo_paused:
                 return
             # Position figee = pause/stop probable. Si on n'est pas en lecture,
-            # eteindre les projecteurs (et l'effet eventuel) — sinon un bloc de
+            # eteindre les projecteurs (et l'effet eventuel) - sinon un bloc de
             # couleur simple resterait allume tant qu'on est en pause.
             _player = getattr(self.player_ui, 'player', None)
             _state  = _player.playbackState() if _player else None
@@ -5983,7 +5990,7 @@ class Sequencer(QFrame):
                     self._clear_timeline_leftovers(blackout=True)
                 return
             # Position identique MAIS le lecteur joue : c'est la granularité du
-            # média, pas une pause. On rend quand même l'image — l'horloge lissée
+            # média, pas une pause. On rend quand même l'image - l'horloge lissée
             # ci-dessous, elle, a avancé. C'était le cas de 6 à 38 % des images
             # sur une vidéo (mesuré), autant d'images de mouvement perdues.
 
@@ -5994,7 +6001,7 @@ class Sequencer(QFrame):
 
         # Horloge lissée : `position()` avance par bonds de 0 à 116 ms alors que
         # le temps réel avance d'un pas constant. Les trajectoires pan/tilt, les
-        # mouvements automatiques et les fondus se calculent tous dessus — pris
+        # mouvements automatiques et les fondus se calculent tous dessus - pris
         # bruts, ils vont tantôt à 0x, tantôt à 2,5x la vitesse réelle, et la
         # lyre saccade. Le TEMPO, lui, est déjà une horloge régulière.
         if self.tempo_running:
@@ -6098,7 +6105,7 @@ class Sequencer(QFrame):
             self.timeline_tracks_data = {}
             # Eteindre les projecteurs : sans ca, ils restent figes sur la
             # derniere valeur posee par le dernier clip (groupe qui ne s'eteint
-            # plus). Le niveau ne suffit pas — les canaux bruts (mode auto/son
+            # plus). Le niveau ne suffit pas - les canaux bruts (mode auto/son
             # d'un jeu de lumiere), le strobe, le gobo et la roue survivaient a
             # la fin du morceau et ne s'arretaient qu'au CLEAR.
             self._clear_timeline_leftovers(blackout=True)
@@ -6116,7 +6123,7 @@ class Sequencer(QFrame):
     def _fx_catalog(self):
         """Catalogue d'effets (intégrés + perso), mis en cache.
 
-        Il était rechargé — lecture disque + parse JSON — à CHAQUE image de la
+        Il était rechargé - lecture disque + parse JSON - à CHAQUE image de la
         restitution (25 fps, dans le timer qui alimente le DMX) alors qu'il ne
         sert qu'au changement de clip d'effet. Le cache est invalidé sur la date
         de modification du fichier : un effet édité en cours de show reste pris
@@ -6155,6 +6162,7 @@ class Sequencer(QFrame):
         merged_type = ''
         has_all_groups = False
         merged_no_color = False
+        merged_look = {}
         for clip in effet_clips:
             eff_name   = clip.get('effect_name', '')
             eff_layers = list(clip.get('effect_layers', []))
@@ -6168,6 +6176,8 @@ class Sequencer(QFrame):
                     eff_type   = _cat.get('type', '')
                 if _cat.get('no_color'):
                     merged_no_color = True
+                if _cat.get('start_look'):
+                    merged_look.update(_cat['start_look'])
             # Cloisonner les couches par groupe : chaque couche de CE clip ne doit
             # s'appliquer qu'aux groupes du clip. Sinon, quand 2 effets se
             # superposent (couleur sur A,B + lyre sur D), la fusion applique les
@@ -6225,8 +6235,12 @@ class Sequencer(QFrame):
             'speed_override':  speed_override,
             'no_color':        merged_no_color,
         }
+        if merged_look:
+            # Couleur / gobo d'un mouvement enregistré sur un pad : posés une
+            # fois au lancement, comme dans l'aperçu (`start_effect`).
+            cfg['start_look'] = merged_look
 
-        # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer —
+        # Démarrer l'effet (initialiser l'état sans démarrer le effect_timer -
         # la timeline appelle update_effect() elle-même à chaque tick)
         self._timeline_effect_name  = combined_name
         self._timeline_effect_clips = clips_key
@@ -6242,6 +6256,9 @@ class Sequencer(QFrame):
         # Même capture que le live AKAI : c'est stop_effect() qui la restitue,
         # et lui attend le tuple complet (roue de couleurs, gobo, zoom…).
         main_win._snapshot_effect_state()
+        # APRÈS la capture, comme `start_effect` : l'arrêt rend l'état d'avant.
+        if merged_look and hasattr(main_win, '_apply_effect_start_look'):
+            main_win._apply_effect_start_look(cfg)
         import time as _time
         main_win.effect_t0 = _time.monotonic()
         # Horloge de phase de l'effet, remise a zero comme en live (sans elle,
@@ -6254,7 +6271,7 @@ class Sequencer(QFrame):
 
         `_stop_timeline_effect()` ne coupe que l'EFFET. Tout ce que les clips
         écrivaient directement sur les projecteurs (canaux bruts, strobe, gobo,
-        roue, prisme, UV/ambre…) restait, lui, gravé sur les `Projector` — et le
+        roue, prisme, UV/ambre…) restait, lui, gravé sur les `Projector` - et le
         moteur DMX continuait de l'émettre en boucle. D'où « les modes restent
         actifs sans fin, faut faire clear partout pour stopper ».
 
@@ -6263,7 +6280,7 @@ class Sequencer(QFrame):
 
         Mode hybride : tout ce que la timeline a posé est noté dans
         `_hyb_tenus` avec la valeur manuelle d'avant. On rend donc exactement
-        ça — canaux bruts, gobo, strobe compris — au lieu de remettre TOUT le
+        ça - canaux bruts, gobo, strobe compris - au lieu de remettre TOUT le
         parc au repos : l'éclairage tenu à la main hors des blocs n'a pas à
         s'éteindre parce que la REC s'arrête. `blackout` ne change plus rien :
         un projecteur que la timeline allumait retombe sur son état manuel,
@@ -6375,7 +6392,7 @@ class Sequencer(QFrame):
         # `reset_beam_channels()` fait déjà exactement ce nettoyage (elle servait
         # uniquement à l'ARRÊT de la timeline) : on l'appelle ici pour n'avoir
         # qu'UNE seule définition du repos, partagée avec l'aperçu de l'éditeur.
-        # Le pan/tilt en est volontairement exclu — recentrer les lyres à chaque
+        # Le pan/tilt en est volontairement exclu - recentrer les lyres à chaque
         # frame les figerait au milieu de la course.
         #
         # Sûr vis-à-vis des mémoires : `apply_seq_memories_htp` REPOSE ces mêmes
@@ -6383,7 +6400,7 @@ class Sequencer(QFrame):
         #
         # Mode hybride : cette page blanche n'est qu'un brouillon. En fin
         # d'image, `hyb_merge` rend à la main tout ce qu'aucun bloc n'a posé
-        # (cf. light_timeline) — on photographie donc l'état d'avant.
+        # (cf. light_timeline) - on photographie donc l'état d'avant.
         from light_timeline import reset_beam_channels, hyb_snapshot
         _avant = [hyb_snapshot(p) for p in self.player_ui.projectors]
         reset_beam_channels(self.player_ui.projectors, blackout=True)
@@ -6576,7 +6593,7 @@ class Sequencer(QFrame):
             # --- Cas 2 : trajectoire ou effet automatique (16-bit) ---
             elif lyres_clip.get('move_effect') or 'pan_start' in lyres_clip:
                 self._pos_anim_target_idx = None  # pas de preset actif
-                # Calcul partagé avec l'aperçu de l'éditeur — cf.
+                # Calcul partagé avec l'aperçu de l'éditeur - cf.
                 # light_timeline.movement_pan_tilt. Les deux moteurs avaient
                 # chacun leur version, et celle de l'aperçu ignorait purement et
                 # simplement `move_effect`.
@@ -6610,7 +6627,7 @@ class Sequencer(QFrame):
                                lock_gobo_idxs=_gobo_locked_idxs)
 
         # ── Appliquer l'effet de la piste Effet par-dessus tout ─────────────
-        # (le effect_timer n'est pas actif en mode timeline — on gère ici)
+        # (le effect_timer n'est pas actif en mode timeline - on gère ici)
         if getattr(main_win, 'active_effect', None) is not None:
             if hasattr(main_win, 'update_effect'):
                 main_win.update_effect()
@@ -6697,7 +6714,7 @@ class Sequencer(QFrame):
         self.playback_timer.start(50)
 
     def update_sequence_playback(self):
-        """Callback QTimer (50 ms) — protégé : un keyframe issu d'un ancien .tui
+        """Callback QTimer (50 ms) - protégé : un keyframe issu d'un ancien .tui
         peut manquer une clé (faders/active_pad/active_effects) → KeyError qui,
         levé dans ce slot, crasherait tout MyStrow (PySide6 abort). On logge."""
         try:
@@ -6793,6 +6810,12 @@ class Sequencer(QFrame):
             item.setText(txt[len(self._LOOP_PREFIX):])
         self._refresh_row_marks(row)
         self.is_dirty = True
+        self._refresh_loop_banner()
+
+    def _refresh_loop_banner(self):
+        """Bandeau « joue en boucle » sous le Play (fenêtre principale)."""
+        if hasattr(self.player_ui, 'refresh_loop_banner'):
+            self.player_ui.refresh_loop_banner()
 
     def toggle_row_loop(self, row):
         """Bascule l'état boucle depuis le menu contextuel."""
@@ -6864,14 +6887,14 @@ class Sequencer(QFrame):
         return nxt
 
     # ── Marqueurs visuels de la ligne (boucle + fondus) ───────────────────────
-    # Boucle et fondus se signalent sur la MÊME case — l'item titre n'a qu'un
+    # Boucle et fondus se signalent sur la MÊME case - l'item titre n'a qu'un
     # emplacement d'icône et une infobulle. D'où ce point unique : quand chacun
     # posait la sienne, activer la boucle effaçait le marqueur de fondu.
 
     _FADE_COLOR = "#ffb300"     # ambre : ne se confond pas avec le cyan boucle
 
     # Canevas à DEUX cases fixes : fondu à gauche, boucle à droite. Toutes les
-    # icônes de la colonne ont donc le même format, donc la même réduction — et
+    # icônes de la colonne ont donc le même format, donc la même réduction - et
     # la boucle reste à la même abscisse d'une ligne à l'autre. Une image dont
     # la largeur suivrait le nombre de symboles serait écrasée par Qt, qui la
     # met à l'échelle de `iconSize` en gardant ses proportions : trois symboles
@@ -6881,7 +6904,7 @@ class Sequencer(QFrame):
 
     def _row_marks_icon(self, loop: bool, fade_in: int, fade_out: int, link: bool = False):
         """Icône d'état de la ligne : rampe(s) de fondu (ou maillon d'une image
-        accrochée — une image n'a pas de fondu audio) + symbole de boucle."""
+        accrochée - une image n'a pas de fondu audio) + symbole de boucle."""
         from PySide6.QtGui import QIcon, QPixmap, QPainter
         from PySide6.QtSvg import QSvgRenderer
         from PySide6.QtCore import QByteArray, QRectF
@@ -6931,9 +6954,9 @@ class Sequencer(QFrame):
         return cache[cle]
 
     def _fade_short(self, fade_in: int, fade_out: int) -> str:
-        """« ↗ 2 s », « ↘ 3 s », « ↗ 2 s ↘ 3 s » — forme compacte pour un menu.
+        """« ↗ 2 s », « ↘ 3 s », « ↗ 2 s ↘ 3 s » - forme compacte pour un menu.
 
-        Seul ce qui est posé apparaît : « 2 s / — » forçait à décoder un tiret
+        Seul ce qui est posé apparaît : « 2 s / - » forçait à décoder un tiret
         qui ne veut rien dire d'autre que « rien ici ».
         """
         bouts = []
@@ -6946,7 +6969,7 @@ class Sequencer(QFrame):
     def _fade_summary(self, fade_in: int, fade_out: int) -> str:
         """« Fondu d'entrée 2 s » · « … · de sortie 4 s ». Vide si aucun fondu.
 
-        Seuls les fondus RÉELLEMENT posés sont cités : « de sortie — » disait au
+        Seuls les fondus RÉELLEMENT posés sont cités : « de sortie - » disait au
         lecteur d'aller vérifier quelque chose qui n'existe pas.
         """
         bouts = []
@@ -6967,7 +6990,7 @@ class Sequencer(QFrame):
         item.setIcon(self._row_marks_icon(loop, fi, fo, link))
         # Teinte cyan réservée à la boucle : c'est elle qui change ce que fait
         # la playlist (elle ne passe plus au suivant). Un fondu, lui, ne se
-        # signale que par son icône ambre — sinon toute la liste serait colorée.
+        # signale que par son icône ambre - sinon toute la liste serait colorée.
         item.setForeground(QBrush(QColor("#00d4ff") if loop else QColor("#e0e0e0")))
         bulles = []
         if link:
@@ -6991,7 +7014,7 @@ class Sequencer(QFrame):
         Trois cas rendent la main tout de suite :
           - rien ne joue, ou on relance la ligne courante (une boucle) ;
           - la ligne quittée n'a pas de fondu de sortie ;
-          - un fondu est DÉJÀ en cours — c'est le deuxième appel, celui qu'on a
+          - un fondu est DÉJÀ en cours - c'est le deuxième appel, celui qu'on a
             soi-même programmé, ou l'utilisateur qui reclique pour couper court.
         """
         pu = self.player_ui
@@ -7014,7 +7037,7 @@ class Sequencer(QFrame):
         pu.start_audio_fade(0.0, fade_out, lambda: self.play_row(row))
         # Armé APRÈS l'appel (start_ le remet à zéro) : au retour du callback,
         # play_row repasse ici et ce drapeau est ce qui l'empêche de relancer un
-        # fondu — sinon la piste ne partirait jamais.
+        # fondu - sinon la piste ne partirait jamais.
         pu._audio_fade_armed = True
         return True
 
@@ -7042,13 +7065,13 @@ class Sequencer(QFrame):
 
     @staticmethod
     def _fmt_fade(ms: int) -> str:
-        """0 → « — » ; 2500 → « 2,5 s » ; 4000 → « 4 s ».
+        """0 → « - » ; 2500 → « 2,5 s » ; 4000 → « 4 s ».
 
         Séparateur décimal selon la langue : l'anglais est le seul des cinq à
         écrire « 4.5 s ». Un « 4,5 s » anglais se lit comme deux nombres.
         """
         if not ms:
-            return "—"
+            return "-"
         from i18n import get_language
         txt = f"{ms / 1000.0:.1f}".rstrip("0").rstrip(".")
         if get_language() != "en":
@@ -7059,7 +7082,7 @@ class Sequencer(QFrame):
         """Lignes visées par un réglage de fondu : la sélection, ou la ligne visée.
 
         Un clic droit HORS sélection ne doit pas retomber sur vingt lignes
-        sélectionnées ailleurs — dans ce cas la ligne cliquée gagne. Les lignes
+        sélectionnées ailleurs - dans ce cas la ligne cliquée gagne. Les lignes
         sans média (PAUSE, TEMPO) sont écartées : elles n'ont pas de son.
         """
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
@@ -7079,7 +7102,7 @@ class Sequencer(QFrame):
             self.set_row_fades(r, 0, 0)
 
     def edit_row_fades(self, row):
-        """Boîte de réglage des fondus — curseurs identiques à la vue « Curseurs »."""
+        """Boîte de réglage des fondus - curseurs identiques à la vue « Curseurs »."""
         # Style de curseur emprunté au menu du plan de feu : c'est le même geste
         # (clic = saut à la valeur, molette par crans), autant que ce soit aussi
         # le même objet. Import local : `sequencer` n'a pas besoin du plan de feu
@@ -7126,7 +7149,7 @@ class Sequencer(QFrame):
 
             sli = _CurseurCanal(Qt.Horizontal)
             # Unité = le DIXIÈME de seconde : la molette de _CurseurCanal avance
-            # de 5 crans, soit un demi-pas de seconde — le pas de réglage d'un
+            # de 5 crans, soit un demi-pas de seconde - le pas de réglage d'un
             # fondu en régie. Ctrl donne le dixième, Maj deux secondes et demie.
             sli.setRange(0, 600)
             sli.setValue(int(round(valeur_ms / 100.0)))
@@ -7168,7 +7191,7 @@ class Sequencer(QFrame):
         # Remet les curseurs à zéro PUIS valide : « Retirer le fondu » est une
         # décision, pas un réglage. Laisser la boîte ouverte obligeait à cliquer
         # OK derrière, et un clic sur Annuler à ce moment-là annulait le retrait
-        # qu'on venait de demander — exactement l'inverse de l'intention.
+        # qu'on venait de demander - exactement l'inverse de l'intention.
         def _retirer():
             for c in curseurs.values():
                 c.setValue(0)
@@ -7193,7 +7216,7 @@ class Sequencer(QFrame):
                                curseurs["out"].value() * 100)
 
     def show_media_context_menu(self, pos):
-        """Menu contextuel sur media — sections MODE DMX / LUMIÈRE / MÉDIA / LIGNE."""
+        """Menu contextuel sur media - sections MODE DMX / LUMIÈRE / MÉDIA / LIGNE."""
         row = self.table.rowAt(pos.y())
         if row < 0:
             return
@@ -7245,6 +7268,11 @@ class Sequencer(QFrame):
         if media_type in ("audio", "video", "image"):
             loop_label = tr("seq_menu_loop_off") if self.is_row_loop(row) else tr("seq_menu_loop")
             entrees_media.append((loop_label, lambda: self.toggle_row_loop(row)))
+        if media_type in ("audio", "video", "image") and hasattr(self.player_ui, 'set_playlist_loop'):
+            _pl_on = bool(getattr(self.player_ui, 'playlist_loop', False))
+            entrees_media.append((
+                tr("seq_menu_loop_playlist_off") if _pl_on else tr("seq_menu_loop_playlist"),
+                lambda checked=False, on=_pl_on: self.player_ui.set_playlist_loop(not on)))
         if path and media_type in ("audio", "video", "image"):
             # NB : triggered émet un bool `checked` → on l'absorbe pour ne pas
             # écraser p (sinon _reveal_in_explorer reçoit False au lieu du chemin).
@@ -7410,7 +7438,7 @@ class Sequencer(QFrame):
         dynamiques (Play Lumiere / Programme) absents du combo par défaut, et
         réaffiche l'indicateur de couleur IA si la ligne en a une. Sert à poser le
         mode d'une ligne dupliquée ET à recâbler les lignes décalées (leurs closures
-        capturent l'ancien index — sinon un changement de mode viserait la mauvaise
+        capturent l'ancien index - sinon un changement de mode viserait la mauvaise
         ligne)."""
         self.table.setCellWidget(row, 4, self._create_dmx_cell_widget(row))
         combo = self._get_dmx_combo(row)

@@ -1,16 +1,16 @@
 """
-test_fx_column_muette.py — Une colonne de pads typee FX etait muette.
+test_fx_column_muette.py - Une colonne de pads typee FX etait muette.
 
 Le fader d'une colonne FX n'est pas un niveau de projecteur : c'est l'AMPLITUDE
 de l'effet, et `update_effect` sort en tete quand elle vaut 0. Or deux remises a
 zero le traitaient comme une colonne de groupe :
 
-  * `_startup_faders_down()` — 650 ms apres le lancement, « pour que rien ne soit
+  * `_startup_faders_down()` - 650 ms apres le lancement, « pour que rien ne soit
     allume au demarrage » ;
-  * `_clear_akai_state()` — le bouton CLEAR.
+  * `_clear_akai_state()` - le bouton CLEAR.
 
 Resultat : le pad FX s'allumait, le timer d'effet tournait, mais plus rien
-n'atteignait les projecteurs — ni sur le fil DMX, ni dans la 3D — jusqu'a ce que
+n'atteignait les projecteurs - ni sur le fil DMX, ni dans la 3D - jusqu'a ce que
 l'utilisateur remonte lui-meme le fader. Et il n'y avait rien a eteindre en
 echange : un effet ne tourne que si un pad l'arme.
 

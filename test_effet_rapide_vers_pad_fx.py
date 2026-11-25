@@ -1,9 +1,9 @@
 """REC des effets rapides du plan 2D (demande artifice81, 12/11/2026).
 
-REC → pad (FX ou mémoire) : le pad rejoue tout ce qui tourne — effets lancés
+REC → pad (FX ou mémoire) : le pad rejoue tout ce qui tourne - effets lancés
 ET effets rapides de lyres (vitesse, amplitude, déphasage, mêmes lyres dans le
 même ordre). Sur un pad FX, couleur / roue / gobo / niveau sont posés une
-seule fois au lancement (`start_look`), jamais par une couche — sinon le gobo
+seule fois au lancement (`start_look`), jamais par une couche - sinon le gobo
 ne pourrait plus être changé pendant le mouvement.
 """
 import sys, types, unittest
@@ -80,12 +80,28 @@ class T(unittest.TestCase):
     def win(self, **kw):
         return FauxWin(self.projs, self.fx, **kw)
 
+    def test_vitesse_suit_le_fader_fx(self):
+        """Pad et effet rapide suivent le fader 9 : à toute position du fader,
+        le pad tourne à la vitesse de l'effet rapide enregistré."""
+        from core import fx_fader_mult, quick_fx_fader_mult
+        self.assertAlmostEqual(quick_fx_fader_mult(80), 1.0)
+        self.assertGreater(quick_fx_fader_mult(100), 3.0)
+        self.assertAlmostEqual(quick_fx_fader_mult(0), 0.1)
+        for v in (40, 80, 90, 100):
+            w = self.win(); w.effect_speed = v
+            pt = w._quick_move_layers()[0][0]
+            self.assertAlmostEqual(layer_frequency(pt["speed"], fader_mult=fx_fader_mult(v)),
+                                   0.7 * quick_fx_fader_mult(v), delta=0.02, msg=v)
+
     def test_couche_equivalente(self):
         layers, centres = self.win()._quick_move_layers()
         self.assertEqual(len(layers), 1)
         pt = layers[0]
         self.assertEqual(pt["mouvement_shape"], "cercle")
-        self.assertAlmostEqual(layer_frequency(pt["speed"]), 0.7, delta=0.01)
+        # Fréquence jouée = couche × fader FX général (×0,8 par défaut) :
+        # le pad doit tourner à la vitesse de l'effet rapide.
+        from core import fx_fader_mult
+        self.assertAlmostEqual(layer_frequency(pt["speed"], fader_mult=fx_fader_mult(80)), 0.7, delta=0.01)
         self.assertAlmostEqual(pt["size"] / 100 * 8192, 8000, delta=82)
         self.assertEqual(pt["spread"], 60)
         self.assertEqual(pt["target_preset"], "Selection")

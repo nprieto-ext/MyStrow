@@ -1,6 +1,6 @@
 """
 Client Brevo (ex-Sendinblue) pour MyStrow.
-Wrapper urllib uniquement — zéro dépendance externe.
+Wrapper urllib uniquement - zéro dépendance externe.
 Usage: emails transactionnels (rappels licence) + newsletter (contacts).
 """
 
@@ -79,7 +79,7 @@ def subscribe_contact(email: str, name: str = "", lang: str = "fr") -> bool:
     """
     Ajoute ou met à jour un contact dans la liste newsletter Brevo (BREVO_LIST_ID).
     Si le contact existe déjà, il est mis à jour (updateEnabled=True).
-    lang : 'fr' ou 'en' — stocké dans l'attribut Brevo LANGUAGE pour segmenter les campagnes.
+    lang : 'fr' ou 'en' - stocké dans l'attribut Brevo LANGUAGE pour segmenter les campagnes.
     Retourne True si succès, lève Exception sinon.
 
     Prérequis Brevo : créer l'attribut LANGUAGE (texte) dans

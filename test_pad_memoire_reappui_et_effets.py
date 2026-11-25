@@ -1,10 +1,10 @@
 """
-test_pad_memoire_reappui_et_effets.py — Retour client du 23/09/2026 :
+test_pad_memoire_reappui_et_effets.py - Retour client du 23/09/2026 :
 « quand on lance une mémoire ça coupe tout, après les effets ne marchent plus,
 et on ne peut plus les arrêter (en réappuyant sur le pad) ».
 
 1. Une mémoire ne coupe plus un effet qu'elle n'a pas lancé. Avant, poser une
-   mémoire SANS effet — ou juste bouger un fader mémoire — arrêtait l'effet du
+   mémoire SANS effet - ou juste bouger un fader mémoire - arrêtait l'effet du
    bouton en laissant le bouton allumé ; en superposition la pile restait
    pleine sans minuterie et plus aucun effet ne repartait.
 2. Réappuyer sur un pad mémoire à UN cue l'éteint (appui direct seulement).
@@ -36,6 +36,8 @@ class Win(base.FauxWin):
     toggle_effect        = mw.MainWindow.toggle_effect
     stop_effect          = mw.MainWindow.stop_effect
     start_effect         = mw.MainWindow.start_effect
+    _effect_moves_lyres  = staticmethod(mw.MainWindow._effect_moves_lyres)
+    _hold_lyres_on_centers = mw.MainWindow._hold_lyres_on_centers
     _apply_effect_start_look = mw.MainWindow._apply_effect_start_look
     _stop_quick_moves    = mw.MainWindow._stop_quick_moves
     _stop_button_effects = mw.MainWindow._stop_button_effects

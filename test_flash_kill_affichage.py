@@ -1,5 +1,5 @@
 """
-test_flash_kill_affichage.py — FLASH KILL doit se VOIR sur le plan de feu.
+test_flash_kill_affichage.py - FLASH KILL doit se VOIR sur le plan de feu.
 
 Le KILL ne modifie aucun etat du show : c'est une porte posee et defaite le
 temps d'une frame, juste avant l'envoi DMX (cf. test_flash_kill_reel.py). Le

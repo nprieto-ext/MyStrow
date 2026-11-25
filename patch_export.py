@@ -1,9 +1,9 @@
 """
-patch_export — Sorties « papier » du Patch DMX.
+patch_export - Sorties « papier » du Patch DMX.
 
 Deux exports construits sur les MÊMES données (build_patch_rows) :
 
-  • export_patch_xlsx() : classeur Excel — feuille « Patch » (une ligne par
+  • export_patch_xlsx() : classeur Excel - feuille « Patch » (une ligne par
     appareil) + feuille « Adresses » (une ligne par canal DMX occupé).
   • export_patch_pdf()  : plan de feu A4 paysage (pictos aux emplacements du
     plan, avec l'adresse sous chaque appareil) + le tableau du patch.
@@ -12,7 +12,7 @@ Le .xlsx est écrit à la main (zipfile + SpreadsheetML minimal) : pas de
 dépendance supplémentaire à embarquer dans les configs de build (openpyxl
 aurait dû être ajouté à requirements.txt + au .spec + aux jobs CI).
 
-Le PDF est dessiné sur fond BLANC — c'est une feuille qu'on imprime et qu'on
+Le PDF est dessiné sur fond BLANC - c'est une feuille qu'on imprime et qu'on
 donne au régisseur de la salle, pas une capture de l'écran (fond noir). Les
 pictos reprennent les silhouettes du canvas (cf. FixtureCanvas._draw_fixture)
 pour qu'un appareil se reconnaisse d'un plan à l'autre.
@@ -29,7 +29,7 @@ from PySide6.QtGui import (QColor, QFont, QPageLayout, QPageSize, QPainter,
 from core import APP_NAME, VERSION
 from i18n import tr
 
-# Couleurs de groupe — mêmes teintes que le plan de feu à l'écran.
+# Couleurs de groupe - mêmes teintes que le plan de feu à l'écran.
 GROUP_COLORS = {
     "face":     "#ff8844",
     "contre":   "#4488ff",
@@ -93,7 +93,7 @@ def _norm_pos(projectors, i):
 
 
 def build_patch_rows(projectors, profile_of):
-    """Une entrée par APPAREIL — les pixels d'une matrice sont regroupés.
+    """Une entrée par APPAREIL - les pixels d'une matrice sont regroupés.
 
     `profile_of(i, proj)` renvoie la liste des types de canaux de la fixture i
     (["Dimmer", "Red", ...]). Une matrice/barre à pixels compte pour une seule
@@ -121,7 +121,7 @@ def build_patch_rows(projectors, profile_of):
             # L'étendue se calcule sur TOUS les membres, master compris : une
             # matrice à canaux de tête (Dim/Strobe globaux) commence AVANT son
             # premier pixel. Partir du pixel 1 imprimerait une adresse de départ
-            # fausse — celle qu'on va justement composer sur l'appareil.
+            # fausse - celle qu'on va justement composer sur l'appareil.
             # Canaux globaux de tête (avant le 1er pixel) et de fin (après le
             # dernier, ex. 16 × W d'une barre 32 px RGB) : deux masters.
             master_profile, tail_profile = [], []
@@ -188,7 +188,7 @@ def build_patch_rows(projectors, profile_of):
 def build_channel_rows(projectors, profile_of):
     """Une ligne par canal DMX occupé : (univers, canal, nom fixture, fonction).
 
-    Ici les pixels sont détaillés — c'est justement la feuille qu'on lit pour
+    Ici les pixels sont détaillés - c'est justement la feuille qu'on lit pour
     savoir qui occupe le canal 137.
     """
     out = []
@@ -295,7 +295,7 @@ def _sheet_xml(cols, rows_cells, n_rows):
 def _styles_xml(group_hexes):
     """Feuille de styles : en-tête sombre, texte, nombres, pastilles de groupe.
 
-    Les fills 0 (none) et 1 (gray125) sont imposés par le format — Excel refuse
+    Les fills 0 (none) et 1 (gray125) sont imposés par le format - Excel refuse
     le classeur si on les remplace.
     """
     fills = ['<fill><patternFill patternType="none"/></fill>',
@@ -402,7 +402,7 @@ def export_patch_xlsx(path, projectors, profile_of, show_name=""):
             _cell(c, n, v, s) for c, (v, s) in enumerate(vals, 1)) + "</row>")
     sheet2 = _sheet_xml(_SHEET2_COLS, "".join(cells2), len(ch_rows) + 1)
 
-    title = f"{APP_NAME} — Patch DMX" + (f" — {show_name}" if show_name else "")
+    title = f"{APP_NAME} - Patch DMX" + (f" - {show_name}" if show_name else "")
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -696,7 +696,7 @@ def _draw_plan(painter, W, H, rows, projectors, multi_universe):
         anchors.append((row, cx, cy))
 
     # Passe 2 : nom + adresse sous chaque appareil. Les rectangles font une
-    # hauteur de ligne PLEINE (fontMetrics) — trop juste, le jambage des « y »
+    # hauteur de ligne PLEINE (fontMetrics) - trop juste, le jambage des « y »
     # et des « p » se fait raboter (« Lyre » devenait « Lvre »).
     # Sur une passerelle chargée, deux appareils voisins écriraient l'un sur
     # l'autre : l'étiquette descend alors d'un cran tant qu'elle en croise une
@@ -732,7 +732,7 @@ def _draw_plan(painter, W, H, rows, projectors, multi_universe):
         painter.setPen(_INK)
         painter.drawText(QRectF(box.x(), box.y(), wl, lh),
                          Qt.AlignHCenter | Qt.AlignVCenter, name)
-        # Adresse — l'information qu'on vient chercher sur un plan
+        # Adresse - l'information qu'on vient chercher sur un plan
         _pt(painter, 7, True)
         painter.setPen(QColor(_group_color(row['group'])).darker(175))
         painter.drawText(QRectF(box.x(), box.y() + lh, wl, lh),
@@ -752,7 +752,7 @@ def _draw_plan(painter, W, H, rows, projectors, multi_universe):
     chip = lh * 0.72
     x = 0.0
     for group, n in counts.items():
-        label = f"{_group_label(group)} — {n}"
+        label = f"{_group_label(group)} - {n}"
         w = painter.fontMetrics().horizontalAdvance(label) + chip + 46
         if x + w > W:
             x = 0.0
@@ -797,7 +797,7 @@ _BOTTOM = 60.0     # réserve pour le pied de page
 
 
 def _rows_per_page(H):
-    """Lignes de données par page — DOIT suivre la boucle de _draw_table_page.
+    """Lignes de données par page - DOIT suivre la boucle de _draw_table_page.
 
     Les deux calculs ont divergé une fois : le total affiché en pied de page
     annonçait une page de moins qu'il n'en sortait.
@@ -887,7 +887,7 @@ def export_patch_pdf(path, projectors, profile_of, show_name=""):
     writer.setPageOrientation(QPageLayout.Landscape)
     writer.setPageMargins(QMarginsF(12, 10, 12, 10), QPageLayout.Millimeter)
     writer.setResolution(300)
-    writer.setTitle(f"{APP_NAME} — Patch DMX" + (f" — {show_name}" if show_name else ""))
+    writer.setTitle(f"{APP_NAME} - Patch DMX" + (f" - {show_name}" if show_name else ""))
     writer.setCreator(f"{APP_NAME} {VERSION}")
 
     painter = QPainter(writer)
@@ -898,9 +898,9 @@ def export_patch_pdf(path, projectors, profile_of, show_name=""):
     H = float(painter.viewport().height())
 
     date = datetime.datetime.now().strftime("%d/%m/%Y")
-    uni_txt = (tr("pe3_052") + ", ".join(str(u + 1) for u in universes)) if universes else "—"
+    uni_txt = (tr("pe3_052") + ", ".join(str(u + 1) for u in universes)) if universes else "-"
     subtitle = tr("pe3_054", n=len(rows), n1=len(ch_rows), uni_txt=uni_txt, date=date)
-    title = tr("pe3_055") + (f" — {show_name}" if show_name else "")
+    title = tr("pe3_055") + (f" - {show_name}" if show_name else "")
 
     # Pagination : 1 (plan) + pages de tableau + 1 si des adresses se marchent
     # dessus (page de conflits).
@@ -918,7 +918,7 @@ def export_patch_pdf(path, projectors, profile_of, show_name=""):
     page = 2
     while rest:
         writer.newPage()
-        _header(painter, W, "PATCH DMX" + (f" — {show_name}" if show_name else ""),
+        _header(painter, W, "PATCH DMX" + (f" - {show_name}" if show_name else ""),
                 subtitle)
         rest = _draw_table_page(painter, W, H, rest, _TABLE_Y0)
         _footer(painter, W, H, page, total_pages)

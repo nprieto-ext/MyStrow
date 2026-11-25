@@ -1,5 +1,5 @@
 """
-light_actions.py — Commandes lumière de haut niveau, partagées.
+light_actions.py - Commandes lumière de haut niveau, partagées.
 
 Un seul endroit pour « allumer en rouge », « noir », « effet rapide »… quel
 que soit le pupitre distant qui le demande : l'API locale (Stream Deck,
@@ -247,7 +247,7 @@ def change_gobo(w, idxs: list, open_: bool = False) -> int:
 # NÉGATIFS (la caméra de salle regarde vers les Z croissants).
 AIM_DIRS = {"up": (0.0, 1.0, 0.0), "down": (0.0, -1.0, 0.0), "public": (0.0, -0.25, -1.0),
             # Repos d'une lyre POSÉE (core.rest_pantilt) : au-dessus du public,
-            # ~30° au-dessus de l'horizontale — jamais le plafond.
+            # ~30° au-dessus de l'horizontale - jamais le plafond.
             "rest_floor": (0.0, 0.6, -1.0)}
 
 # Mots d'un nom de position enregistrée (REC position) qui disent la même chose :

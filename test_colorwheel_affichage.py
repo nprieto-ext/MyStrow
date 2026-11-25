@@ -1,12 +1,12 @@
 """
-test_colorwheel_affichage.py — Couleur AFFICHEE d'une lyre a roue de couleurs.
+test_colorwheel_affichage.py - Couleur AFFICHEE d'une lyre a roue de couleurs.
 
 Le bug : une lyre a roue (profil sans R/G/B) posee sur ROUGE depuis le plan de
 feu 2D, puis modulee par un effet « Dimmer seul » (papillon Pan/Tilt + Dimmer),
 s'affichait BLANCHE en 3D alors que la 2D montrait bien le rouge.
 
 Cause : `core.effect_dim_base_color` repeint `proj.color` en blanc sur ces
-profils — c'est volontaire (le RVB y est une fiction, la teinte vient de la
+profils - c'est volontaire (le RVB y est une fiction, la teinte vient de la
 roue). La 2D avait sa branche « roue », pas la 3D, qui lisait `proj.color`.
 
 On teste ici le point UNIQUE (`core.color_wheel_display_color`) et la parite
@@ -152,7 +152,7 @@ class TestRoueCouleurAffichage(unittest.TestCase):
 
 
 class TestEffetDimmerSeul(unittest.TestCase):
-    """`effect_dim_base_color` — la couleur que module un Dimmer seul.
+    """`effect_dim_base_color` - la couleur que module un Dimmer seul.
 
     Point UNIQUE du moteur du show ET de l'apercu de l'editeur : elle rendait
     du BLANC en dur sur les profils sans R/G/B, donc une lyre a roue posee sur
@@ -166,7 +166,7 @@ class TestEffetDimmerSeul(unittest.TestCase):
 
     def test_roue_sur_open_reste_blanche(self):
         """Le cas qui avait impose le blanc : rien n'a ete pose a la main. La
-        position 0 d'une roue est « Open » — blanc, jamais noir."""
+        position 0 d'une roue est « Open » - blanc, jamais noir."""
         p = FausseLyre()
         self.assertEqual(effect_dim_base_color(p, QColor(0, 0, 0)).name(), "#ffffff")
 

@@ -67,7 +67,7 @@ check("aucune image ne fige (0 ms)", all(p > 0 for p in pas_lisses), str(pas_lis
 check("pas de derive : l'horloge reste collee au lecteur",
       abs(lisse[-1] - raw) < 60, f"(lisse {lisse[-1]}, brut {raw})")
 
-# Temoin : sans lissage, le calcul saute bien — sinon le test ne prouve rien.
+# Temoin : sans lissage, le calcul saute bien - sinon le test ne prouve rien.
 check("TEMOIN : la position brute, elle, fige et bondit",
       0 in brut and max(brut) > 2 * PAS_REEL * 1000)
 

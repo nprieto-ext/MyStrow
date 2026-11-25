@@ -1,5 +1,5 @@
 """
-Script admin — Active manuellement une licence pour un client Stripe.
+Script admin - Active manuellement une licence pour un client Stripe.
 Usage : python admin_activate_user.py
 """
 import json
@@ -50,11 +50,11 @@ temp_pwd = gen_password()
 try:
     user = auth.get_user_by_email(EMAIL)
     is_new = False
-    print(f"✓ Compte Firebase existant — uid={user.uid}")
+    print(f"✓ Compte Firebase existant - uid={user.uid}")
 except auth.UserNotFoundError:
     user = auth.create_user(email=EMAIL, password=temp_pwd)
     is_new = True
-    print(f"✓ Compte Firebase créé — uid={user.uid}")
+    print(f"✓ Compte Firebase créé - uid={user.uid}")
 
 uid = user.uid
 
@@ -91,5 +91,5 @@ if is_new:
     print(f"\n  ⚠  Transmets ces identifiants au client manuellement.")
     print(f"     Il pourra changer son mot de passe depuis l'app.")
 else:
-    print(f"  Compte existant — le client peut utiliser 'Mot de passe oublié'.")
+    print(f"  Compte existant - le client peut utiliser 'Mot de passe oublié'.")
 print(f"{'='*50}\n")

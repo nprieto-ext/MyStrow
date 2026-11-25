@@ -2,7 +2,7 @@
 //
 // Remontée du 27/08/2026 (`Bug_affichage3D.png`) : des PAR retournés galette
 // vers le public lavaient de rouge la structure DERRIÈRE eux. `beamFloor()`
-// appliquait Rx(-tilt) là où le maillage applique Rx(+tilt) — corps et
+// appliquait Rx(-tilt) là où le maillage applique Rx(+tilt) - corps et
 // faisceau partaient à l'opposé l'un de l'autre.
 //
 // Le test compare la direction calculée par `beamFloor()` (extraite du HTML)

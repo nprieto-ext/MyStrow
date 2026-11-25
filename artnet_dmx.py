@@ -63,7 +63,7 @@ DMX_PROFILES = {
     # Meme cablage que la fumee (un canal de debit, un ventilateur) : ce
     # sont les NOMS qui different, pour que le combo de profil dise la
     # meme chose que le type choisi. `profile_name()` peut rendre l'un
-    # pour l'autre — sans consequence, les deux se relisent en canaux
+    # pour l'autre - sans consequence, les deux se relisent en canaux
     # identiques.
     "1CH_BROUILLARD":  ["Smoke"],
     "2CH_BROUILLARD":  ["Smoke", "Fan"],
@@ -108,7 +108,7 @@ CHANNEL_TYPES = [
     # ils etaient jusqu'ici rabattus sur « ColorWheel » par le parser, donc
     # confondus avec la vraie roue de couleurs de l'appareil.
     "CTO", "CTB",
-    # Trichromie. ATTENTION : « C » ne veut pas dire la meme chose partout —
+    # Trichromie. ATTENTION : « C » ne veut pas dire la meme chose partout -
     # soustractif sur un spot a drapeaux (227 modes de la base), additif sur une
     # LED a emetteurs cyan/magenta/jaune (25 modes : ETC Lustr, ADJ Starburst).
     # Le moteur tranche sur la presence de R/G/B dans le profil.
@@ -116,7 +116,7 @@ CHANNEL_TYPES = [
     # Couronne LED (« ring »), optique et controle. Canaux MANUELS : ils sortent
     # 0 au repos et ne prennent une valeur que par channel_extras (curseur des
     # « canaux avances ») ou channel_defaults. Sans eux, ces canaux tombaient sur
-    # « Mode » ou « Unused » a la creation de la fixture — donc muets pour de bon.
+    # « Mode » ou « Unused » a la creation de la fixture - donc muets pour de bon.
     "RingDim", "RingR", "RingG", "RingB", "RingW", "RingStrobe",
     "RingFX", "RingSpeed",
     "Frost", "Anim", "AnimRot", "Gobo2Rot", "ColorWheel2",
@@ -165,7 +165,7 @@ CHANNEL_DISPLAY = {
     "Gobo2Rot": "Gob2R", "ColorWheel2": "CWhl2",
     "DimCurve": "Curve", "Sound": "Son",
     "Preset1": "Pst1", "Preset2": "Pst2", "Preset3": "Pst3", "Preset4": "Pst4",
-    "Unused": "—", "Reset": "Reset",
+    "Unused": "-", "Reset": "Reset",
 }
 
 
@@ -192,7 +192,7 @@ _MANUAL_ONLY = frozenset({
 })
 
 # Couronne LED : les canaux que le show sait alimenter tout seul quand
-# `proj.ring_follow` est vrai — couleur, niveau, strobe. Ils restent dans
+# `proj.ring_follow` est vrai - couleur, niveau, strobe. Ils restent dans
 # `_MANUAL_ONLY` : c'est ce qui les ramene a 0 des que la couronne repasse en
 # manuel, sans autre test.
 #
@@ -205,7 +205,7 @@ _RING_DRIVEN = frozenset({
 })
 
 
-# Canaux de sortie des machines a effet — point unique dans `core`, partage
+# Canaux de sortie des machines a effet - point unique dans `core`, partage
 # avec le plan 2D, la 3D et les exclusions d'effets.
 from core import (FX_MACHINE_OUTPUT_CHANNELS, channel_range, scale_to_range,
                   clamp_to_range, scale16_to_range, RANGE_SCALED_TYPES)
@@ -272,7 +272,7 @@ def ports_serie_dmx(ports):
     """Filtre et ordonne les ports série pour un choix de boîtier DMX.
 
     Retire les pseudo-ports macOS, puis met en tête le boîtier MyStrow, les
-    puces FTDI (ENTTEC, DMXKing…), les autres ports USB, et enfin le reste —
+    puces FTDI (ENTTEC, DMXKing…), les autres ports USB, et enfin le reste -
     le premier élément est donc le bon choix par défaut."""
     def rang(p):
         vid, pid = getattr(p, "vid", None), getattr(p, "pid", None)
@@ -288,20 +288,20 @@ def ports_serie_dmx(ports):
 
 # Valeur d'`ArtNetDMX.output_map` marquant une sortie du Node desactivee.
 # On EMET quand meme, avec 512 zeros : cesser d'emettre laisserait la plupart
-# des nodes rejouer la derniere trame recue — projecteurs figes allumes.
+# des nodes rejouer la derniere trame recue - projecteurs figes allumes.
 OUTPUT_OFF = -1
 
 # Port du Node bascule en ENTREE (DMX -> Art-Net), pour y brancher un pupitre.
 # Ici, au contraire d'OUTPUT_OFF, il faut se TAIRE completement : ce port n'est
 # plus un consommateur mais une SOURCE. Continuer a lui envoyer nos 512 zeros
-# mettrait deux emetteurs sur le meme univers — selon le boitier, il merge, il
+# mettrait deux emetteurs sur le meme univers - selon le boitier, il merge, il
 # ignore, ou il alterne entre les deux trames. C'est toute la difference entre
 # « cette sortie n'eclaire rien » et « cette sortie ne m'appartient pas ».
 OUTPUT_INPUT = -2
 
 # Break DMX genere par « baud-rate trick » : un octet 0x00 emis a BREAK_BAUD
 # tient la ligne a LOW pendant 1 bit de start + 8 bits de donnees = 9 bits.
-# C'est le repli quand send_break n'est pas exploitable — cas de macOS, ou il
+# C'est le repli quand send_break n'est pas exploitable - cas de macOS, ou il
 # reussit sans lever d'exception mais ne produit aucun break electrique valide.
 # 100 000 bauds ne donnaient que 90 us, SOUS le minimum de 92 us impose au
 # transmetteur par DMX512-A : un break limite, que des fixtures peuvent rejeter
@@ -311,11 +311,11 @@ BREAK_US   = 9 * 1_000_000 / BREAK_BAUD   # ~100 us
 
 # Etat des lignes de controle modem (RTS / DTR) sur le transport serie brut.
 #
-# POURQUOI CA COMPTE : un boitier « Open DMX » est passif — la puce FTDI attaque
+# POURQUOI CA COMPTE : un boitier « Open DMX » est passif - la puce FTDI attaque
 # directement l'emetteur RS485 (75176 & co). Sur l'ENTTEC Open DMX USB, la
 # broche DE (Driver Enable) de cet emetteur est cablee sur RTS et non tiree en
 # dur a VCC. Or pyserial ASSERTE RTS et DTR a l'ouverture du port : l'emetteur
-# reste alors muet — le PC envoie ses trames sans la moindre erreur, le
+# reste alors muet - le PC envoie ses trames sans la moindre erreur, le
 # diagnostic est tout vert, et rien ne sort du XLR. C'est exactement ce que
 # QLC+ et OLA evitent en appelant clearRts() sur ce materiel.
 #
@@ -327,7 +327,7 @@ BREAK_US   = 9 * 1_000_000 / BREAK_BAUD   # ~100 us
 # Un boitier dont le DE est cable en dur (cas de l'USB Opto ElectroConcept, qui
 # fonctionne deja) ignore completement ces lignes : desasserter est sans risque.
 # Le mode est surchargeable via ~/.mystrow_dmx.json (cle "serial_lines") pour
-# couvrir un cablage exotique sans rebuild — cf. assistant, « Test RTS/DTR ».
+# couvrir un cablage exotique sans rebuild - cf. assistant, « Test RTS/DTR ».
 SERIAL_LINES_MODES = {
     "clear":  (False, False),   # defaut : RTS et DTR desassertes (QLC+ / OLA)
     "legacy": (True,  True),    # comportement < 3.1.77 (defaut pyserial)
@@ -418,14 +418,14 @@ class ArtNetDMX:
         self.target_ip = "2.0.0.15"
         self.target_port = 6454       # Port Art-Net standard
         self.universe = 0             # Univers Art-Net de la sortie 1 du Node (0-based)
-        self.universe2 = 1            # OBSOLETE — remplace par output_map, garde pour la relecture des vieux .json
-        self.mirror_output = True     # OBSOLETE — idem (voir output_map)
+        self.universe2 = 1            # OBSOLETE - remplace par output_map, garde pour la relecture des vieux .json
+        self.mirror_output = True     # OBSOLETE - idem (voir output_map)
         # Correspondance sortie physique du Node -> univers interne MyStrow.
         # output_map[n] = index (0-3) du tampon dmx_data emis sur la sortie n du
         # Node, c'est-a-dire sur l'univers Art-Net (self.universe + n).
         # Par defaut chaque sortie recoit son univers homonyme : 1->1, 2->2...
         # Deux sorties peuvent pointer le MEME univers : c'est le miroir, en plus
-        # souple que l'ancien booleen `mirror_output` — lequel n'etait de toute
+        # souple que l'ancien booleen `mirror_output` - lequel n'etait de toute
         # facon jamais lu par _send_artnet.
         # OUTPUT_OFF (-1) = sortie desactivee. On continue d'EMETTRE, avec tous
         # les canaux a zero : couper l'emission laisserait la plupart des nodes
@@ -486,7 +486,7 @@ class ArtNetDMX:
 
         Valeurs acceptees : 0-3 (index d'univers), OUTPUT_OFF pour desactiver
         (on emet des zeros), ou OUTPUT_INPUT si ce port du Node est bascule en
-        entree DMX (on n'emet rien du tout — cf. la constante).
+        entree DMX (on n'emet rien du tout - cf. la constante).
 
         Tolerant a dessein : une config absente, tronquee ou corrompue ne doit
         jamais empecher la sortie DMX de fonctionner. Toute entree invalide
@@ -515,7 +515,7 @@ class ArtNetDMX:
         """Fixe le node destinataire de chaque sortie ("" = node principal).
 
         Tolerant comme set_output_map : une entree absente ou illisible retombe
-        sur "" — le node principal —, jamais sur une adresse inventee.
+        sur "" - le node principal -, jamais sur une adresse inventee.
         """
         out = []
         for n in range(4):
@@ -657,7 +657,7 @@ class ArtNetDMX:
 
         Appele apres CHAQUE ouverture (connexion initiale ET reconnexion auto) :
         pyserial asserte les deux lignes a l'ouverture, ce qui peut inhiber
-        l'emetteur RS485 d'un boitier Open DMX passif — sortie muette sans
+        l'emetteur RS485 d'un boitier Open DMX passif - sortie muette sans
         aucune erreur. Volontairement public : l'assistant s'en sert pour
         balayer les 4 combinaisons sur le port live."""
         rts, dtr = SERIAL_LINES_MODES.get(mode or getattr(self, "serial_lines", "clear"),
@@ -686,7 +686,7 @@ class ArtNetDMX:
 
     def _connect_enttec(self):
         if not SERIAL_AVAILABLE:
-            print("pyserial non disponible — pip install pyserial")
+            print("pyserial non disponible - pip install pyserial")
             self.connected = False
             return False
 
@@ -763,7 +763,7 @@ class ArtNetDMX:
             if bloque:
                 # Thread coincé dans une écriture que personne ne lit : sur
                 # macOS, close() attend la vidange du tampon de sortie et gèle
-                # alors le fil qui l'appelle — ici, l'interface (« Connecter »
+                # alors le fil qui l'appelle - ici, l'interface (« Connecter »
                 # qui mouline). On jette le tampon et on ferme à l'écart.
                 print(f"ENTTEC Pro: thread bloqué sur {getattr(ser, 'port', '?')}, "
                       "fermeture du port en arrière-plan")
@@ -804,7 +804,7 @@ class ArtNetDMX:
         if self._enttec_err_count < 5:
             time.sleep(0.005)
             return True
-        print(f"ENTTEC thread: {self._enttec_err_count} erreurs consécutives — fermeture ({e})")
+        print(f"ENTTEC thread: {self._enttec_err_count} erreurs consécutives - fermeture ({e})")
         try:
             ser.close()
         except Exception:
@@ -818,9 +818,9 @@ class ArtNetDMX:
         """Thread dédié ENTTEC : envoie les frames à ~25 fps sans bloquer le thread Qt.
 
         Méthode de break :
-          1. send_break(1 ms) (SetCommBreak/ClearCommBreak) — standard FTDI/pyserial,
+          1. send_break(1 ms) (SetCommBreak/ClearCommBreak) - standard FTDI/pyserial,
              éprouvé et fiable sur Windows/Linux.
-          2. Baud-rate trick (100 kbaud → 0x00 → 250 kbaud) — fallback universel,
+          2. Baud-rate trick (100 kbaud → 0x00 → 250 kbaud) - fallback universel,
              fonctionne même si SetCommBreak n'est pas supporté (CH340, FTDI clones,
              certains drivers Windows 11) et plus fiable sur macOS.
         """
@@ -832,7 +832,7 @@ class ArtNetDMX:
             t0 = time.monotonic()
             ser = self._serial
             # Pause : on garde le port ouvert mais on n'écrit pas (un autre
-            # writer — ex: Test 100% — détient temporairement le port).
+            # writer - ex: Test 100% - détient temporairement le port).
             # On acquitte la pause (_enttec_paused) APRÈS toute écriture en
             # cours : le writer concurrent attend cet ack avant d'écrire, ce
             # qui garantit qu'on ne touche plus le port FTDI en parallèle
@@ -848,34 +848,34 @@ class ArtNetDMX:
                         frame = b'\x00' + bytes(self.dmx_data[0][:512])
                     if not _use_baud_trick:
                         # Méthode 1 : send_break (SetCommBreak/ClearCommBreak).
-                        # Break de 1 ms — valeur éprouvée et fiable sur Windows
+                        # Break de 1 ms - valeur éprouvée et fiable sur Windows
                         # (regression 3.1.28 : le toggle break_condition à 176 µs
-                        # était trop court — avec la gigue de latence USB FTDI le
+                        # était trop court - avec la gigue de latence USB FTDI le
                         # break tombait sous le seuil DMX512 et les projecteurs
                         # ignoraient toutes les frames, sans aucune erreur visible).
                         ser.send_break(duration=0.001)
                         ser.write(frame)
                         ser.flush()
                     else:
-                        # Méthode 2 : baud-rate trick — break généré par un 0x00
+                        # Méthode 2 : baud-rate trick - break généré par un 0x00
                         # (9 bits LOW à BREAK_BAUD ≈ 100 µs, cf. constante)
                         #
                         # SURTOUT PAS de reset_output_buffer() ici. Sur macOS
                         # (FTDI VCP) chaque appel BLOQUE près d'une seconde :
                         # mesuré sur MacBook M1, 2 appels par trame font tomber
-                        # la sortie à 8 trames en 8 s — 1 fps. Un projecteur
+                        # la sortie à 8 trames en 8 s - 1 fps. Un projecteur
                         # DMX512 coupe après ~1 s sans trame valide, donc plus
                         # rien ne s'allume, sans la moindre erreur pour le dire.
                         # Sans ces appels : 154 trames en 8 s (19 fps) et les
                         # projecteurs répondent.
                         # Ils étaient de toute façon inutiles : `flush()`
-                        # (tcdrain) a déjà vidé la sortie — il ne reste rien à
+                        # (tcdrain) a déjà vidé la sortie - il ne reste rien à
                         # jeter, et jeter APRÈS le flush ne peut que supprimer
                         # le break qu'on vient d'émettre.
                         ser.baudrate = BREAK_BAUD
                         ser.write(b'\x00')
                         ser.flush()
-                        time.sleep(0.0015)     # 1.5 ms — marge pour latence USB macOS
+                        time.sleep(0.0015)     # 1.5 ms - marge pour latence USB macOS
                         ser.baudrate = 250000
                         time.sleep(0.0001)     # MAB explicite ≥ 8 µs requis DMX512
                         ser.write(frame)
@@ -913,7 +913,7 @@ class ArtNetDMX:
                 time.sleep(remaining)
 
     def _send_enttec(self):
-        """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
+        """Maintenu pour compatibilité - le thread dédié gère l'envoi réel."""
         return True
 
     # ------------------------------------------------------------------
@@ -973,7 +973,7 @@ class ArtNetDMX:
 
     def _connect_enttec_d2xx(self):
         if not FTD2XX_AVAILABLE:
-            print("ftd2xx non disponible — pip install ftd2xx (et driver FTDI installé)")
+            print("ftd2xx non disponible - pip install ftd2xx (et driver FTDI installé)")
             self.connected = False
             return False
         # Toujours arrêter un éventuel thread D2XX précédent AVANT de rouvrir,
@@ -987,10 +987,10 @@ class ArtNetDMX:
             dev.setBaudRate(250000)
             dev.setDataCharacteristics(_ftd.BITS_8, _ftd.STOP_BITS_2, _ftd.PARITY_NONE)
             dev.setFlowControl(_ftd.FLOW_NONE, 0, 0)
-            dev.setLatencyTimer(1)      # 1 ms — le réglage clé que le VCP ne fait pas
+            dev.setLatencyTimer(1)      # 1 ms - le réglage clé que le VCP ne fait pas
             dev.setTimeouts(100, 100)
             # RTS désassertée, comme QLC+ : mesuré sur ENTTEC Open DMX USB, la
-            # broche Driver Enable du transceiver RS485 y est câblée — RTS
+            # broche Driver Enable du transceiver RS485 y est câblée - RTS
             # assertée = sortie totalement muette (et aucune erreur). C'est
             # déjà l'état par défaut de FT_Open (d'où le fonctionnement en
             # D2XX sous Windows), on l'écrit explicitement pour ne pas
@@ -1008,7 +1008,7 @@ class ArtNetDMX:
                 sn = sn.decode(errors="ignore") if isinstance(sn, bytes) else str(sn)
             except Exception:
                 sn = "?"
-            print(f"ENTTEC Open DMX USB (D2XX) connecté — FTDI {sn}")
+            print(f"ENTTEC Open DMX USB (D2XX) connecté - FTDI {sn}")
             self._start_d2xx_thread()
             return True
         except Exception as e:
@@ -1069,7 +1069,7 @@ class ArtNetDMX:
                                 print(f"[DMX] cadence {_fps:.0f} fps (cible ~36)")
                             _fps_t0 = _now
                             _fps_n = 0
-                    # CRUCIAL : dev.write() (D2XX) ne bloque PAS — la trame (513
+                    # CRUCIAL : dev.write() (D2XX) ne bloque PAS - la trame (513
                     # octets @ 250 kbaud ≈ 22,6 ms) part en arrière-plan. Il faut
                     # attendre qu'elle soit ENTIÈREMENT transmise avant le break
                     # suivant, sinon le break tronque la fin de trame → le
@@ -1086,7 +1086,7 @@ class ArtNetDMX:
                     # DMX d'~1 s) qu'après plusieurs erreurs CONSÉCUTIVES.
                     self._d2xx_err_count += 1
                     if self._d2xx_err_count >= 5:
-                        print(f"ENTTEC D2XX thread: {self._d2xx_err_count} erreurs consécutives — réouverture ({e})")
+                        print(f"ENTTEC D2XX thread: {self._d2xx_err_count} erreurs consécutives - réouverture ({e})")
                         try:
                             dev.close()
                         except Exception:
@@ -1124,7 +1124,7 @@ class ArtNetDMX:
                 time.sleep(remaining)
 
     def _send_enttec_d2xx(self):
-        """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
+        """Maintenu pour compatibilité - le thread dédié gère l'envoi réel."""
         return True
 
     # ------------------------------------------------------------------
@@ -1146,7 +1146,7 @@ class ArtNetDMX:
 
     def _connect_enttec_pro(self):
         if not SERIAL_AVAILABLE:
-            print("pyserial non disponible — pip install pyserial")
+            print("pyserial non disponible - pip install pyserial")
             self.connected = False
             return False
         if not self.com_port:
@@ -1198,7 +1198,7 @@ class ArtNetDMX:
             ser = self._pro_serial
             # Pause : on garde le port ouvert mais on n'écrit plus, et on
             # acquitte via _pro_paused. Le writer concurrent (diagnostic) attend
-            # cet ack avant de toucher au port — sans quoi les deux écrivent sur
+            # cet ack avant de toucher au port - sans quoi les deux écrivent sur
             # le même tty et le driver USB série tombe (crash de l'appli).
             if self._pro_pause:
                 self._pro_paused = True
@@ -1244,7 +1244,7 @@ class ArtNetDMX:
                 time.sleep(remaining)
 
     def _send_enttec_pro(self):
-        """Maintenu pour compatibilité — le thread dédié gère l'envoi réel."""
+        """Maintenu pour compatibilité - le thread dédié gère l'envoi réel."""
         return True
 
     # ------------------------------------------------------------------
@@ -1290,7 +1290,7 @@ class ArtNetDMX:
         )
 
     def _send_artnet(self):
-        """Protocole Art-Net ArtDMX (OpCode 0x5000) — envoie les 4 univers."""
+        """Protocole Art-Net ArtDMX (OpCode 0x5000) - envoie les 4 univers."""
         if not self._socket or not self.target_ip:
             return False
         try:
@@ -1385,10 +1385,14 @@ class ArtNetDMX:
             self._update_from_projectors_locked(projectors, effect_speed)
 
     def _update_from_projectors_locked(self, projectors, effect_speed=0):
-        """Mise à jour interne — doit être appelée sous _dmx_lock."""
+        """Mise à jour interne - doit être appelée sous _dmx_lock."""
         for i, proj in enumerate(projectors):
             proj_key = f"{proj.group}_{i}"
             if proj_key not in self.projector_channels:
+                continue
+            # MyStrow Up = téléphones du public (crowd_link) : fixture virtuelle,
+            # RIEN ne sort en DMX - son adresse peut chevaucher un vrai appareil.
+            if getattr(proj, 'manufacturer', '') == "MyStrow Up":
                 continue
 
             channels = self.projector_channels[proj_key]
@@ -1409,7 +1413,7 @@ class ArtNetDMX:
                 is_muted = hasattr(proj, 'muted') and proj.muted
                 out_idx  = self._channel_index(profile, _out_ch)
                 fan_idx  = self._channel_index(profile, "Fan")
-                # Couche d'effet « Canal » : ignorée en mute — un tir
+                # Couche d'effet « Canal » : ignorée en mute - un tir
                 # d'étincelles ne doit jamais passer à travers.
                 _fx_ch = ({} if is_muted else
                           (getattr(proj, 'effect_channels', None) or {}))
@@ -1424,7 +1428,7 @@ class ArtNetDMX:
                         fan = max(0, min(255, int(_fx_ch[fan_idx + 1])))
                     self.set_channel(channels[fan_idx], fan, universe)
 
-                # Les AUTRES canaux — duree, intervalle, mode, sensibilite.
+                # Les AUTRES canaux - duree, intervalle, mode, sensibilite.
                 # Ils sortaient 0 quoi qu'on fasse : la branche s'arretait au
                 # debit et au ventilateur. Sur une machine a etincelles
                 # 2 canaux, la duree etait donc morte, et le curseur des
@@ -1434,7 +1438,7 @@ class ArtNetDMX:
                 #
                 # ⚠️ Ces canaux gardent leur valeur meme en MUTE. Sur beaucoup
                 # de machines, « Mode » a 0 vaut « automatique / sound-active »
-                # — c'est-a-dire exactement ce qu'un mute doit empecher.
+                # - c'est-a-dire exactement ce qu'un mute doit empecher.
                 _ch_extras   = getattr(proj, 'channel_extras',   None) or {}
                 _ch_defaults = getattr(proj, 'channel_defaults', None) or {}
                 _ch_ranges   = getattr(proj, 'channel_ranges',   None) or {}
@@ -1545,7 +1549,7 @@ class ArtNetDMX:
             # Pan/Tilt effectifs : LIMITES d'abord, puis swap et inversion.
             #
             # L'ordre n'est pas cosmetique. Les limites sont exprimees dans le
-            # repere de l'APPLICATION — c'est celui du carre de reglage, du
+            # repere de l'APPLICATION - c'est celui du carre de reglage, du
             # point jaune, des positions memorisees et des faders POS. Swap et
             # inversion, eux, ne corrigent que le cablage/l'accrochage en bout
             # de chaine. Clamper apres l'inversion appliquait donc la zone en
@@ -1581,7 +1585,7 @@ class ArtNetDMX:
             # la moitie de l'appareil restait noire pendant que la tete jouait,
             # et il fallait pousser un curseur a la main pour chaque projecteur.
             # Elle prend maintenant la couleur, le niveau et le strobe du
-            # faisceau — la lyre s'allume d'un bloc.
+            # faisceau - la lyre s'allume d'un bloc.
             #
             # `_ring_vals` vide (pas de couronne, ou couronne repassee en
             # manuel) = comportement d'avant, a l'octet pres : les types
@@ -1633,7 +1637,7 @@ class ArtNetDMX:
                 ch_type = QLC_CHANNEL_ALIASES.get(ch_type, ch_type)
 
                 # Couche d'effet « Canal » (éditeur d'effets) : prioritaire le
-                # temps de l'effet, y compris sur un canal forcé à la main —
+                # temps de l'effet, y compris sur un canal forcé à la main -
                 # c'est l'utilisateur qui a choisi d'animer CE canal. Le mute
                 # passe avant (branche plus haut), et la table est vidée à
                 # l'arrêt de l'effet : le canal forcé reprend alors la main.
@@ -1643,13 +1647,13 @@ class ArtNetDMX:
                     continue
 
                 # Contrôle brut par NUMÉRO DE CANAL, prioritaire sur tout le
-                # reste — y compris sur le contrôle par type juste en dessous.
+                # reste - y compris sur le contrôle par type juste en dessous.
                 #
                 # C'est la seule façon d'atteindre un canal que MyStrow ne sait
                 # pas nommer. Le modèle « une valeur par TYPE » suffit pour une
                 # lyre, pas pour un laser : sur un UKing ZQ02622 (28 canaux),
                 # 18 canaux ne correspondent à aucun type et sortaient 0, et il
-                # n'existait aucun moyen de leur donner une valeur — deux canaux
+                # n'existait aucun moyen de leur donner une valeur - deux canaux
                 # posés sur « Mode » auraient de toute façon reçu la MÊME.
                 #
                 # Le numéro est celui du canal DANS la fixture (1 = son premier
@@ -1720,7 +1724,7 @@ class ArtNetDMX:
                     spd = getattr(proj, 'strobe_speed', 0)
                     # Valeur posée au curseur brut (vue Curseurs du plan de
                     # feu) : émise telle quelle tant que la vitesse est encore
-                    # celle qu'elle a donnée — 255 doit sortir 255, pas 250.
+                    # celle qu'elle a donnée - 255 doit sortir 255, pas 250.
                     _raw = getattr(proj, 'strobe_dmx_raw', None)
                     if (spd > 0 and _raw is not None and _raw >= 16
                             and min(100, round((_raw - 16) / (250 - 16) * 100)) == spd):
@@ -1752,8 +1756,8 @@ class ArtNetDMX:
                     # Le strobe n'a pas de canal a lui sur la plupart des lyres :
                     # c'est le SHUTTER qui le porte, dans une bande dediee. Sans
                     # ce bloc, `strobe_speed` n'atteignait JAMAIS le fil des que
-                    # le profil disait `Shutter` sans dire `Strobe` — 57 profils
-                    # integres, stroboscopes 2CH compris — alors que le plan 2D,
+                    # le profil disait `Shutter` sans dire `Strobe` - 57 profils
+                    # integres, stroboscopes 2CH compris - alors que le plan 2D,
                     # lui, faisait bien clignoter la pastille : l'interface
                     # affirmait un strobe que le DMX ne portait pas.
                     #
@@ -1799,7 +1803,7 @@ class ArtNetDMX:
                 elif ch_type == "Effects":
                     ch_val = getattr(proj, 'effects', 0)
                 elif ch_type in _PRESET_ATTR:
-                    # Canal de programme interne. Etat dedie, comme `Mode` — et
+                    # Canal de programme interne. Etat dedie, comme `Mode` - et
                     # NON `_MANUAL_ONLY` : c'est ce qui le rend capturable dans
                     # une memoire et restituable en sequence.
                     #
@@ -1811,14 +1815,14 @@ class ArtNetDMX:
                 elif ch_type in ("C", "M", "Y"):
                     if _has_rgb:
                         # LED a emetteurs cyan/magenta/jaune : ADDITIF. Comme
-                        # l'ambre et l'orange, jamais derive du RGB — sinon un
+                        # l'ambre et l'orange, jamais derive du RGB - sinon un
                         # rouge pur allumerait le magenta et virerait rose. Se
                         # pousse au curseur brut.
                         ch_val = 0
                     else:
                         # Spot a drapeaux : SOUSTRACTIF. 0 = filtre ouvert,
                         # 255 = couleur pleine. Le Dim porte deja le niveau, ces
-                        # canaux ne portent que la teinte — d'ou l'usage de la
+                        # canaux ne portent que la teinte - d'ou l'usage de la
                         # couleur PURE (r/g/b sont deja la teinte des qu'il y a
                         # un Dim). Sur les rares fixtures sans Dim, r/g/b sont
                         # attenues et la formule ferme les filtres a mesure : le
@@ -1837,7 +1841,7 @@ class ArtNetDMX:
                     # courbe, micro… Aucun
                     # etat dans Projector : leur valeur vient du curseur des
                     # « canaux avances » (channel_extras, traite plus haut) ou
-                    # de la valeur fixe du mode. 0 au repos, et c'est voulu —
+                    # de la valeur fixe du mode. 0 au repos, et c'est voulu -
                     # une couronne ne doit pas s'allumer toute seule.
                     #
                     # Branche explicite plutot que de laisser faire le `else`

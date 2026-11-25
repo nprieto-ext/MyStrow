@@ -4,7 +4,7 @@ Remontée du 27/08/2026 (capture `Bug_liste3D.png`) : après une modification du
 patch, les lignes annonçaient « Lyre TEST 17 » … « Lyre TEST 20 » alors que ces
 lignes réglaient des PROJECTEURS. Deux causes cumulées :
 
-  * `_populate_mini` n'écrivait le nom qu'à la CRÉATION de la cellule — une
+  * `_populate_mini` n'écrivait le nom qu'à la CRÉATION de la cellule - une
     ligne réutilisée gardait le nom de son occupant précédent ;
   * `refresh()` ne repeuplait jamais le tableau : il ne l'était qu'à
     l'ouverture de la fenêtre.

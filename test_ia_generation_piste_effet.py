@@ -1,17 +1,17 @@
 """
-test_ia_generation_piste_effet.py — La generation IA remplissait la piste Effet.
+test_ia_generation_piste_effet.py - La generation IA remplissait la piste Effet.
 
 Signale par un client : « lors de l'utilisation de la generation par l'IA, les
 effets ne s'activent pas. Ils sont crees mais il est necessaire de faire Sortie
 live puis sauvegarder pour qu'ils soient actives. »
 
 La boite « Generation par IA » (REC Lumiere → Outils) listait une case par
-piste, cochee d'office, en excluant Sequence / Position / Gobo / projecteur —
+piste, cochee d'office, en excluant Sequence / Position / Gobo / projecteur -
 mais PAS la piste Effet. Or `perform_ai_generation` ne pose que des blocs de
 COULEUR :
 
   * sur la piste Effet ils s'affichent « ✨ Effet », sans `effect_name` ni
-    couches — l'aperçu (`timeline_editor`) comme la restitution (`sequencer`)
+    couches - l'aperçu (`timeline_editor`) comme la restitution (`sequencer`)
     exigent un nom resolu dans le catalogue pour armer un effet : ces blocs ne
     declenchaient donc rien, d'ou « ils sont crees mais ne s'activent pas » ;
   * la case etant cochee, generer commençait par vider la piste (`clips.clear()`)
@@ -85,7 +85,7 @@ class GenerationIA(unittest.TestCase):
 
     def test_bloc_genere_ne_porte_aucun_effet(self):
         """Pourquoi la piste Effet doit etre exclue : le bloc pose par la
-        generation n'a ni nom d'effet ni couches — rien a armer."""
+        generation n'a ni nom d'effet ni couches - rien a armer."""
         from PySide6.QtGui import QColor
         clip = LightClip(0, 1000, QColor("#ff0000"), 80, None)
         self.assertEqual(getattr(clip, 'effect_name', ''), "")

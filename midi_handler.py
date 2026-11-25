@@ -33,7 +33,7 @@ SUPPORTED_CONTROLLERS = [
     {
         'id': 'apc40_mk2',
         'name': 'AKAI APC40 MkII',
-        # MkII avant MK1 — 'MKII' est plus spécifique que 'APC40' seul
+        # MkII avant MK1 - 'MKII' est plus spécifique que 'APC40' seul
         'keywords': ['APC40 MKII', 'APC40 MK2', 'APC 40 MKII', 'APC 40 MK2'],
         'has_faders': True,
         'has_pads': True,
@@ -131,14 +131,14 @@ _APC40_MK2_LED_DIM  = 0x92   # 50 %, fixe
 # du HAUT) et memes Scene Launch (ch0, notes 82-86).
 # Sous la grille, 4 rangees de 8 boutons de piste (canal = piste), de haut en bas :
 #     CLIP STOP = 52, ACTIVATOR = 50, SOLO/CUE = 49, REC ARM = 48
-# Les 3 premieres prolongent la grille MyStrow (lignes 5, 6, 7) — sans elles
+# Les 3 premieres prolongent la grille MyStrow (lignes 5, 6, 7) - sans elles
 # l'APC20 n'exposerait que 5 des 8 lignes de pads. La derniere (REC ARM), collee
 # aux faders, sert de bouton mute, exactement comme sous l'APC Mini.
 _APC20_ROW_NOTES = {5: 52, 6: 50, 7: 49}
 _APC20_NOTE_ROWS = {note: row for row, note in _APC20_ROW_NOTES.items()}
 _APC20_MUTE_NOTE = 48
 # Colonne 8 (effets), ch0 : les 5 SCENE LAUNCH + le bouton STOP ALL CLIPS juste
-# en dessous, dans la meme colonne physique — soit 6 des 8 boutons d'effet.
+# en dessous, dans la meme colonne physique - soit 6 des 8 boutons d'effet.
 # Les effets 7 et 8 n'ont aucun bouton libre sur ce materiel (souris uniquement).
 _APC20_EFFECT_NOTES = {0: 82, 1: 83, 2: 84, 3: 85, 4: 86, 5: 81}
 _APC20_NOTE_EFFECTS = {note: row for row, note in _APC20_EFFECT_NOTES.items()}
@@ -242,7 +242,7 @@ def _port_matches(ctrl: dict, port_name: str, require_prefer: bool = True) -> bo
     """True si le port correspond au contrôleur.
 
     avoid_keywords  : rejette les ports contenant un de ces mots.
-    prefer_keywords : (si require_prefer) impose qu'un de ces mots soit présent —
+    prefer_keywords : (si require_prefer) impose qu'un de ces mots soit présent -
                       ex: le Launchpad Mini MK3 ne communique que via son port DAW.
     """
     up = port_name.upper()
@@ -307,7 +307,7 @@ class MIDIHandler(QObject):
 
         self.controller_type = None   # 'apc_mini' | 'launchpad_mini_mk1/mk2' | 'midimix' | 'custom'
         self.controller_name = ""
-        self._raw_capture    = None   # callable(msg) — mode capture brute pour le wizard
+        self._raw_capture    = None   # callable(msg) - mode capture brute pour le wizard
         self._custom_profile = None
         self._rev_pad    = {}
         self._rev_mute   = {}
@@ -327,7 +327,7 @@ class MIDIHandler(QObject):
         # Un Launchpad Mini MK3 expose deux ports (DAW et MIDI) et ne parle pas
         # forcément sur celui qui reçoit ses LED : sur Mac, les pads s'allumaient
         # sans qu'aucune touche ne remonte. Plutôt que de parier sur le bon port,
-        # on écoute les deux — les messages arrivent dans la même file.
+        # on écoute les deux - les messages arrivent dans la même file.
         self._extra_ins = []
         # Noms des ports ouverts, pour que la fenêtre de diagnostic puisse dire
         # LEQUEL est ouvert au lieu d'un simple voyant vert.
@@ -346,7 +346,7 @@ class MIDIHandler(QObject):
         # Anti-doublon inter-ports (voir _midi_callback).
         self._last_msg   = None
         self._last_msg_t = 0.0
-        # Horloge MIDI reçue sur les ports du contrôleur — voir `_bind_input`.
+        # Horloge MIDI reçue sur les ports du contrôleur - voir `_bind_input`.
         # callable(event, port_name), posé par le moteur LIVE (live_audio).
         self.clock_listener = None
 
@@ -367,7 +367,7 @@ class MIDIHandler(QObject):
         """Liste les ports d'entrée MIDI. [] si le scan échoue.
 
         La sonde est CONSERVÉE d'un appel à l'autre. L'ancienne version créait un
-        `rtmidi.MidiIn()` neuf toutes les 2 s — 1800 par heure — uniquement pour
+        `rtmidi.MidiIn()` neuf toutes les 2 s - 1800 par heure - uniquement pour
         lire la liste ; le jour où cette création échoue (limite de clients
         CoreMIDI sur Mac, handles WinMM), l'ancien `except: return` avalait
         l'erreur et la détection automatique restait morte jusqu'au redémarrage.
@@ -397,7 +397,7 @@ class MIDIHandler(QObject):
     def rescan(self):
         """Repart de zéro : sonde neuve puis détection immédiate.
 
-        Sert au bouton « Rescanner » — il ne doit jamais rester bloqué par une
+        Sert au bouton « Rescanner » - il ne doit jamais rester bloqué par une
         sonde en mauvais état, c'est précisément le cas qui obligeait à
         redémarrer l'application.
         """
@@ -449,7 +449,7 @@ class MIDIHandler(QObject):
         port.ignore_types(sysex=True, timing=False, active_sense=True)
 
     def open_input_names(self):
-        """Noms des ports d'entrée réellement ouverts — pour l'affichage."""
+        """Noms des ports d'entrée réellement ouverts - pour l'affichage."""
         names = []
         try:
             if self.midi_in and self.midi_in.is_port_open():
@@ -503,7 +503,7 @@ class MIDIHandler(QObject):
     def list_available_controllers(self):
         """Liste les contrôleurs supportés actuellement branchés.
 
-        Retourne [{'id', 'name', 'port'}] — profils custom puis natifs.
+        Retourne [{'id', 'name', 'port'}] - profils custom puis natifs.
         Sert à peupler le sélecteur de l'UI (menu connexion).
         """
         out = []
@@ -665,7 +665,7 @@ class MIDIHandler(QObject):
             # dans 2 s avec une sonde neuve.
             return
         try:
-            # Présence du contrôleur CIBLE (épinglé ou auto) — ne rebascule pas
+            # Présence du contrôleur CIBLE (épinglé ou auto) - ne rebascule pas
             # sur un autre contrôleur quand l'utilisateur en a épinglé un.
             device_present = self._target_present(ports)
         except Exception as e:
@@ -689,7 +689,7 @@ class MIDIHandler(QObject):
                 self._out_name = ""
             return
 
-        # Device présent — déjà connecté ?
+        # Device présent - déjà connecté ?
         # midi_out peut être None si le contrôleur n'a pas de port output
         if self.midi_in:
             try:
@@ -713,7 +713,7 @@ class MIDIHandler(QObject):
     def _midi_callback(self, event, data=None):
         msg, _dt = event
         # Temps réel (Clock / Start / Continue / Stop) : pour le moteur LIVE,
-        # jamais pour les pads — ni la file, ni le compteur, ni l'assistant.
+        # jamais pour les pads - ni la file, ni le compteur, ni l'assistant.
         if msg and msg[0] in (0xF8, 0xFA, 0xFB, 0xFC):
             listener = self.clock_listener
             if listener is not None:
@@ -726,7 +726,7 @@ class MIDIHandler(QObject):
         with self._midi_lock:
             # Anti-doublon inter-ports. On écoute TOUTES les entrées du
             # contrôleur (cf. _extra_ins) ; mesuré sur Launchpad Mini MK3 en
-            # Windows, seul le port DAW émet — mais si un appareil parlait sur
+            # Windows, seul le port DAW émet - mais si un appareil parlait sur
             # ses deux ports, chaque appui déclencherait DEUX fois le cue.
             # Deux copies venant de deux ports arrivent à quelques microsecondes
             # d'intervalle : 5 ms suffisent à les coller sans jamais avaler une
@@ -740,13 +740,13 @@ class MIDIHandler(QObject):
             self._midi_queue.append(msg)
             # Compteur BRUT, avant tout décodage. C'est lui qui distingue
             # « rien n'arrive » (port/pilote) de « ça arrive mais le décodeur
-            # du contrôleur l'écarte » — les deux se ressemblent à l'écran,
+            # du contrôleur l'écarte » - les deux se ressemblent à l'écran,
             # et l'ancien témoin d'activité ne réagissait qu'après décodage.
             self.rx_count += 1
             self.last_raw = list(msg)
 
     def set_raw_capture(self, callback):
-        """Route tous les messages MIDI bruts vers callback(msg) — pour le wizard de mapping."""
+        """Route tous les messages MIDI bruts vers callback(msg) - pour le wizard de mapping."""
         self._raw_capture = callback
 
     def clear_raw_capture(self):
@@ -895,14 +895,14 @@ class MIDIHandler(QObject):
             pass
 
     def _mute_button_pressed(self, fader_idx):
-        """Bouton MUTE d'un fader — détourné si un outil le réclame."""
+        """Bouton MUTE d'un fader - détourné si un outil le réclame."""
         if self.mute_override is not None:
             self.mute_override(fader_idx)
         elif self.owner_window:
             self.owner_window.toggle_fader_mute_from_midi(fader_idx)
 
     def _tap_button_released(self, note):
-        """Relâchement du bouton bas-droite — termine un flash en cours."""
+        """Relâchement du bouton bas-droite - termine un flash en cours."""
         if self.tap_override is None and self.owner_window is not None:
             self.owner_window._tap_tempo_released()
         if self.midi_out:
@@ -914,7 +914,7 @@ class MIDIHandler(QObject):
     # ─── Handlers par contrôleur ─────────────────────────────────────────────
 
     def _handle_apc_mini(self, message):
-        """Messages AKAI APC Mini — comportement original inchangé."""
+        """Messages AKAI APC Mini - comportement original inchangé."""
         status = message[0]
         data1  = message[1]
         data2  = message[2] if len(message) > 2 else 0
@@ -926,7 +926,7 @@ class MIDIHandler(QObject):
         if status == 0xB0:
             return
 
-        # Note Off — boutons EFFETS (colonne 8, notes 112-119), bouton TAP, et
+        # Note Off - boutons EFFETS (colonne 8, notes 112-119), bouton TAP, et
         # grille 8x8. Le relache de la grille etait jete : sans lui, un pad
         # couleur ne peut pas etre momentane (mode FLASH).
         if status == 0x80 or (status == 0x90 and data2 == 0):
@@ -955,7 +955,7 @@ class MIDIHandler(QObject):
             # Bouton bas-droite : TAP BPM / GO / FLASH selon la configuration.
             # Velocite 1 et non 3 : les boutons ronds de l'APC mini sont
             # monochromes et n'acceptent que 0 (eteint) / 1 (allume) / 2
-            # (clignotant) — 3 est une valeur de la GRILLE (rouge), hors plage
+            # (clignotant) - 3 est une valeur de la GRILLE (rouge), hors plage
             # ici, donc rien ne s'allumait. C'est deja 1 que le reste du code
             # envoie sur la colonne des effets.
             self._tap_button_pressed(122, 1)
@@ -1011,7 +1011,7 @@ class MIDIHandler(QObject):
 
         note = data1
 
-        # Clip slots (grille 5×8) — MkII : note 0-39, note 0 = bas-gauche
+        # Clip slots (grille 5×8) - MkII : note 0-39, note 0 = bas-gauche
         if is_mk2 and 0 <= note <= 39:
             self.pad_pressed.emit(4 - note // 8, note % 8)
 
@@ -1051,11 +1051,11 @@ class MIDIHandler(QObject):
     def _handle_apc20(self, message):
         """Messages AKAI APC20.
 
-        Grille    : ch=piste — lignes 0-4 = clips (notes 53-57),
+        Grille    : ch=piste - lignes 0-4 = clips (notes 53-57),
                     lignes 5-7 = CLIP STOP (52) / ACTIVATOR (50) / SOLO (49).
-        Colonne 8 : effets, ch=0 — Scene Launch 82-86 (lignes 0-4) et
+        Colonne 8 : effets, ch=0 - Scene Launch 82-86 (lignes 0-4) et
                     STOP ALL CLIPS 81 (ligne 5). Lignes 6-7 : aucun bouton.
-        Mute      : REC ARM (note 48), ch=piste — la rangee collee aux faders.
+        Mute      : REC ARM (note 48), ch=piste - la rangee collee aux faders.
         Faders    : CC7 ch0-7 + master CC14 ch0 (deja traites dans _fader_index).
         Tap Tempo : note 98 (bouton Shift), ch=0.
         """
@@ -1354,7 +1354,7 @@ class MIDIHandler(QObject):
 
             elif ct in ('apc40', 'apc40_mk2'):
                 # SysEx d'init obligatoire pour activer le mode LED Ableton
-                # MK1 : product ID 0x27 — MkII : product ID 0x29
+                # MK1 : product ID 0x27 - MkII : product ID 0x29
                 product_id = 0x29 if ct == 'apc40_mk2' else 0x27
                 self.midi_out.send_message([
                     0xF0, 0x47, 0x7F, product_id,
@@ -1384,7 +1384,7 @@ class MIDIHandler(QObject):
                 # SysEx d'init OBLIGATOIRE (product ID 0x7B) : a la mise sous
                 # tension l'APC20 demarre en « Generic Mode » (0x40) ou il
                 # allume SES PROPRES LEDs de clips et IGNORE les Note On de
-                # l'hote — d'ou une grille qui ne s'allumait jamais alors que
+                # l'hote - d'ou une grille qui ne s'allumait jamais alors que
                 # les rangees de boutons de piste (elles, pilotables des le
                 # depart) repondaient. 0x41 = Ableton Live Mode : toutes les
                 # LEDs passent sous controle de l'hote et tous les boutons
@@ -1420,7 +1420,7 @@ class MIDIHandler(QObject):
                     self.midi_out.send_message([0xB0, cc, 0])
 
             elif ct == 'launchpad_mk2':
-                # Reset — éteint toutes les LEDs
+                # Reset - éteint toutes les LEDs
                 self.midi_out.send_message([0xB0, 0x00, 0x00])
 
             elif ct in ('launchpad_mini_mk1', 'launchpad_mini_mk2'):
@@ -1443,7 +1443,7 @@ class MIDIHandler(QObject):
         """Allume un pad sur le contrôleur actif.
 
         color_velocity : velocity AKAI (couleur/intensité)
-        brightness_percent : 20 (dim) ou 100 (full) — utilisé par APC Mini seulement
+        brightness_percent : 20 (dim) ou 100 (full) - utilisé par APC Mini seulement
         rgb : (r,g,b) 0-255 optionnel. Si fourni, les contrôleurs RGB natifs
               (Launchpad Mini MK3) l'utilisent DIRECTEMENT au lieu de reconvertir
               la velocity (évite qu'une couleur custom orange/rouge sorte blanche).
@@ -1504,7 +1504,7 @@ class MIDIHandler(QObject):
         _is_exclusive_color_column) : la, eteindre les 7 autres pads est le seul
         moyen de voir lequel est pris. Sur une colonne PLAY / VIDEO / VFX / FX /
         POS / MEMOIRE, les pads sont dessines en luminosite « inactive » tant
-        qu'ils ne sont pas declenches — les eteindre rendait toute la colonne
+        qu'ils ne sont pas declenches - les eteindre rendait toute la colonne
         NOIRE sur le boitier alors qu'elle repondait parfaitement aux appuis.
 
         On compare au reglage reel de la fenetre (curseurs ON/OFF, 0-100) plutot
@@ -1545,7 +1545,7 @@ class MIDIHandler(QObject):
             self.midi_out.send_message([ch, note, color_velocity])
 
     def _set_led_lp_mini(self, row, col, color_velocity):
-        """LED Launchpad Mini — bicolor velocity = 16*G + R (G, R ∈ 0-3)."""
+        """LED Launchpad Mini - bicolor velocity = 16*G + R (G, R ∈ 0-3)."""
         if not self.midi_out:
             return
         lp_vel = _to_lp_mini_vel(color_velocity)
@@ -1554,7 +1554,7 @@ class MIDIHandler(QObject):
         self.midi_out.send_message([0x90, note, lp_vel])
 
     def _set_led_lp_mk3(self, row, col, color_velocity, brightness_percent=100, rgb=None):
-        """LED Launchpad Mini MK3 (Programmer mode) — pilotage RGB via SysEx.
+        """LED Launchpad Mini MK3 (Programmer mode) - pilotage RGB via SysEx.
 
         note = lp_row1*10 + lp_col1. On envoie la couleur en RGB exact (0-127/canal)
         modulée par brightness_percent → les pads inactifs (20%) sont atténués.
@@ -1585,7 +1585,7 @@ class MIDIHandler(QObject):
                                     0x03, note, r7, g7, b7, 0xF7])
 
     def _set_led_lp_mk2(self, row, col, color_velocity):
-        """LED Launchpad MK2 — note = lp_row1*10 + lp_col1, velocity = index couleur 0-127."""
+        """LED Launchpad MK2 - note = lp_row1*10 + lp_col1, velocity = index couleur 0-127."""
         if not self.midi_out:
             return
         lp_row1 = 8 - row           # ms_row 0(haut)→8, ms_row 7(bas)→1
@@ -1599,7 +1599,7 @@ class MIDIHandler(QObject):
         MK1 : grille ch=piste, note 53+row, palette 3 couleurs FIXES (1/3/5).
               Scene launch mono-couleur : 0=eteint 1=allume 2=clignotant.
         MkII: grille note 0-39 (0 = bas-gauche) et le CANAL du Note On code le
-              comportement de la LED — d'ou 0x96 (100 % fixe) et jamais 0x90|col,
+              comportement de la LED - d'ou 0x96 (100 % fixe) et jamais 0x90|col,
               qui ferait pulser/clignoter les colonnes 7 et 8.
         """
         if not self.midi_out:
@@ -1630,7 +1630,7 @@ class MIDIHandler(QObject):
 
         Lignes 0-4 de la grille : palette 3 couleurs de l'APC40 MK1 (1/3/5, fixes).
         Lignes 5-7 (boutons de piste) et Scene Launch : LED mono-couleur, la
-        palette clip n'a aucun sens dessus (0=eteint 1=allume 2=clignotant) —
+        palette clip n'a aucun sens dessus (0=eteint 1=allume 2=clignotant) -
         ces pads s'allument donc sans couleur.
 
         Faute de gradation sur ce materiel, un pad demande en luminosite
@@ -1653,7 +1653,7 @@ class MIDIHandler(QObject):
     # ─── Divers ──────────────────────────────────────────────────────────────
 
     def _set_led_custom(self, row, col, color_velocity):
-        """LED pour contrôleur custom — Note On sur le note mappé."""
+        """LED pour contrôleur custom - Note On sur le note mappé."""
         if not self.midi_out:
             return
         entry = self._rev_led.get((row, col))
@@ -1663,7 +1663,7 @@ class MIDIHandler(QObject):
         self.midi_out.send_message([0x90 | entry['channel'], entry['note'], vel])
 
     def set_fader(self, fader_idx, value):
-        """Placeholder — faders physiques non motorisés."""
+        """Placeholder - faders physiques non motorisés."""
         pass
 
     def close(self):

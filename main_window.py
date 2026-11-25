@@ -52,7 +52,7 @@ class _DmxConnectWorker(QThread):
     appels système bloquants, sans borne de temps quand le boîtier ne répond
     pas (typique sur macOS quand la puce FTDI est déjà réservée). Appelé sur le
     thread GUI au démarrage, il gelait MyStrow avant même l'affichage de la
-    fenêtre — seul un « Forcer à quitter » en sortait.
+    fenêtre - seul un « Forcer à quitter » en sortait.
     """
 
     result = Signal(bool)
@@ -180,7 +180,7 @@ class ElidedLabel(QLabel):
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 except ImportError:
-    # Stubs pour Mac sans backend multimedia — l'app démarre sans lecture audio/vidéo
+    # Stubs pour Mac sans backend multimedia - l'app démarre sans lecture audio/vidéo
     class QMediaPlayer:  # type: ignore
         PlayingState = 1; StoppedState = 0; PausedState = 2; EndOfMedia = 7
         def __init__(self): self._src = None
@@ -226,7 +226,7 @@ from core import (
     layer_frequency, random_wave, effect_dim_base_color,
     position_preset_values, find_position_preset,
     apply_special_block, clear_special_blocks, ComboSansMolette,
-    cw_slot_for_color, pan_angular_ratio, pt_shape_pan_ratio, rest_pantilt, pan_tilt_ranges, normalize_channel_ranges,
+    cw_slot_for_color, pan_angular_ratio, pt_shape_pan_ratio, rest_pantilt, layer_rec_centers, pan_tilt_ranges, normalize_channel_ranges,
     PAN_TILT_RANGE_MIN, PAN_TILT_RANGE_MAX,
     copy_report, send_report_email, DMX_FRAME_MS, make_precise_timer,
     fit_button, MEDIA_EXTENSIONS_FILTER, AV_EXTENSIONS_FILTER,
@@ -289,7 +289,7 @@ _MX_SPAN_PER_PIXEL = 0.009   # repli quand les dimensions sont inconnues
 
 # Bornes d'affichage quand la taille réelle est connue : de ~15 cm (un petit
 # cube LED) à 7 m (une barre sur toute la largeur d'un truss), sur une scène
-# de 12 m. Volontairement larges — c'est l'utilisateur qui sait.
+# de 12 m. Volontairement larges - c'est l'utilisateur qui sait.
 _MX_SPAN_REAL_MIN = 0.012
 _MX_SPAN_REAL_MAX = 0.60
 
@@ -298,15 +298,15 @@ def _matrix_span(cols, phys_w=None):
     """
     Largeur normalisée d'un bloc pixel.
 
-    Depuis la largeur physique réelle (mm) si on la connaît — une barre d'1 m et
-    un wash de 20 cm n'ont alors pas la même taille à l'écran — sinon repli sur
+    Depuis la largeur physique réelle (mm) si on la connaît - une barre d'1 m et
+    un wash de 20 cm n'ont alors pas la même taille à l'écran - sinon repli sur
     une estimation par nombre de pixels.
     """
     if phys_w:
         # Dimension RÉELLE connue : on la respecte. Les bornes serrées
         # ci-dessous existent pour encadrer une largeur DEVINÉE d'après le
         # nombre de pixels ; les appliquer ici écraserait la saisie de
-        # l'utilisateur — sur une scène de 12 m elles interdisaient tout ce
+        # l'utilisateur - sur une scène de 12 m elles interdisaient tout ce
         # qui est sous 66 cm ou au-dessus de 1,56 m. On garde seulement un
         # plancher, pour qu'un appareil reste visible et cliquable.
         return min(_MX_SPAN_REAL_MAX,
@@ -367,7 +367,7 @@ class PixelStrip(QWidget):
     """
     Représentation d'une barre / matrice à pixels, dans le Patch DMX.
 
-    Une case par pixel — leur nombre est déduit du profil, pas saisi. Le chiffre
+    Une case par pixel - leur nombre est déduit du profil, pas saisi. Le chiffre
     affiché est le rang DANS LA CHAÎNE DMX : inverser l'ordre ou passer en
     serpentin se voit immédiatement, sans avoir à lire des adresses.
 
@@ -409,7 +409,7 @@ class PixelStrip(QWidget):
 
     # ── géométrie ────────────────────────────────────────────────────────
     def _geom(self):
-        """(taille de case, x, y du coin de la grille) — bloc centré."""
+        """(taille de case, x, y du coin de la grille) - bloc centré."""
         avail = self.width() - 2 * (self.PAD + self.MARGIN)
         cols = max(1, self._cols)
         cell = (avail - (cols - 1) * self.GAP) // cols
@@ -535,11 +535,11 @@ def build_channel_chips(profile, start_index=1, numbered=True, labels=None):
     Profil DMX en pastilles rectangulaires colorées, comme dans le Patch DMX.
 
     Retourne un QWidget : une rangée de rectangles arrondis (nom du canal) avec
-    le numéro de canal dessous. Purement décoratif — aucune interaction, à la
+    le numéro de canal dessous. Purement décoratif - aucune interaction, à la
     différence des pastilles du patch qui éditent les valeurs par défaut.
 
     `labels` : noms lisibles du fichier constructeur, alignés sur `profile`.
-    Affichés à la place du type quand ils existent — une rangée de « UNUSED » ne
+    Affichés à la place du type quand ils existent - une rangée de « UNUSED » ne
     dit rien de la fixture qu'on s'apprête à ajouter. Ignorés s'ils ne cadrent
     pas avec le profil : un nom décalé désignerait le mauvais canal.
     """
@@ -642,7 +642,7 @@ def _pantilt_meta(proj):
     À rappeler dans TOUT endroit qui sérialise ou recrée un Projector : ces
     champs vivaient uniquement en mémoire, donc la zone patiemment délimitée
     par l'utilisateur repartait à 0–65535 au moindre redémarrage ou Ctrl+Z
-    dans l'éditeur de patch — la lyre recommençait à balayer le côté interdit
+    dans l'éditeur de patch - la lyre recommençait à balayer le côté interdit
     sans que rien ne l'explique."""
     return {f: getattr(proj, f, None) for f in _PANTILT_META_FIELDS}
 
@@ -669,7 +669,7 @@ def _scene3d_meta(proj):
 
     `_restore_snap` (Ctrl+Z, Ctrl+Y, « Ignorer » à la fermeture) recrée les
     Projector de zéro : sans ces champs, H, RX/RY/RZ, X/Z, angle et taille
-    repartaient aux défauts (H = 7 m) — un client a dû ressaisir sa hauteur et
+    repartaient aux défauts (H = 7 m) - un client a dû ressaisir sa hauteur et
     ses RY après avoir simplement fermé la fenêtre Patch sans enregistrer.
     `_pos3d_src` a trois états (tuple / None / absent) : on garde l'absence."""
     d = {f: getattr(proj, f, None) for f in _SCENE3D_META_FIELDS}
@@ -695,14 +695,14 @@ def _infer_pixel_matrix(profile, fixture_type=None):
     Beaucoup de fixtures n'apportent aucune géométrie : la bibliothèque QLC+
     livrée avec MyStrow n'en fournit pour AUCUNE de ses 1710 entrées, alors que
     131 sont typées « Barre LED ». Sans géométrie, une barre est patchée comme
-    un projecteur unique — un spot en 3D et une vignette minuscule en 2D.
+    un projecteur unique - un spot en 3D et une vignette minuscule en 2D.
 
     On cherche donc le motif répété. Exemple réel, i-Pix BB4 mode 10 : 36 canaux
     = 4 × [Dim, Dim, Strobe, R, R, G, G, B, B] → barre de 4 segments.
 
     Garde-fous, pour ne jamais transformer un projecteur classique en barre :
       - au moins 2 répétitions, et une cellule d'au moins 2 canaux ;
-      - la cellule doit contenir une couleur (R/G/B/W/A/UV) — un simple
+      - la cellule doit contenir une couleur (R/G/B/W/A/UV) - un simple
         Dim+Strobe répété n'est pas une barre à pixels ;
       - on retient la PLUS PETITE cellule qui se répète, c'est-à-dire la
         période fondamentale du motif. Prendre la plus grande donnerait
@@ -898,7 +898,7 @@ AKAI_BANK_PRESETS = [
 # ---------------------------------------------------------------------------
 
 class MessageLogWidget(QWidget):
-    """Boîte de journal sous les slots AKAI — accumule les messages d'action.
+    """Boîte de journal sous les slots AKAI - accumule les messages d'action.
     Vide à chaque fermeture de l'application."""
 
     _LEVELS = {
@@ -954,7 +954,15 @@ class MessageLogWidget(QWidget):
         root.addLayout(hdr)
 
         # ── Zone texte ──────────────────────────────────────────────────────
-        self._text = QTextEdit()
+        # QTextBrowser (un QTextEdit en lecture seule) pour rendre cliquables
+        # les liens d'action « mystrow:… » (ex. « Arrêter la session » de
+        # MyStrow Up). Les liens ne sont jamais ouverts comme des URL.
+        from PySide6.QtWidgets import QTextBrowser
+        self._text = QTextBrowser()
+        self._text.setOpenLinks(False)
+        self._text.setOpenExternalLinks(False)
+        self._text.anchorClicked.connect(self._on_action_lien)
+        self._actions = {}
         self._text.setReadOnly(True)
         # Retour à la ligne plutôt qu'un ascenseur horizontal : le panneau est
         # étroit, et une ligne longue (« ENTTEC DMX USB Pro connecté sur… »)
@@ -972,6 +980,18 @@ class MessageLogWidget(QWidget):
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
         )
         root.addWidget(self._text)
+
+    def add_action(self, cle: str, callback):
+        """Rend cliquable un lien <a href="mystrow:cle">…</a> écrit dans le journal."""
+        self._actions[cle] = callback
+
+    def _on_action_lien(self, url):
+        cb = self._actions.get(url.toString().removeprefix("mystrow:"))
+        if cb is not None:
+            try:
+                cb()
+            except Exception as exc:
+                print(f"[Journal] action {url.toString()} : {exc}")
 
     def append_message(self, text: str, level: str = "info"):
         """Ajoute une ligne horodatée dans le journal."""
@@ -1009,7 +1029,7 @@ _POS_COL_MAX = 5   # 5 colonnes POS × 8 pads = 40 positions max
 # Une SEULE colonne VFX, pas une famille indexée comme les colonnes FX : il
 # n'y a jamais qu'un effet vidéo actif à la fois, et l'amplitude est globale.
 # Quatre colonnes auraient été quatre rangements du même unique jeu de pads,
-# pilotant le même état — de la place de surface perdue pour rien.
+# pilotant le même état - de la place de surface perdue pour rien.
 _N_BANK_PAGES = 20  # nombre FIXE de pages de layout APC (navigables ◀ ▶)
 
 # ── Mode LIVE : strobe blanc « intelligent » ─────────────────────────────────
@@ -1032,14 +1052,14 @@ def _live_strobe_rate(period_ms) -> int:
 
     Le LIVE strobe en coupant `level` une image sur deux : il n'atteint donc
     QUE les canaux que le modèle pilote (Dim, Dim2, R/G/B/W). Sur une fixture
-    dont une partie est hors modèle — l'anneau d'une lyre BETOPPER, dont les
-    canaux sortent en « Mode »/« Unused » à l'import — cette partie-là ne
+    dont une partie est hors modèle - l'anneau d'une lyre BETOPPER, dont les
+    canaux sortent en « Mode »/« Unused » à l'import - cette partie-là ne
     bronchait pas, et seule la tête clignotait. D'où « il ne prend qu'un des
     deux strobes ».
 
     Le canal Strobe matériel, lui, atteint TOUT ce que la fixture appelle
     strobe, anneau compris. On le pilote donc EN PLUS du hachage, à la même
-    cadence — d'où cette conversion : le hachage bascule toutes les
+    cadence - d'où cette conversion : le hachage bascule toutes les
     `period_ms`, un cycle complet en vaut donc deux.
     """
     try:
@@ -1069,7 +1089,7 @@ def _fader_label_text(label: str) -> str:
 
     « MEM 1 » est abrégé en « M01 » (idem « MEM 12 » → « M12 ») : avec 99
     colonnes possibles, le libellé complet déborde sous la colonne. « VIDEO »
-    est abrégé en « VID » pour la même raison — 28 px de large, 9 px de fonte.
+    est abrégé en « VID » pour la même raison - 28 px de large, 9 px de fonte.
     Les noms longs restent utilisés partout ailleurs (sélecteur, journal,
     tooltips).
     """
@@ -1089,7 +1109,7 @@ def _fader_label_tooltip(slot: dict) -> str:
     """Tooltip de l'étiquette sous une colonne AKAI («» si le libellé suffit)."""
     if slot.get("type") == "pos" and slot.get("fader_axis"):
         grp = slot.get("fader_group") or "Toutes"
-        return f"{slot['label']} — fader {slot['fader_axis'].upper()} · groupe {grp}"
+        return f"{slot['label']} - fader {slot['fader_axis'].upper()} · groupe {grp}"
     if slot.get("type") == "memory":
         return slot.get("label", "")   # « M01 » abrégé → nom complet en tooltip
     if slot.get("type") == "video":
@@ -1101,7 +1121,7 @@ def _fader_label_tooltip(slot: dict) -> str:
 # Colonne PLAY : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
 # action : "playpause" | "prev" | "next" | "cart0..3" | "stop".
 # Le fader de cette colonne pilote le VOLUME du lecteur (défaut 100 %, exclu des
-# remises à zéro startup/clear — voir _startup_faders_down / _clear_akai_state).
+# remises à zéro startup/clear - voir _startup_faders_down / _clear_akai_state).
 _PLAY_ROWS = [
     ("playpause", "▶", "#22cc44"),   # row 0 : ▶ / ⏸
     ("prev",      "⏮", "#2288dd"),   # row 1 : ⏮
@@ -1265,7 +1285,7 @@ class AkaiDiagnosticDialog(QDialog):
         right_l.addWidget(_section(tr("mw_diagnostic")))
 
         def _port_row(label):
-            """Retourne (layout, dot, status) — les voyants sont rafraîchis en direct."""
+            """Retourne (layout, dot, status) - les voyants sont rafraîchis en direct."""
             row = QHBoxLayout()
             row.setSpacing(6)
             dot = QLabel("●")
@@ -1295,7 +1315,7 @@ class AkaiDiagnosticDialog(QDialog):
         right_l.addLayout(_row)
         right_l.addWidget(self._out_lbl)
 
-        # Erreur de scan (sonde MIDI en échec) — sinon la détection meurt en silence.
+        # Erreur de scan (sonde MIDI en échec) - sinon la détection meurt en silence.
         self._scan_err_lbl = QLabel("")
         self._scan_err_lbl.setStyleSheet("color:#f44336; font-size:9px;")
         self._scan_err_lbl.setWordWrap(True)
@@ -1337,7 +1357,7 @@ class AkaiDiagnosticDialog(QDialog):
 
         # Trafic BRUT : compté dès l'arrivée, avant tout décodage. Un compteur qui
         # grimpe pendant que le témoin ci-dessus reste éteint signifie que le
-        # contrôleur parle mais que son décodeur écarte les messages — c'est la
+        # contrôleur parle mais que son décodeur écarte les messages - c'est la
         # seule façon de distinguer ce cas d'un vrai silence côté pilote.
         self._raw_lbl = QLabel(tr("mw_midi_raw"))
         self._raw_lbl.setStyleSheet("color:#555; font-size:9px;")
@@ -1473,7 +1493,7 @@ class AkaiDiagnosticDialog(QDialog):
                 self._act_info.setStyleSheet("color:#555; font-size:9px;")
 
     def _do_rescan(self):
-        """Relance la détection SANS fermer la fenêtre — on veut voir le résultat."""
+        """Relance la détection SANS fermer la fenêtre - on veut voir le résultat."""
         try:
             self._midi.rescan()
         except Exception as e:
@@ -1492,7 +1512,7 @@ class AkaiDiagnosticDialog(QDialog):
         """
         from controller_share import CommunityControllerDialog
         # Port réellement ouvert si MyStrow reconnaît déjà le contrôleur ; sinon
-        # tous les ports branchés concaténés — c'est justement le cas d'un
+        # tous les ports branchés concaténés - c'est justement le cas d'un
         # contrôleur inconnu, celui où cette bibliothèque sert à quelque chose.
         port = getattr(self._midi, '_in_name', "") or ""
         if not port:
@@ -1528,7 +1548,7 @@ class AkaiDiagnosticDialog(QDialog):
         """[(cid, name)] : Auto + contrôleurs natifs + TOUS les profils installés.
 
         Les profils étaient auparavant listés seulement quand leur contrôleur
-        était branché — un mapping raté devenait alors ingérable dès que le
+        était branché - un mapping raté devenait alors ingérable dès que le
         matériel n'était pas là, alors que c'est précisément le moment où on
         veut le corriger ou le supprimer.
         """
@@ -1543,7 +1563,7 @@ class AkaiDiagnosticDialog(QDialog):
             # `all_profiles()` ajoute les profils approuvés en modération et
             # livrés avec la release : ils doivent apparaître ici même débranchés,
             # sinon ils restent invisibles tant que le matériel n'est pas là.
-            # Leur `file` est None — aucun fichier à renommer ni à supprimer.
+            # Leur `file` est None - aucun fichier à renommer ni à supprimer.
             seen = set()
             for entry in all_profiles():
                 name = entry["data"].get("name", "Custom")
@@ -1972,14 +1992,14 @@ class _SlotPickerPopup(QFrame):
         self._add_section(tr("mwy_001"), groups, self._GROUP_COLOR, current)
         # FX
         self._add_section("FX", fx, self._FX_COLOR, current)
-        # MEM — grille 10 colonnes
+        # MEM - grille 10 colonnes
         self._add_section(tr("mwy_002"), mems, self._MEM_COLOR, current, cols=10)
-        # POS — colonnes position lyre
+        # POS - colonnes position lyre
         self._add_section(tr("pos_slot_section"), pos, "#2255ee", current)
-        # Lecteur — transport (avec ou sans slots), sortie vidéo, effets vidéo.
+        # Lecteur - transport (avec ou sans slots), sortie vidéo, effets vidéo.
         # ⚠️ Cette liste est écrite EN DUR : ajouter une entrée à
         # `_AKAI_SLOT_OPTIONS` ne suffit PAS à la faire apparaître ici. Le gros
-        # éditeur de layout, lui, lit bien `_AKAI_SLOT_OPTIONS` — d'où une
+        # éditeur de layout, lui, lit bien `_AKAI_SLOT_OPTIONS` - d'où une
         # colonne assignable dans l'éditeur mais introuvable dans ce popup,
         # qui est pourtant le chemin normal (clic sur l'étiquette du fader).
         self._add_section(tr("mwy_003"), ["PLAY", "SANS SLOT", "VIDEO", "VFX"],
@@ -2170,7 +2190,7 @@ class _SlotPickerPopup(QFrame):
 
 
 class _SlotPickerButton(QPushButton):
-    """Bouton qui remplace QComboBox — ouvre _SlotPickerPopup au clic."""
+    """Bouton qui remplace QComboBox - ouvre _SlotPickerPopup au clic."""
     currentTextChanged = Signal(str)
 
     def __init__(self, options, current, parent=None):
@@ -2209,7 +2229,7 @@ class _SlotPickerButton(QPushButton):
 
 
 class _DecorativeFader(QWidget):
-    """Fader AKAI décoratif non-interactif — représentation visuelle."""
+    """Fader AKAI décoratif non-interactif - représentation visuelle."""
     def __init__(self, color="#444", parent=None):
         super().__init__(parent)
         self._color = QColor(color)
@@ -2231,7 +2251,7 @@ class _DecorativeFader(QWidget):
         p.setBrush(QColor("#1c1c1c"))
         p.drawRoundedRect(cx - 2, 5, 4, h - 10, 2, 2)
 
-        # Handle — positionné à 38% du haut
+        # Handle - positionné à 38% du haut
         hw, hh = 20, 10
         hx = cx - hw // 2
         hy = int(h * 0.38) - hh // 2
@@ -2255,10 +2275,10 @@ class _DecorativeFader(QWidget):
 
 
 # Fonctions du bouton en bas à droite du contrôleur (TAP tempo sur l'APC mini).
-#   bpm        : tap tempo — règle la vitesse des effets
+#   bpm        : tap tempo - règle la vitesse des effets
 #   go         : avance à la mémoire / au cue suivant
-#   flash      : momentané — toutes les mémoires actives à 100 % tant qu'il est tenu
-#   flash_kill : momentané — toutes les mémoires actives coupées tant qu'il est tenu
+#   flash      : momentané - toutes les mémoires actives à 100 % tant qu'il est tenu
+#   flash_kill : momentané - toutes les mémoires actives coupées tant qu'il est tenu
 #   page       : page de layout suivante (+1, retour à la 1 après la dernière)
 TAP_BUTTON_MODES = ("bpm", "go", "flash", "flash_kill", "page")
 _TAP_MODE_KEYS = {
@@ -2270,7 +2290,7 @@ _TAP_MODE_KEYS = {
 }
 
 
-# Couleur d'accent par mode — la même dans le menu, sur le bouton de la fenêtre
+# Couleur d'accent par mode - la même dans le menu, sur le bouton de la fenêtre
 # de configuration et sur le bouton du contrôleur à l'écran.
 _TAP_MODE_COLORS = {
     "bpm":        "#8a8a8a",
@@ -2281,7 +2301,7 @@ _TAP_MODE_COLORS = {
 }
 # Reprend trait pour trait la feuille de style du menu des effets
 # (`ui_components.EffectButton.show_effects_menu`) : mêmes fonds, même en-tête
-# de section, et surtout la même marque de sélection — fond vert et liseré à
+# de section, et surtout la même marque de sélection - fond vert et liseré à
 # gauche. Deux menus qui font le même geste doivent se ressembler.
 _TAP_MENU_SS = (
     "QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:2px; font-size:11px; }"
@@ -2329,7 +2349,7 @@ def normalize_tap_button_mode(value) -> str:
 
 
 class AkaiLayoutEditorDialog(QDialog):
-    """Fenetre d'edition des 8 colonnes AKAI — représentation visuelle du contrôleur."""
+    """Fenetre d'edition des 8 colonnes AKAI - représentation visuelle du contrôleur."""
 
     # ── Couleurs par type d'assignation ──────────────────────────────────────
     _GROUP_COLORS = {
@@ -2374,7 +2394,7 @@ class AkaiLayoutEditorDialog(QDialog):
             self._pages = [[dict(s) for s in slots]]
             self._cur_page = 0
         slots = self._pages[self._cur_page]
-        # Slots d'origine — sert à préserver le réglage fader des colonnes POS
+        # Slots d'origine - sert à préserver le réglage fader des colonnes POS
         # (axe pan/tilt + groupe), non éditable ici mais à ne pas écraser.
         self._initial_slots = [dict(s) for s in slots]
 
@@ -2389,7 +2409,7 @@ class AkaiLayoutEditorDialog(QDialog):
         title.setStyleSheet("color:#fff;")
         hdr.addWidget(title)
         hdr.addStretch()
-        # Navigateur de page — même style que la page d'accueil (◀ x/n ▶)
+        # Navigateur de page - même style que la page d'accueil (◀ x/n ▶)
         _PG_SS = (
             "QPushButton { background:#1e1e1e; color:#bbb; border:1px solid #3a3a3a;"
             " border-radius:4px; font-size:12px; font-weight:bold; }"
@@ -2456,7 +2476,7 @@ class AkaiLayoutEditorDialog(QDialog):
             faders_lay.addWidget(col_w, 1)
             self._on_col_changed(col, current_val)
 
-        # Séparateur + fader 9 (master — non configurable)
+        # Séparateur + fader 9 (master - non configurable)
         sep9 = QFrame()
         sep9.setFrameShape(QFrame.VLine)
         sep9.setFixedWidth(1)
@@ -2834,7 +2854,7 @@ class AkaiLayoutEditorDialog(QDialog):
 # ── Effets vidéo ──────────────────────────────────────────────────────────────
 # Tous les effets sont de la même famille : un calque de couleur uni posé
 # par-dessus la sortie, dont seule l'OPACITÉ varie dans le temps. Aucun
-# traitement par image — pas de `frame.toImage()` par frame, donc rien qui
+# traitement par image - pas de `frame.toImage()` par frame, donc rien qui
 # vienne disputer le thread GUI au timer DMX 25 fps (voir
 # `Plan3DWebWindow._on_video_frame`, où la conversion est justement ce qui
 # coûte). C'est ce qui exclut d'office le flou et la pixellisation : eux
@@ -2860,7 +2880,7 @@ _VIDEO_FX_ORDER = ("strobe", "strobe_bpm", "strobe_white", "strobe_rand",
 
 # Effets à UN COUP : ils se désarment tout seuls une fois retombés, et un
 # nouvel appui les REDÉCLENCHE au lieu de les éteindre. Un coup se tape sur un
-# temps fort — si le pad devait aussi servir à l'éteindre, deux appuis
+# temps fort - si le pad devait aussi servir à l'éteindre, deux appuis
 # rapprochés annuleraient le second coup, ce qui est exactement l'inverse de
 # l'usage.
 _VFX_ONESHOT = ("hit_white", "hit_black")
@@ -2868,9 +2888,9 @@ _VFX_ONESHOT = ("hit_white", "hit_black")
 # Colonne VIDÉO : rôle de chaque pad (haut → bas) = (action, glyphe, couleur).
 # action : "cut" | "none" | "fx:<clé>" | None (pad vide, comme _PLAY_ROWS_NOSLOT).
 # Le fader de cette colonne est le DIMMER de la sortie vidéo (défaut 100 %,
-# exclu des remises à zéro startup/clear — voir _sync_video_fader).
+# exclu des remises à zéro startup/clear - voir _sync_video_fader).
 #
-# Elle ne porte plus que les deux commandes qu'on cherche en urgence — couper,
+# Elle ne porte plus que les deux commandes qu'on cherche en urgence - couper,
 # et tout éteindre. Les EFFETS vivent sur les colonnes VFX, où ils sont
 # assignables pad par pad : les figer ici plafonnait leur nombre à six.
 # `action="fx:<clé>"` reste accepté, pour qui voudrait en réattacher un.
@@ -2905,7 +2925,7 @@ _VFX_RAND_DUTY  = 42       # % de pas allumés
 _VFX_TICK_MS = 25
 
 # Bouton EFFET : clignotement et largeur. 420 ms est la cadence déjà utilisée
-# par le clignotement des pads mémoire (`_auto_blink_timer`) — deux rythmes
+# par le clignotement des pads mémoire (`_auto_blink_timer`) - deux rythmes
 # différents à l'écran se remarqueraient.
 _VFX_BLINK_MS  = 420
 _VFX_BTN_W_MIN = 52    # largeur au repos, celle du libellé « EFFET »
@@ -2925,7 +2945,7 @@ def _video_fx_alpha(fx, elapsed_ms, bpm=_VFX_BPM_DEFAUT):
     repaint n'a aucune raison de tourner pour un calque immobile, qui n'a pas
     besoin d'être redessiné 40 fois par seconde par-dessus une vidéo. Aucun des
     effets actuels n'est figé une fois lancé, mais un effet à opacité constante
-    (une teinte) doit rendre `False` — c'est ce qui rend le mécanisme sûr quand
+    (une teinte) doit rendre `False` - c'est ce qui rend le mécanisme sûr quand
     on en rajoute un.
     """
     import math
@@ -2963,7 +2983,7 @@ def _video_fx_alpha(fx, elapsed_ms, bpm=_VFX_BPM_DEFAUT):
         return _VFX_PULSE_MAX * (1.0 - math.cos(2 * math.pi * phase)) / 2.0, True
     if fx in ("hit_white", "hit_black"):
         # Un coup : opacité pleine d'emblée, puis retombée. Le carré fait chuter
-        # vite au début — une décroissance linéaire donne un coup mou. Seule la
+        # vite au début - une décroissance linéaire donne un coup mou. Seule la
         # COULEUR du calque distingue le coup de blanc du coup de noir.
         x = t / float(_VFX_HIT_MS)
         if x >= 1.0:
@@ -3009,7 +3029,7 @@ class VideoFxOverlay(QWidget):
     Transparent aux clics, sans fond propre : il ne fait que remplir son
     rectangle d'une couleur à alpha, Qt compose sur ce qui est peint en dessous.
 
-    ⚠️ **Ne fonctionne PAS par-dessus une vidéo qui joue** — mesuré, pas
+    ⚠️ **Ne fonctionne PAS par-dessus une vidéo qui joue** - mesuré, pas
     supposé : voir `VideoSurface`, qui existe précisément pour ça. Ce calque-ci
     ne sert qu'aux pages « image » et « noir », et les deux porteurs sont
     EXCLUSIFS (sinon la couleur est mélangée deux fois).
@@ -3079,20 +3099,20 @@ class VideoGeometry:
 
     Trois etages, appliques dans cet ordre par `VideoSurface._relayout()` :
 
-      1. `fit`      — comment l'image occupe la dalle : « fit » garde le ratio
+      1. `fit`      - comment l'image occupe la dalle : « fit » garde le ratio
                       (bandes noires), « fill » remplit en rognant, « stretch »
                       etire sans se soucier du ratio.
-      2. `scale_*` / `offset_*` — retouche manuelle, en fraction de la vue. De
+      2. `scale_*` / `offset_*` - retouche manuelle, en fraction de la vue. De
                       quoi rattraper une dalle LED au ratio exotique (une 3:1,
                       une 5:2) sans passer par les coins.
-      3. `corners`  — quatre deltas (HG, HD, BD, BG), eux aussi en fraction de
+      3. `corners`  - quatre deltas (HG, HD, BD, BG), eux aussi en fraction de
                       la vue, qui deplacent chaque coin independamment. Qt en
                       tire une HOMOGRAPHIE (`QTransform.quadToQuad`), donc un
                       vrai keystone perspectif, pas un simple cisaillement.
 
     Et un masque, pose par-dessus :
 
-      4. `border`   — cadre noir, epaisseur en fraction du petit cote de la
+      4. `border`   - cadre noir, epaisseur en fraction du petit cote de la
                       dalle. Il rogne les bords de l'image (en suivant sa
                       deformation) ET ceux de la dalle : l'image n'apparait
                       que dans l'intersection des deux zones retrecies.
@@ -3122,7 +3142,7 @@ class VideoGeometry:
 
     # ── Etat ──────────────────────────────────────────────────────────────
     def is_identity(self):
-        """Vrai si la geometrie ne change rien — on garde alors le chemin rapide.
+        """Vrai si la geometrie ne change rien - on garde alors le chemin rapide.
 
         Mesure en 1080p : 0,32 ms/frame sans transformation contre 4,43 ms avec
         homographie. Inutile de payer ca quand l'utilisateur n'a rien regle.
@@ -3271,7 +3291,7 @@ class VideoSurface(QGraphicsView):
     Pourquoi pas un `QVideoWidget` avec un widget translucide par-dessus, qui
     serait bien plus simple : **sous Windows, `QVideoWidget` rend l'image dans
     une surface GPU qui passe AU-DESSUS du backing store de la fenêtre.** Un
-    calque enfant se peint correctement — mais DERRIÈRE la vidéo. Mesuré sur une
+    calque enfant se peint correctement - mais DERRIÈRE la vidéo. Mesuré sur une
     vidéo bleue unie : calque blanc OPAQUE posé dessus, la capture d'écran
     lisait toujours le bleu, inchangé. Aucun `raise_()` n'y change rien : ce
     n'est pas un problème d'ordre entre widgets.
@@ -3285,7 +3305,7 @@ class VideoSurface(QGraphicsView):
     il était invisible dès qu'une vidéo jouait.
 
     Expose `videoSink()` pour rester interchangeable avec l'ancien
-    `QVideoWidget` — c'est là que se branche le relais de la dalle LED du plan
+    `QVideoWidget` - c'est là que se branche le relais de la dalle LED du plan
     3D (`Plan3DWebWindow._attach_video`).
     """
 
@@ -3458,7 +3478,7 @@ class VideoSurface(QGraphicsView):
     def _update_frame(self, w, h, iw, ih, to_view):
         """Pose le cadre noir : masque tout sauf image retrecie ∩ dalle retrecie.
 
-        `to_view` envoie un polygone du repere de l'image vers la vue — le
+        `to_view` envoie un polygone du repere de l'image vers la vue - le
         meme chemin que l'image elle-meme, donc le cadre suit le keystone.
         """
         g = self._geom
@@ -3612,7 +3632,7 @@ class _GeometryCanvas(QWidget):
 
     Pourquoi ne pas se contenter des poignees de la mire : le panneau est
     MODAL (`exec()`), et une fenetre modale confisque souris et clavier a
-    toutes les autres — fenetre de sortie comprise. Les poignees dessinees sur
+    toutes les autres - fenetre de sortie comprise. Les poignees dessinees sur
     la dalle etaient donc impossibles a attraper. Et meme sans ca, viser un
     coin sur un ecran de facade a trois metres est penible.
 
@@ -3949,7 +3969,7 @@ class VideoGeometryDialog(QDialog):
 
     Point d'entrée UNIQUE de la sortie : choix de l'écran, marche/arrêt, puis
     cadrage, taille, luminosité et cadre noir. Il s'ouvre donc toujours, même
-    sortie éteinte — les réglages d'image restent grisés tant qu'il n'y a pas
+    sortie éteinte - les réglages d'image restent grisés tant qu'il n'y a pas
     de dalle à regarder, puisque toute la méthode consiste à caler à l'oeil.
 
     `output` est l'hôte (la fenêtre principale) ; il doit exposer
@@ -4938,7 +4958,7 @@ class _StatusCornerWidget(QWidget):
             info = cloud_sync.summary()
         except Exception:
             info = {}
-        email = escape(info.get("email") or "—")
+        email = escape(info.get("email") or "-")
         utc = info.get("last_utc")
         if utc:
             when = _dt.datetime.fromtimestamp(utc)
@@ -5087,7 +5107,7 @@ class PanTiltLimitWidget(QWidget):
             p.setBrush(QColor("#00aacc") if active else QColor("#0a2535"))
             p.drawEllipse(QPoint(int(hx), int(hy)), self._HANDLE_R, self._HANDLE_R)
 
-        # Position actuelle de la lyre (point jaune — draggable).
+        # Position actuelle de la lyre (point jaune - draggable).
         # ⚠️ Dessiné APRÈS les poignées : elles sont opaques et plus grosses que
         # lui. Lyre au repos pan centre / tilt 0 (ou pan 0/255 / tilt centre) =
         # point pile sous une poignée → il « disparaissait » du carré. Il est
@@ -5112,7 +5132,7 @@ class PanTiltLimitWidget(QWidget):
 
     # ── Interaction ──────────────────────────────────────────────────────────
     def _hit(self, pos):
-        # Dot has priority (grabbed first — smaller target)
+        # Dot has priority (grabbed first - smaller target)
         ox, oy, w, h = self._sq()
         dot_x = int(ox + self._to_px(self._cur_pan,  w))
         dot_y = int(oy + self._to_px(self._cur_tilt, h))
@@ -5595,7 +5615,7 @@ class MissingMediaDialog(QDialog):
 
 
 # Canaux de lumière d'une mémoire : comme le niveau, ils ne sortent que fader
-# levé. Le strobe en fait partie — on coupe un strobe en baissant son fader —
+# levé. Le strobe en fait partie - on coupe un strobe en baissant son fader -
 # même si sa vitesse, elle, n'est pas dosée par le fader.
 _MEM_CANAUX_LUMIERE = frozenset(("uv", "amber_boost", "white_boost",
                                  "orange_boost", "strobe_speed"))
@@ -5658,7 +5678,7 @@ class MainWindow(QMainWindow):
         self.tap_button_mode = "bpm"
         self._go_col = -1                   # colonne mémoire courante en mode GO (-1 = pas démarré)
         self._go_row = -1                   # rangée mémoire courante en mode GO
-        self._flash_kind = None             # None | "full" | "kill" — flash momentané en cours
+        self._flash_kind = None             # None | "full" | "kill" - flash momentané en cours
         # {colonne: état de la colonne} le temps d'un appui momentané sur un pad
         # couleur (mode FLASH). Une entrée par colonne : deux doigts sur deux
         # colonnes différentes sont deux momentanés indépendants.
@@ -5710,7 +5730,7 @@ class MainWindow(QMainWindow):
         self._pan_tilt_anim_timer.setInterval(25)   # ~40 fps
         self._pan_tilt_anim_timer.timeout.connect(self._tick_pan_tilt_anim)
 
-        # Layout AKAI personnalisable (8 slots) — désormais organisé en PAGES :
+        # Layout AKAI personnalisable (8 slots) - désormais organisé en PAGES :
         # _bank_pages = liste de dispositions 8-colonnes, navigables en live (◀ ▶).
         # _custom_bank_slots pointe TOUJOURS sur la page active _bank_pages[_bank_page_idx]
         # (invariant : self._custom_bank_slots is self._bank_pages[self._bank_page_idx]).
@@ -5720,7 +5740,7 @@ class MainWindow(QMainWindow):
         self._custom_bank_slots = self._bank_pages[0]
         # NB : changer de page ne modifie PAS l'état lumineux (surface de contrôle seule).
         # Au switch, les faders/pads sont ALIGNÉS sur l'état courant du rig (source de vérité),
-        # d'où l'absence de mémoire de faders/couleurs par page — voir _sync_controls_to_state.
+        # d'où l'absence de mémoire de faders/couleurs par page - voir _sync_controls_to_state.
         self.memories = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.memory_custom_colors = [[None]*8 for _ in range(_MEM_COL_MAX)]
         self.active_memory_pads = {}  # {fader_idx: row} pad actif par colonne memoire
@@ -5738,7 +5758,7 @@ class MainWindow(QMainWindow):
         self.position_pads = [[None]*8 for _ in range(_POS_COL_MAX)]       # position_pads[pos_col][row] = preset_idx ou None
         self.active_position_pads = {}                                      # {pos_col: row}
 
-        # — Fade entre cues (interpolation DMX 40 fps)
+        # - Fade entre cues (interpolation DMX 40 fps)
         self._fade_timer = QTimer(self)
         self._fade_timer.setInterval(25)
         self._fade_timer.timeout.connect(self._fade_tick)
@@ -5747,7 +5767,7 @@ class MainWindow(QMainWindow):
         self._fade_start  = 0.0
         self._fade_dur    = 0.0
 
-        # — Durée auto-avance
+        # - Durée auto-avance
         self._dur_timer = QTimer(self)
         self._dur_timer.setSingleShot(True)
         self._dur_timer.timeout.connect(self._on_duration_elapsed)
@@ -5761,7 +5781,7 @@ class MainWindow(QMainWindow):
         # endroit plutôt que de relancer le cue depuis le début.
         self._dur_paused_left = None
 
-        # — Clignotement du pad pendant un enchaînement automatique
+        # - Clignotement du pad pendant un enchaînement automatique
         #
         # Un pad qui enchaîne ses cues tout seul a exactement la même tête
         # qu'un pad posé à la main : rien, sur la grille, ne dit que la
@@ -5770,14 +5790,14 @@ class MainWindow(QMainWindow):
         # Le clignotement SUIT le timer de durée : le tick vérifie qu'il tourne
         # encore et s'éteint sinon. Cette dépendance unique évite d'avoir à
         # penser à l'éteindre depuis chacun des chemins qui arrêtent
-        # l'enchaînement — CLEAR, pad relâché, fin de liste, pause.
+        # l'enchaînement - CLEAR, pad relâché, fin de liste, pause.
         self._auto_blink      = None    # (mem_col, row) qui clignote, None sinon
         self._auto_blink_on   = False
         self._auto_blink_timer = QTimer(self)
         self._auto_blink_timer.setInterval(420)
         self._auto_blink_timer.timeout.connect(self._auto_blink_tick)
 
-        # — Mise à jour barre de progression (10 fps)
+        # - Mise à jour barre de progression (10 fps)
         self._dur_progress_timer = QTimer(self)
         self._dur_progress_timer.setInterval(100)
         self._dur_progress_timer.timeout.connect(self._update_cue_progress)
@@ -5785,7 +5805,7 @@ class MainWindow(QMainWindow):
         self.active_fx_pads = {}       # {(fx_col, row): True}
         self.fx_amplitudes = [100] * _FX_COL_MAX
 
-        # — Effets vidéo (voir _VIDEO_FX). Un seul effet à la fois : ils ne se
+        # - Effets vidéo (voir _VIDEO_FX). Un seul effet à la fois : ils ne se
         #   superposent pas, un pad armé désarme le précédent.
         self.video_fx        = None            # clé de _VIDEO_FX, ou None
         # Garde de réentrance : _apply_video_fx désarme un effet à un coup via
@@ -5848,11 +5868,11 @@ class MainWindow(QMainWindow):
         self.auto_patch_at_startup()
 
         # PreciseTimer obligatoire : en type Coarse (défaut), Windows arrondit
-        # 25 ms à 31,2 ms — 32 fps au lieu des 40 annoncés (mesuré 08/09/2026).
+        # 25 ms à 31,2 ms - 32 fps au lieu des 40 annoncés (mesuré 08/09/2026).
         self.dmx_send_timer = make_precise_timer()
         self.dmx_send_timer.timeout.connect(self.send_dmx_update)
         self.dmx_send_timer.timeout.connect(self._update_status_corner)
-        self.dmx_send_timer.start(DMX_FRAME_MS)  # 40 FPS — meilleure compatibilité modules sans fil
+        self.dmx_send_timer.start(DMX_FRAME_MS)  # 40 FPS - meilleure compatibilité modules sans fil
 
         # Timer pour drainer les events venant de la tablette (50 ms)
         self._tablet_event_timer = QTimer()
@@ -5867,7 +5887,7 @@ class MainWindow(QMainWindow):
         self.midi_handler.pad_released.connect(self.on_midi_pad_released)
 
         # Entrée DMX (pupitre) : différée comme la manette, le temps que les
-        # faders et les pads existent — c'est eux qu'elle pilote.
+        # faders et les pads existent - c'est eux qu'elle pilote.
         QTimer.singleShot(1500, self._start_dmx_in_if_enabled)
 
         # Dimmers max IA Lumiere par groupe
@@ -5888,11 +5908,11 @@ class MainWindow(QMainWindow):
         self.current_show_path = None  # Chemin du show actuellement ouvert
 
         # Depart programme : appartient au SHOW (serialise dans le .tui), pas a
-        # la machine — deux shows differents n'ont pas la meme heure de depart.
+        # la machine - deux shows differents n'ont pas la meme heure de depart.
         # Initialise AVANT _create_menu(), qui affiche l'heure armee dans le
         # libelle de l'action.
         self.schedule_enabled  = False
-        self.schedule_time     = "20:00"   # "HH:MM", heure locale — chaque jour
+        self.schedule_time     = "20:00"   # "HH:MM", heure locale - chaque jour
         self.schedule_autostart = True     # False : décompte seul, rien ne part
         self._schedule_timer      = None
         self._schedule_fired_date = None   # "YYYY-MM-DD" de la derniere salve
@@ -5938,6 +5958,9 @@ class MainWindow(QMainWindow):
         # n'est pas touché) ; "enchaine" = pas de noir entre deux REC Lumière.
         # Cf. playlist_clear() et on_media_status_changed().
         self.playlist_transition = "enchaine"
+        # Option du show : à la fin de la playlist, repartir du 1er média.
+        # (La boucle d'UN média, elle, est un drapeau par ligne du séquenceur.)
+        self.playlist_loop = False
         # Vrai tant qu'une cartouche vidéo superposée a pris l'image : la
         # playlist continue en dessous mais ne doit pas reprendre l'aperçu.
         self._cart_video_lead = False
@@ -6027,7 +6050,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, self.activate_default_white_pads)
         QTimer.singleShot(200, self.turn_off_all_effects)
         QTimer.singleShot(300, self._init_default_fx_speed)
-        # Faders BAISSÉS au démarrage — forcé TARDIVEMENT (après les syncs de connexion
+        # Faders BAISSÉS au démarrage - forcé TARDIVEMENT (après les syncs de connexion
         # MIDI ~400 ms) pour ne pas se faire remonter par un sync.
         QTimer.singleShot(650, self._startup_faders_down)
         QTimer.singleShot(1000, self.test_dmx_on_startup)
@@ -6257,6 +6280,9 @@ class MainWindow(QMainWindow):
         # source de controle ENTRANTE, au meme titre que la manette ou la regie
         # video. Rien a voir avec le menu « Sortie DMX », qui parle du parc.
         ctrl_menu.addAction(tr("mw_menu_dmx_in"), self._open_dmx_in_dialog)
+        # PROTOTYPE MyStrow Up : les téléphones du public = un groupe.
+        # Libellé pas encore dans i18n.
+        ctrl_menu.addAction(tr("up_menu"), self._open_crowd_dialog)
         # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
         # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
 
@@ -6333,7 +6359,7 @@ class MainWindow(QMainWindow):
         self._view_cart_action.toggled.connect(self.set_cartouches_visible)
         view_menu.addAction(self._view_cart_action)
 
-        # NB : pas de connexion à self.seq ici — _create_menu() tourne avant que
+        # NB : pas de connexion à self.seq ici - _create_menu() tourne avant que
         # le séquenceur existe. Le branchement se fait après sa création.
 
         about_menu = bar.addMenu(tr("menu_about"))
@@ -6495,7 +6521,7 @@ class MainWindow(QMainWindow):
         # Bouton toggle sortie video
         title_layout = QHBoxLayout()
 
-        # ⚙ Paramétrer la sortie vidéo — à gauche, comme au-dessus du plan de feu
+        # ⚙ Paramétrer la sortie vidéo - à gauche, comme au-dessus du plan de feu
         video_settings_btn = QPushButton("⚙")
         video_settings_btn.setFixedSize(26, 26)
         video_settings_btn.setToolTip(tr("vg_title"))
@@ -6762,7 +6788,7 @@ class MainWindow(QMainWindow):
     def _video_out(self):
         """Cible de `setVideoOutput` : l'ITEM de la scène, pas la vue.
 
-        `QMediaPlayer` ne sait pas rendre dans un `QGraphicsView` — c'est le
+        `QMediaPlayer` ne sait pas rendre dans un `QGraphicsView` - c'est le
         `QGraphicsVideoItem` qu'il alimente. Rend None si Qt Multimedia Widgets
         est absent, auquel cas le preview n'est qu'un carré noir.
         """
@@ -6784,7 +6810,7 @@ class MainWindow(QMainWindow):
 
         Deux sources, dans cet ordre : le tempo détecté par le moteur audio LIVE
         (le plus juste quand il tourne), puis le dernier TAP manuel. Hors bornes
-        ou absent, on retombe sur 120 — un strobe qui s'arrête parce qu'aucun
+        ou absent, on retombe sur 120 - un strobe qui s'arrête parce qu'aucun
         tempo n'est connu serait pire qu'un strobe légèrement à côté.
         """
         b = 0.0
@@ -6821,7 +6847,7 @@ class MainWindow(QMainWindow):
                 fx, (time.time() - self.video_fx_start) * 1000.0, self.video_bpm())
             # Amplitude de la colonne VFX : même rôle que pour un effet lumière,
             # « à quel point l'effet tape ». Elle n'agit QUE sur l'effet, jamais
-            # sur le dimmer — baisser l'amplitude adoucit le strobe, ça n'éteint
+            # sur le dimmer - baisser l'amplitude adoucit le strobe, ça n'éteint
             # pas la vidéo.
             alpha *= max(0, min(100, int(self.video_fx_amplitude))) / 100.0
             _key, hexcol, _glyph, _pad = _VIDEO_FX[fx]
@@ -6847,7 +6873,7 @@ class MainWindow(QMainWindow):
             # ⚠️ EXCLUSIFS. Les deux calques se recouvrent : sur la page vidéo,
             # la scène a déjà posé la couleur, et laisser le widget la poser
             # aussi mélangeait DEUX FOIS. Mesuré : un dimmer à 30 % rendait 9 %
-            # (0,3 × 0,3) — visuellement, un fader qui plonge d'un coup.
+            # (0,3 × 0,3) - visuellement, un fader qui plonge d'un coup.
             ov.set_color(QColor(0, 0, 0, 0) if sur_video else color)
         if self.video_output_window is not None:
             self.video_output_window.set_fx_overlay(color)
@@ -7025,7 +7051,7 @@ class MainWindow(QMainWindow):
         btn = self.video_fx_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    # — Colonne VIDÉO de la grille de pads —
+    # - Colonne VIDÉO de la grille de pads -
 
     def _video_pad_color(self, action):
         """Couleur d'un pad de la colonne VIDÉO."""
@@ -7095,7 +7121,7 @@ class MainWindow(QMainWindow):
                     r, c, rgb_to_akai_velocity(qc), brightness_percent=bri,
                     rgb=(qc.red(), qc.green(), qc.blue()))
 
-    # — Colonnes VFX : pads d'effets vidéo assignables —
+    # - Colonnes VFX : pads d'effets vidéo assignables -
 
     def _vfx_columns(self):
         """Indices des colonnes assignées au type 'vfx'."""
@@ -7204,11 +7230,11 @@ class MainWindow(QMainWindow):
         return bool(self._video_columns())
 
     def _sync_vfx_fader(self, index, slot):
-        """Aligne le fader d'une colonne VFX sur l'amplitude — sans la baisser.
+        """Aligne le fader d'une colonne VFX sur l'amplitude - sans la baisser.
 
         Troisième occurrence du même piège que les colonnes FX et VIDÉO : ce
         fader n'est pas un niveau de projecteur mais l'AMPLITUDE de l'effet
-        vidéo. Le mettre à 0 au démarrage rendrait la colonne muette — les pads
+        vidéo. Le mettre à 0 au démarrage rendrait la colonne muette - les pads
         s'allumeraient, l'effet tournerait, et rien ne se verrait à l'écran.
         Rend la valeur affichée.
         """
@@ -7227,7 +7253,7 @@ class MainWindow(QMainWindow):
         self._apply_video_fx()
 
     def _sync_video_fader(self, index, slot):
-        """Aligne le fader d'une colonne VIDÉO sur le dimmer — sans le baisser.
+        """Aligne le fader d'une colonne VIDÉO sur le dimmer - sans le baisser.
 
         Même piège que la colonne FX : ce fader n'est PAS un niveau de
         projecteur mais le niveau de sortie de la vidéo. Le mettre à 0 comme une
@@ -7287,7 +7313,7 @@ class MainWindow(QMainWindow):
 
     def _create_main_layout(self):
         """Cree le layout principal"""
-        # — Colonne centrale : séquenceur + transport
+        # - Colonne centrale : séquenceur + transport
         mid = QWidget()
         mv = QVBoxLayout(mid)
         mv.setContentsMargins(0, 0, 0, 0)
@@ -7392,7 +7418,7 @@ class MainWindow(QMainWindow):
         main_split.setCollapsible(2, False)
         self._main_split = main_split
 
-        # Barre de mise a jour — placee sous les cartoucheurs dans le panneau AKAI
+        # Barre de mise a jour - placee sous les cartoucheurs dans le panneau AKAI
         self.update_bar = UpdateBar()
         self.update_bar.hide()
         self.update_bar.later_clicked.connect(self._on_update_later)
@@ -7412,7 +7438,7 @@ class MainWindow(QMainWindow):
         # Watermark sur le preview video integre
         self._setup_video_watermark()
 
-        # Serveur HTTP pour le plugin StreamDeck (optionnel — ne bloque pas le démarrage)
+        # Serveur HTTP pour le plugin StreamDeck (optionnel - ne bloque pas le démarrage)
         try:
             from streamdeck_api import StreamDeckAPIServer
             self._streamdeck_server = StreamDeckAPIServer(self)
@@ -7455,7 +7481,7 @@ class MainWindow(QMainWindow):
         # en mode « affichage : aucun panneau », la colonne de droite recupere
         # toute la largeur liberee par la colonne centrale masquee, et la video
         # reclamait alors presque toute la hauteur. Le plan de feu tombait sur
-        # son plancher de 100 px — mesure sur 1920x1080 : 573 px avec panneau,
+        # son plancher de 100 px - mesure sur 1920x1080 : 573 px avec panneau,
         # 100 px sans. D'ou « le plan de feu s'ouvre en tout petit ».
         # La video reste 16:9 a l'affichage (le widget conserve son ratio) :
         # on borne seulement la part de hauteur qu'elle reserve au demarrage.
@@ -7531,7 +7557,7 @@ class MainWindow(QMainWindow):
 
         title_row = QHBoxLayout()
 
-        # ⚙ Paramètres AKAI — à gauche
+        # ⚙ Paramètres AKAI - à gauche
         edit_layout_btn = QPushButton("⚙")
         edit_layout_btn.setFixedSize(26, 26)
         edit_layout_btn.setToolTip(tr("tooltip_akai_layout"))
@@ -7544,7 +7570,7 @@ class MainWindow(QMainWindow):
         armer_declencheur_cache(edit_layout_btn, self._open_amp_x4_tool)
         title_row.addWidget(edit_layout_btn)
 
-        # PADS — surface d'exécuteurs configurable (à droite du ⚙)
+        # PADS - surface d'exécuteurs configurable (à droite du ⚙)
         ext_btn = QPushButton("PADS")
         ext_btn.setFixedSize(40, 26)
         ext_btn.setCheckable(True)
@@ -7840,7 +7866,12 @@ class MainWindow(QMainWindow):
         akai_zone_layout.addSpacing(4)
         # Journal et assistant (texte + voix) dans le même cadre, avec bascule ;
         # l'assistant peut s'agrandir sur toute la colonne.
+        # Assistant masqué pour tout le monde (25/11/2026) : seul le Journal reste,
+        # sans raccourci ni 3 clics pour le faire réapparaître. Remettre True pour le rétablir.
+        ASSISTANT_ENABLED = False
         try:
+            if not ASSISTANT_ENABLED:
+                raise RuntimeError("désactivé")
             from assistant_panel import AssistantDock
             self._assistant_dock = AssistantDock(self, self._msg_log)
             self._assistant_dock.set_root(layout, akai_zone)
@@ -8180,7 +8211,7 @@ class MainWindow(QMainWindow):
             elif slot.get("type") == "video":
                 self._sync_video_fader(fader_idx, slot)
             # Colonne devenue VFX : le fader devient l'amplitude d'effet. Les
-            # pads restent VIDES, à garnir au clic droit — comme une colonne FX,
+            # pads restent VIDES, à garnir au clic droit - comme une colonne FX,
             # mémoire ou groupe. Pas de pré-remplissage : la colonne appartient
             # à l'utilisateur, pas à un rangement décidé pour lui.
             elif slot.get("type") == "vfx":
@@ -8247,7 +8278,7 @@ class MainWindow(QMainWindow):
         wizard.exec()
 
     def _on_custom_profile_saved(self, profile_path: str):
-        """Appelé quand le wizard enregistre un profil — connecte le contrôleur.
+        """Appelé quand le wizard enregistre un profil - connecte le contrôleur.
 
         Sortir de l'assistant doit suffire à se servir du contrôleur. Une simple
         reconnexion ne le garantit pas : si un autre contrôleur était épinglé
@@ -8411,7 +8442,7 @@ class MainWindow(QMainWindow):
     def _sync_controls_to_state(self):
         """Après un changement de page : la surface de contrôle change, PAS l'état lumineux.
         On aligne seulement les faders et les pads actifs sur l'état COURANT de ce qu'ils
-        contrôlent désormais — aucun envoi DMX, aucune perte de lumière (pupitre à pages)."""
+        contrôlent désormais - aucun envoi DMX, aucune perte de lumière (pupitre à pages)."""
         # Pads groupe : refléter la couleur courante de chaque groupe (sans la changer)
         group_rows = {}
         for col, slot in enumerate(self._fader_map):
@@ -8461,12 +8492,12 @@ class MainWindow(QMainWindow):
                 _ts.push_fader(i, val)
 
     def _sync_fx_fader(self, index, slot):
-        """Aligne le fader d'une colonne FX sur son amplitude — sans la baisser.
+        """Aligne le fader d'une colonne FX sur son amplitude - sans la baisser.
 
         Le fader d'une colonne FX n'est PAS un niveau de projecteur : c'est
         l'amplitude de l'effet, et `update_effect` sort en tête quand elle vaut
         0. Le remettre à zéro comme une colonne de groupe rendait donc muet tout
-        pad FX de la colonne — le pad s'allumait, l'effet tournait, mais plus
+        pad FX de la colonne - le pad s'allumait, l'effet tournait, mais plus
         rien n'atteignait les projecteurs, ni sur le fil DMX ni dans la 3D. Et il
         n'y a rien à éteindre en échange : un effet ne tourne que si un pad
         l'arme. Rend la valeur affichée.
@@ -8492,7 +8523,7 @@ class MainWindow(QMainWindow):
             slot = self._fader_map[i] if i < len(self._fader_map) else {}
             stype = slot.get("type")
             # La colonne PLAY = volume : ne JAMAIS la baisser au démarrage
-            # (sinon le son est coupé au lancement — piège ergonomique).
+            # (sinon le son est coupé au lancement - piège ergonomique).
             if stype == "play":
                 continue
             # La colonne FX = amplitude d'effet : voir _sync_fx_fader.
@@ -8661,10 +8692,78 @@ class MainWindow(QMainWindow):
         btns.addWidget(self.play_btn)
         btns.addSpacing(4)
         btns.addWidget(nxt)
+        btns.addSpacing(4)
+
+        # 🔁 Boucle de toute la playlist : allumé (cyan) = la playlist repart
+        # du 1er média à la fin. Ne pas confondre avec la boucle d'un média
+        # (clic droit sur le média) - le bandeau dessous dit laquelle joue.
+        self.loop_btn = QToolButton()
+        self.loop_btn.setCheckable(True)
+        self.loop_btn.setIconSize(QSize(24, 24))
+        self.loop_btn.setFixedSize(44, 44)
+        self.loop_btn.setStyleSheet(side_style + """
+            QToolButton:checked {
+                background: #003344;
+                border: 2px solid #00d4ff;
+            }
+        """)
+        self.loop_btn.setToolTip(tr("mw_loop_playlist_tip"))
+        self.loop_btn.toggled.connect(self.set_playlist_loop)
+        btns.addWidget(self.loop_btn)
         btns.addStretch()
         layout.addLayout(btns)
 
+        # Avertissement « joue en boucle » sous le transport : sans lui, rien
+        # ne dit pourquoi le show ne s'arrête pas à la fin.
+        self.loop_banner = QLabel("")
+        self.loop_banner.setAlignment(Qt.AlignCenter)
+        self.loop_banner.setStyleSheet(
+            "color: #00d4ff; font-weight: bold; font-size: 12px;"
+            " background: transparent; border: none;")
+        self.loop_banner.hide()
+        layout.addWidget(self.loop_banner)
+        self.refresh_loop_banner()
+
         return frame
+
+    def set_playlist_loop(self, enabled):
+        """Active/désactive la boucle de toute la playlist (bouton 🔁, clic droit, show)."""
+        enabled = bool(enabled)
+        changed = enabled != self.playlist_loop
+        self.playlist_loop = enabled
+        btn = getattr(self, 'loop_btn', None)
+        if btn is not None and btn.isChecked() != enabled:
+            btn.blockSignals(True)
+            btn.setChecked(enabled)
+            btn.blockSignals(False)
+        if changed and hasattr(self, 'seq'):
+            self.seq.is_dirty = True
+        self.refresh_loop_banner()
+
+    def refresh_loop_banner(self):
+        """Icône du bouton 🔁 + bandeau : ce média en boucle prime sur la playlist."""
+        btn = getattr(self, 'loop_btn', None)
+        if btn is not None:
+            btn.setIcon(create_icon("loop", "#00d4ff" if self.playlist_loop else "#cccccc"))
+        banner = getattr(self, 'loop_banner', None)
+        if banner is None:
+            return
+        seq = getattr(self, 'seq', None)
+        row = seq.current_row if seq is not None else -1
+        if seq is not None and row >= 0 and seq.is_row_loop(row):
+            banner.setText(tr("mw_loop_banner_media"))
+            banner.show()
+        elif self.playlist_loop:
+            banner.setText(tr("mw_loop_banner_playlist"))
+            banner.show()
+        else:
+            banner.hide()
+
+    def playlist_first_row(self):
+        """Ligne où repart la playlist en boucle, ou None (pas de boucle / liste vide)."""
+        if self.playlist_loop and self.seq.table.rowCount() > 0:
+            return 0
+        return None
 
     def trigger_pause_mode(self):
         """Active le mode pause sans clignotement"""
@@ -8722,7 +8821,7 @@ class MainWindow(QMainWindow):
             self._update_video_output_state()
         else:
             # Rien en lecture. Si la playlist n'a jamais démarré (aucun média
-            # chargé), lancer directement le média sélectionné (ou le 1er) —
+            # chargé), lancer directement le média sélectionné (ou le 1er) -
             # évite d'avoir à double-cliquer sur le premier média.
             if self.seq.current_row < 0 and self.seq.table.rowCount() > 0:
                 target = self.seq.table.currentRow()
@@ -8731,8 +8830,8 @@ class MainWindow(QMainWindow):
                 self.seq.play_row(target)
             else:
                 self.player.play()
-                # Média déjà chargé : `play_row()` — seul endroit qui armait la
-                # lumière — n'est pas rejoué. Sans ça, un REC Lumière enregistré
+                # Média déjà chargé : `play_row()` - seul endroit qui armait la
+                # lumière - n'est pas rejoué. Sans ça, un REC Lumière enregistré
                 # puis sauvegardé ne partait qu'après un nouveau double-clic sur
                 # le média, alors que le son, lui, repartait normalement.
                 self.seq.ensure_light_playback_armed()
@@ -8799,7 +8898,7 @@ class MainWindow(QMainWindow):
             pos = self.player.position()
             dur = self.player.duration()
             if dur > 0 and pos < dur - 2000:
-                return  # Faux EndOfMedia sur un silence — ignorer
+                return  # Faux EndOfMedia sur un silence - ignorer
 
             # Verifier que c'est bien le media courant qui est termine
             # (evite qu'un EndOfMedia retarde d'un ancien media avance au mauvais rang)
@@ -8841,6 +8940,8 @@ class MainWindow(QMainWindow):
                 def _after_ia_fade():
                     if next_row < self.seq.table.rowCount():
                         self.seq.play_row(next_row)
+                    elif self.playlist_first_row() is not None:
+                        self.seq.play_row(self.playlist_first_row())
                     else:
                         print("Fin de la sequence")
                         self.update_play_icon(QMediaPlayer.StoppedState)
@@ -8855,7 +8956,7 @@ class MainWindow(QMainWindow):
                 # look du média qui se termine, mais on laisse vivre la couche
                 # HTP (faders + pads mémoire) qui porte l'éclairage d'ambiance.
                 # Sinon l'ambiance s'éteint à chaque changement de média.
-                # Enchaîné : d'un REC Lumière à un autre, pas de noir du tout —
+                # Enchaîné : d'un REC Lumière à un autre, pas de noir du tout -
                 # la timeline entrante repeint tout le rig à sa 1re image, le
                 # dernier look tient pendant le chargement. On coupe seulement
                 # l'effet du REC sortant (sinon un strobe bave sur le suivant).
@@ -8875,9 +8976,18 @@ class MainWindow(QMainWindow):
                 # (ré-entrance) → crash natif intermittent aux transitions de
                 # média en playlist. singleShot(0) exécute au tour de boucle suivant.
                 QTimer.singleShot(0, lambda r=next_row: self.seq.play_row(r))
+            elif self.playlist_first_row() is not None:
+                # Playlist en boucle : on repart du 1er média, avec le noir
+                # habituel d'une fin de REC Lumière (le 1er média repeint tout).
+                if current_mode == "Play Lumiere":
+                    self.transition_blackout()
+                if getattr(self, '_linked_image_row', None) is not None:
+                    self.hide_image()
+                first = self.playlist_first_row()
+                QTimer.singleShot(0, lambda r=first: self.seq.play_row(r))
             else:
                 # Fin de playlist : même raisonnement. Le show est terminé, mais
-                # l'ambiance tenue à la main n'a aucune raison de s'éteindre —
+                # l'ambiance tenue à la main n'a aucune raison de s'éteindre -
                 # plonger la salle dans le noir n'est pas ce qu'on attend ici.
                 if current_mode == "Play Lumiere":
                     self.transition_blackout()
@@ -8888,14 +8998,14 @@ class MainWindow(QMainWindow):
                 self._update_video_output_state()
 
     def dmx_blackout(self):
-        """Blackout DMX des projecteurs — l'éclairage tenu sur l'APC survit.
+        """Blackout DMX des projecteurs - l'éclairage tenu sur l'APC survit.
 
         La fonction promettait déjà de « conserver l'éclairage AKAI » et faisait
         exactement l'inverse : elle descendait les 9 faders à 0. Or un fader à 0
         est ce qui coupe les DEUX couches HTP de `send_dmx_update()` (mémoires et
         pads couleur, toutes deux conditionnées à `fader_value > 0`). Appelée au
         lancement d'une ligne PAUSE de la playlist, elle éteignait donc pour de
-        bon l'ambiance montée à la main — pads + faders — sans rien pour la
+        bon l'ambiance montée à la main - pads + faders - sans rien pour la
         rallumer. On ne touche plus qu'aux projecteurs, et on repose ensuite ce
         que l'APC tient (cf. `restore_manual_look`).
         """
@@ -8903,12 +9013,12 @@ class MainWindow(QMainWindow):
         self.restore_manual_look()
 
     def clear_engine_look(self, strobe=False):
-        """Noircit le look laissé par un MOTEUR — pas ce que l'utilisateur tient.
+        """Noircit le look laissé par un MOTEUR - pas ce que l'utilisateur tient.
 
         Une fixture prise en main (plan 2D, tablette, curseurs : `_manual_color`)
         est un état ENVOYÉ volontairement. Les mémoires et les fondus la
         respectaient déjà ; le lancement d'un média en Manuel et les lignes PAUSE
-        la remettaient au noir sans condition — « j'envoie un état sur mes projos,
+        la remettaient au noir sans condition - « j'envoie un état sur mes projos,
         je lance un média, ça les coupe ». Elle ne se libère que par CLEAR, une
         action mémoire volontaire, ou un moteur qui reprend tout le rig
         (`_release_manual_grabs`).
@@ -8961,43 +9071,41 @@ class MainWindow(QMainWindow):
                     self.midi_handler.set_pad_led(row, col, 0, 0)
 
     def transition_blackout(self):
-        """Blackout de FIN DE MÉDIA — éteint le look, épargne l'ambiance.
+        """Blackout de FIN DE MÉDIA - éteint le look, épargne l'ambiance.
 
         Les transitions de playlist appelaient `full_blackout()`, qui n'est pas
         un noir mais une démolition complète : les 9 faders à 0, `active_pads`
         vidé, les LED de l'AKAI éteintes. Or c'est précisément ce trio qui porte
-        la couche HTP appliquée dans `send_dmx_update()` — celle qui se pose
+        la couche HTP appliquée dans `send_dmx_update()` - celle qui se pose
         par-dessus les projecteurs juste avant l'envoi DMX, puis se retire.
         Cette couche exige `fader_value > 0` (cf. `_compute_htp_overrides` et
         `_apply_pad_overrides_htp`) : descendre les faders la tue.
 
         Conséquence remontée par un client : un éclairage d'ambiance (ou un
         éclairage principal) tenu sur un fader + pad mémoire s'éteignait à
-        CHAQUE changement de média — « entre chaque changement dans la liste ça
+        CHAQUE changement de média - « entre chaque changement dans la liste ça
         fait une légère coupure », « au moment de passer au son suivant il y a
         un temps mort ». Il demandait « un mode mix » pour que ça reste actif.
 
         Le mode mix existait déjà, en fait : la couche HTP se moque que
         `projectors` soit à zéro, puisqu'elle est posée APRÈS tout le monde. Il
-        suffisait d'arrêter de la casser. Donc ici on éteint le look — les
+        suffisait d'arrêter de la casser. Donc ici on éteint le look - les
         projecteurs et l'effet en cours, sinon un strobe de fin de REC bave sur
-        le média suivant — mais on ne touche NI aux faders, NI aux pads, NI aux
+        le média suivant - mais on ne touche NI aux faders, NI aux pads, NI aux
         LED. L'ambiance traverse la transition sans broncher.
 
         `full_blackout()` reste la bonne fonction pour un blackout demandé
         explicitement par l'utilisateur (bouton Blackout de la fenêtre externe) :
         là, tout couper est bien l'intention.
         """
-        for p in self.projectors:
-            p.level = 0
-            p.color = QColor("black")
-            p.base_color = QColor("black")
-            p.strobe_speed = 0
-
         # Couper l'effet en cours : c'était `full_blackout()` qui s'en chargeait
         # à la fin d'un média (`on_media_status_changed` arrête le timer de la
         # timeline sans appeler `_stop_timeline_effect`). Sans ça, l'effet du
         # dernier clip continuerait de tourner sur le média suivant.
+        # ⚠️ AVANT le noir : `stop_effect` REPOSE l'état d'avant l'effet
+        # (couleur, niveau). Fait après, il rallumait le rig - souvent en
+        # blanc - entre deux médias (« l'effet passe au blanc entre deux
+        # médias de la séquence », Nico, 20/11/2026).
         for btn in self.effect_buttons:
             if btn.active:
                 btn.active = False
@@ -9006,6 +9114,12 @@ class MainWindow(QMainWindow):
         if self.active_effect is not None:
             self.stop_effect()
             self.active_effect = None
+
+        for p in self.projectors:
+            p.level = 0
+            p.color = QColor("black")
+            p.base_color = QColor("black")
+            p.strobe_speed = 0
 
         # Rig remis à plat : ce que la REC tenait n'a plus à être « rendu ».
         if hasattr(getattr(self, 'seq', None), 'hyb_oublier'):
@@ -9025,7 +9139,7 @@ class MainWindow(QMainWindow):
     def playlist_clear(self):
         """Option « Clear » : repart d'un rig propre à chaque changement de média.
 
-        Exactement le CLEAR du plan de feu 2D — une seule définition du repos,
+        Exactement le CLEAR du plan de feu 2D - une seule définition du repos,
         pas une liste recopiée ici. L'APC n'est PAS touché : pads, faders et
         mémoires restent, et on repose aussitôt ce qu'ils tiennent.
         """
@@ -9043,13 +9157,13 @@ class MainWindow(QMainWindow):
 
         À appeler après toute extinction AUTOMATIQUE (fin de média, lancement
         d'un média en Manuel, ligne PAUSE). Ces extinctions écrivent du noir sur
-        les `Projector` pour effacer le look du moteur qui vient de s'arrêter —
+        les `Projector` pour effacer le look du moteur qui vient de s'arrêter -
         mais elles effaçaient du même coup l'éclairage monté à la main sur les
         colonnes groupe, pad couleur + fader.
 
         Sur le fil DMX, ce look-là revenait quand même : `_apply_pad_overrides_htp`
         le repose à chaque image, juste avant l'envoi. Mais il le repose puis le
-        RETIRE — le modèle, lui, restait noir. D'où un plan de feu 2D (et la 3D,
+        RETIRE - le modèle, lui, restait noir. D'où un plan de feu 2D (et la 3D,
         et la tablette) entièrement éteints alors que la salle est allumée, et
         surtout la perte de tout ce que cette couche HTP ne porte pas : la roue
         de couleurs du pad (`cw_dmx_val`), la `base_color` du groupe, donc la
@@ -9057,12 +9171,12 @@ class MainWindow(QMainWindow):
 
         On ne rallume QUE ce qui est réellement tenu : colonne de type groupe,
         non mutée, avec un pad actif et un fader levé. Un groupe que personne ne
-        tient reste noir — « Manuel = pas de lumière » vaut toujours pour lui.
+        tient reste noir - « Manuel = pas de lumière » vaut toujours pour lui.
         `set_proj_level` reste l'unique writer de ce chemin (couleur, niveau,
         roue de couleurs) : on ne recopie pas sa logique ici.
 
         Une fixture prise en main (`_manual_color`) garde son état : c'est un
-        repeint passif, pas un geste sur le fader — il n'a pas à l'écraser avec
+        repeint passif, pas un geste sur le fader - il n'a pas à l'écraser avec
         la couleur de son groupe.
         """
         held = [(p, p.level, QColor(p.color), QColor(p.base_color),
@@ -9090,7 +9204,7 @@ class MainWindow(QMainWindow):
         Vrai tant que le bouton FLASH est TENU (`_flash_kind`), pas parce que le
         bouton bas-droite est regle sur FLASH : c'est l'appui qui fait basculer
         l'app en « tout ce que je pose se defait au relache ». Un seul geste,
-        deux effets coherents — les memoires montent a 100 %, et les pads
+        deux effets coherents - les memoires montent a 100 %, et les pads
         couleur poses pendant ce temps sont rendus au relache.
 
         Ce qui compte est l'etat AU MOMENT DE L'APPUI sur le pad : lacher le
@@ -9103,7 +9217,7 @@ class MainWindow(QMainWindow):
         """Repeint les 8 pads couleur d'une colonne (UI + LEDs) d'apres `active_pads`.
 
         Un momentane rend le pad precedent : le repeindre a partir de l'etat, et
-        non de l'evenement, evite d'avoir a memoriser des feuilles de style — et
+        non de l'evenement, evite d'avoir a memoriser des feuilles de style - et
         c'est le seul moyen de rallumer la LED physique du pad d'origine.
         """
         active = self.active_pads.get(col_idx)
@@ -9312,7 +9426,7 @@ class MainWindow(QMainWindow):
         self.send_dmx_update()
 
     # Slots génériques de roue de couleurs (repli quand la fixture n'a pas de
-    # color_wheel_slots OFL) — mêmes valeurs que le menu du plan de feu (parité).
+    # color_wheel_slots OFL) - mêmes valeurs que le menu du plan de feu (parité).
     _GENERIC_WHEEL_SLOTS = [
         {"dmx": 0, "color": "#ffffff"}, {"dmx": 20, "color": "#ff3300"},
         {"dmx": 42, "color": "#ff8800"}, {"dmx": 64, "color": "#ffff00"},
@@ -9349,7 +9463,7 @@ class MainWindow(QMainWindow):
         des valeurs de départ de l'assistant de calibration). Avant, ce repli
         était une table de teintes SÉPARÉE, et elle contredisait la référence :
         vert partait sur la position « orange », bleu sur « jaune », magenta sur
-        « bleu » — 5 pads sur 8 sortaient la mauvaise couleur tant que la roue
+        « bleu » - 5 pads sur 8 sortaient la mauvaise couleur tant que la roue
         n'était pas calibrée. Une seule table, un seul comportement.
         """
         profile = getattr(p, 'dmx_profile', [])
@@ -9357,16 +9471,16 @@ class MainWindow(QMainWindow):
             return
         slots = getattr(p, 'color_wheel_slots', []) or self._GENERIC_WHEEL_SLOTS
 
-        # Métrique unique : `core.cw_slot_for_color` — comparaison de TEINTE à
+        # Métrique unique : `core.cw_slot_for_color` - comparaison de TEINTE à
         # pleine valeur, et refus du noir. Sans ça, la distance RVB brute était
         # dominée par la luminosité : la roue partait sur le slot le plus SOMBRE
         # dès que la couleur baissait (un rouge à 5 % sortait vert), et une frame
-        # noire d'effet Strobe/Flash — cette fonction est rappelée à CHAQUE frame
-        # avec `p.color` — envoyait la roue sur le vert avant de revenir au blanc.
+        # noire d'effet Strobe/Flash - cette fonction est rappelée à CHAQUE frame
+        # avec `p.color` - envoyait la roue sur le vert avant de revenir au blanc.
         best = cw_slot_for_color(slots, color)
         if best is None:
             # Noir : pas de teinte à choisir. La roue reste où elle est, le noir
-            # se fait au dimmer/shutter — et une roue physique n'a rien à faire
+            # se fait au dimmer/shutter - et une roue physique n'a rien à faire
             # tourner pendant un noir.
             return
         p.color_wheel = best.get('dmx', 0)
@@ -9505,7 +9619,7 @@ class MainWindow(QMainWindow):
         if "akai" in keys:
             items.append(tr("cloud_item_akai"))
         when = (_dt.datetime.fromtimestamp(utc).strftime("%d/%m/%Y · %H:%M")
-                if utc else "—")
+                if utc else "-")
         # Patch et effets vivent en mémoire dans l'appli (et y seraient
         # réécrits) : on redémarre. Mémoires / pages AKAI : rechargées à chaud.
         restart = any(k != "akai" for k in keys)
@@ -9568,8 +9682,8 @@ class MainWindow(QMainWindow):
     # colonne : on le pose, il reste, et les autres colonnes continuent leur
     # vie. Trois autres façons de le jouer se règlent maintenant pad par pad
     # (clic droit > Comportement) :
-    #   • flash       — momentané : la mémoire n'est là que tant qu'on appuie ;
-    #   • flash_solo  — momentané ET seule en scène (les autres mémoires
+    #   • flash       - momentané : la mémoire n'est là que tant qu'on appuie ;
+    #   • flash_solo  - momentané ET seule en scène (les autres mémoires
     #                   tenues se taisent pendant l'appui, et reviennent après).
     # C'est le geste du bouton bas-droite (FLASH / FLASH KILL), mais attaché à
     # UNE mémoire : on choisit au pad ce qu'on jouait au bouton, et plusieurs
@@ -9577,9 +9691,9 @@ class MainWindow(QMainWindow):
     #
     # Le réglage vit dans la mémoire (`mem["pad_mode"]`) : il est donc
     # sauvegardé avec le show et voyage avec un cue exporté. « normal » n'écrit
-    # aucune clé — un show qui n'y a jamais touché reste au format d'avant.
+    # aucune clé - un show qui n'y a jamais touché reste au format d'avant.
     # Un mode « solo » latché a existé une demi-journée (20/09/2026) : l'appui
-    # coupait les autres mémoires ET restait. Retiré à la demande — le geste
+    # coupait les autres mémoires ET restait. Retiré à la demande - le geste
     # utile, c'est le momentané. Une mémoire réglée dessus entre-temps retombe
     # sur « normal » (`_mem_pad_mode` ignore les valeurs inconnues).
     MEM_PAD_MODES = ("normal", "flash", "flash_solo")
@@ -9646,7 +9760,7 @@ class MainWindow(QMainWindow):
             self._mem_ensure_cues(mem)
             cues = mem.get("cues") or []
             eff_name = (cues[0].get("effect") or {}).get("name") if cues else None
-            # Couper l'effet porté par la mémoire qu'on quitte — et le RESTITUER.
+            # Couper l'effet porté par la mémoire qu'on quitte - et le RESTITUER.
             # Arrêter le timer sans rendre l'état d'avant laisse les projecteurs
             # figés sur la dernière image de l'effet.
             # Seulement si l'effet en cours est bien celui des mémoires : un
@@ -9681,7 +9795,7 @@ class MainWindow(QMainWindow):
     def _mem_cut_others(self, keep_mem_col=None):
         """Éteint toutes les mémoires tenues, sauf celles de `keep_mem_col`.
 
-        Renvoie la liste des (mem_col, row) coupés — vide si rien n'était levé.
+        Renvoie la liste des (mem_col, row) coupés - vide si rien n'était levé.
         ⚠️ Ne voit que les colonnes de la page affichée : une mémoire tenue par
         l'entrée DMX hors page (`_mem_ext_levels`) n'a pas de pad à éteindre,
         c'est le pupitre qui la tient.
@@ -9700,7 +9814,7 @@ class MainWindow(QMainWindow):
     # ── Momentané d'un pad mémoire (modes flash / flash_solo) ─────────────
 
     def _mem_flash_snapshot(self):
-        """Photo complète du rig — ce à quoi le relâché devra revenir."""
+        """Photo complète du rig - ce à quoi le relâché devra revenir."""
         photo = []
         for p in self.projectors:
             vals = {a: getattr(p, a) for a in self._MEM_FLASH_ATTRS if hasattr(p, a)}
@@ -9733,7 +9847,7 @@ class MainWindow(QMainWindow):
         # Tout ce qu'il faudra rendre au relâché. La PHOTO du rig compte autant
         # que la liste des pads : `_recompute_memory_mix` compose la scène à
         # partir des seules mémoires, donc un look posé aux pads couleur ou au
-        # plan 2D — porté par AUCUNE mémoire — serait noirci à l'appui et jamais
+        # plan 2D - porté par AUCUNE mémoire - serait noirci à l'appui et jamais
         # rendu. C'est exactement le blackout destructeur qu'avait le bouton
         # FLASH ; ici la photo le répare d'avance.
         self._mem_flash = {
@@ -9779,7 +9893,7 @@ class MainWindow(QMainWindow):
 
         # Le pad qu'on vient de tenir ne revient JAMAIS, même s'il était déjà
         # posé avant l'appui : un momentané ne laisse rien derrière lui. Le
-        # relâcher sur une mémoire allumée l'ÉTEINT donc — c'est le seul point
+        # relâcher sur une mémoire allumée l'ÉTEINT donc - c'est le seul point
         # où un flash change l'état d'avant, et c'est voulu.
         pads = {k: v for k, v in etat["pads"].items()
                 if not (k == col_akai and v == row)}
@@ -9795,7 +9909,7 @@ class MainWindow(QMainWindow):
         self.active_memory_pads.clear()
         self.active_memory_pads.update(pads)
 
-        # La photo d'abord — elle seule sait rendre un look manuel. Le mix
+        # La photo d'abord - elle seule sait rendre un look manuel. Le mix
         # repasse ensuite SI des mémoires étaient tenues : c'est lui qui relance
         # leur effet, et il ne touche pas aux fixtures prises en main.
         self._mem_flash_restore(etat["photo"])
@@ -9823,7 +9937,7 @@ class MainWindow(QMainWindow):
         pas un réglage, et personne ne monte un fader avant de flasher. Il part
         donc à 100 %, exactement comme le bouton FLASH monte les mémoires
         tenues sans toucher à leur fader. Le fader retrouve son mot à dire au
-        relâché — et comme il est le plus souvent à zéro sur un pad de flash,
+        relâché - et comme il est le plus souvent à zéro sur un pad de flash,
         la mémoire disparaît d'elle-même.
 
         À lire à CHAQUE frame et dans le mix : ces deux couches reposent les
@@ -9862,7 +9976,7 @@ class MainWindow(QMainWindow):
     MEM_LONG_PRESS_OFF = 0.6
 
     def _on_memory_pad_released(self, mem_col, row, col_akai=None):
-        """Relâché — un pad momentané rend la main ; un appui LONG sur une
+        """Relâché - un pad momentané rend la main ; un appui LONG sur une
         mémoire multi-cue déjà allumée l'éteint."""
         if self._mem_flash_holds(mem_col, row):
             self._mem_flash_end()
@@ -9950,7 +10064,7 @@ class MainWindow(QMainWindow):
                     self._start_cue_duration(mem_col, row)
                 elif toggle_off:
                     # Mémoire à un seul cue : le réappui n'avait rien à faire,
-                    # il l'éteint — le geste qu'attendent les utilisateurs
+                    # il l'éteint - le geste qu'attendent les utilisateurs
                     # (retour client 23/09/2026). Réservé à l'appui direct :
                     # Stream Deck, tally vMix/OBS, manette et GO redéclenchent
                     # la même mémoire sans vouloir la couper.
@@ -9985,7 +10099,7 @@ class MainWindow(QMainWindow):
         self._update_memory_pad_led(mem_col, row, active=True)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
         # Poser un pad, c'est ARRIVER SUR LA SÉQUENCE : c'est son fondu à elle
-        # qui mène, pas celui du cue 1. Les deux sont indépendants — une
+        # qui mène, pas celui du cue 1. Les deux sont indépendants - une
         # mémoire dont les cues s'enchaînent en 3 s peut très bien devoir
         # s'installer sec, et l'inverse. Fondu à 0 par défaut → un show sans
         # fondu ne bouge pas.
@@ -10017,11 +10131,11 @@ class MainWindow(QMainWindow):
         self.send_dmx_update()
 
     def trigger_memory(self, mem_col: int, row: int):
-        """Slot public — déclenche un pad mémoire depuis le Stream Deck ou un signal externe.
+        """Slot public - déclenche un pad mémoire depuis le Stream Deck ou un signal externe.
 
         Une impulsion sans relâché : un pad réglé en flash se pose donc ici comme
         un interrupteur (et un flash solo comme un solo). Mieux vaut ça qu'un
-        momentané que personne ne viendra rendre — le pad resterait collé.
+        momentané que personne ne viendra rendre - le pad resterait collé.
         """
         if not (0 <= mem_col <= 7 and 0 <= row <= 7):
             return
@@ -10059,7 +10173,7 @@ class MainWindow(QMainWindow):
     def _release_manual_grabs(self):
         """Rend la main aux mémoires sur tous les projecteurs.
 
-        La prise en main (plan 2D) ne protège que des réécritures PASSIVES —
+        La prise en main (plan 2D) ne protège que des réécritures PASSIVES -
         typiquement un mouvement de fader. Toute action mémoire volontaire
         (appui pad, clic sur un cue) ou l'avance auto du minutage doit repeindre :
         sinon une fixture reste verrouillée sans que rien ne l'indique, et les
@@ -10213,7 +10327,7 @@ class MainWindow(QMainWindow):
         mc, r = self._cue_panel.mem_col, self._cue_panel.row
         if mc < 0 or self.memories[mc][r] is None:
             return
-        # Le panneau PILOTE une mémoire posée, il ne la pose pas — même doctrine
+        # Le panneau PILOTE une mémoire posée, il ne la pose pas - même doctrine
         # que le bouton ▶ (`_on_cue_play_pause`). Avant, ce clic écrivait
         # directement sur les projecteurs alors que le mix, lui, ignore une
         # mémoire dont le pad est éteint : le look obtenu disparaissait au
@@ -10391,7 +10505,7 @@ class MainWindow(QMainWindow):
             return
         # Phase éteinte : LED coupée franchement plutôt qu'atténuée. L'APC Mini
         # ne distingue le « dim » du « bright » que si le mode pleine
-        # luminosité est actif (il ne l'est pas sur Apple Silicon) — un
+        # luminosité est actif (il ne l'est pas sur Apple Silicon) - un
         # clignotement invisible sur une machine sur deux ne vaut rien.
         self._style_memory_pad(mc, r, active=False)
         if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
@@ -10538,7 +10652,7 @@ class MainWindow(QMainWindow):
                 else:
                     p.pan  = new_pan
                     p.tilt = new_tilt
-            # Canaux spéciaux toujours restaurés (même si level == 0) — sauf si
+            # Canaux spéciaux toujours restaurés (même si level == 0) - sauf si
             # le faisceau a été pris en main depuis le plan 2D (même garde que
             # `_recompute_memory_mix`). Libéré par CLEAR.
             if not getattr(p, '_manual_beam', False):
@@ -10550,7 +10664,7 @@ class MainWindow(QMainWindow):
                 p.gobo_rotation = int(proj_state.get("gobo_rotation", 0))
                 p.zoom          = int(proj_state.get("zoom",         0))
                 p.strobe_speed  = int(proj_state.get("strobe_speed", 0))
-                # Valeurs brutes de fixture : jamais scalées par le fader du cue —
+                # Valeurs brutes de fixture : jamais scalées par le fader du cue -
                 # une mise au point ou une vitesse de déplacement n'a rien à voir
                 # avec la luminosité.
                 p.focus         = int(proj_state.get("focus",        0))
@@ -10561,7 +10675,7 @@ class MainWindow(QMainWindow):
                     setattr(p, f"preset{_i}", int(proj_state.get(f"preset{_i}", 0)))
                 # Roue, prisme, iris, shutter, macro : mêmes règles que ci-dessus.
                 # Une mémoire définit l'état complet du faisceau ; la clé absente
-                # (mémoire enregistrée avant leur capture) vaut repos — 255 pour
+                # (mémoire enregistrée avant leur capture) vaut repos - 255 pour
                 # le shutter, qui est ouvert au repos et non fermé.
                 p.prism          = int(proj_state.get("prism",          0))
                 p.prism_rotation = int(proj_state.get("prism_rotation", 0))
@@ -10578,7 +10692,7 @@ class MainWindow(QMainWindow):
                 # seulement `_manual_beam`. Sans cette garde, une lyre mise au
                 # vert à la main (sélecteur de couleur du plan 2D / tablette :
                 # ils posent `_manual_color`, jamais `_manual_beam`) repassait
-                # sur le slot 0 — Open, donc BLANC — au moindre rappel de cue,
+                # sur le slot 0 - Open, donc BLANC - au moindre rappel de cue,
                 # pendant que le plan 2D et la 3D la montraient toujours verte.
                 # Le `continue` de `_manual_color` est plus bas : la couleur RVB
                 # était protégée, la roue non. « Ma lyre passe du vert au blanc ».
@@ -10587,7 +10701,7 @@ class MainWindow(QMainWindow):
                         and getattr(p, '_manual_color', False)):
                     p.color_wheel = int(proj_state.get("color_wheel",    0))
                 # Canaux bruts (Mode, Effects…) : valeur brute, jamais scalés
-                # par le fader — sauf les canaux de lumière (Dim forcé…).
+                # par le fader - sauf les canaux de lumière (Dim forcé…).
                 from light_timeline import compose_memory_params
                 _, p.channel_extras = compose_memory_params(
                     [{"channel_extras": proj_state.get("channel_extras") or {}}],
@@ -10621,13 +10735,13 @@ class MainWindow(QMainWindow):
             self._mem_drive_effect(new_eff, eff_cfg)
 
     def _mem_drive_effect(self, new_eff: str, eff_cfg: dict):
-        """Pose (ou retire) l'effet que DEMANDENT les mémoires — sans jamais
+        """Pose (ou retire) l'effet que DEMANDENT les mémoires - sans jamais
         toucher à un effet qu'elles n'ont pas lancé.
 
         `_mem_effect` retient le dernier effet demandé par les mémoires. Tant que
         cette demande ne change pas, on laisse l'effet en cours tranquille : il
         peut venir d'un bouton d'effet ou d'un pad FX. Avant, poser une mémoire
-        SANS effet — ou simplement bouger un fader mémoire — coupait l'effet du
+        SANS effet - ou simplement bouger un fader mémoire - coupait l'effet du
         bouton en laissant le bouton allumé ; en superposition, la pile restait
         pleine sans minuterie et plus aucun effet ne repartait (retour client
         23/09/2026 : « ça coupe tout, après les effets ne marchent plus »).
@@ -10674,8 +10788,8 @@ class MainWindow(QMainWindow):
 
         `fade_secs > 0` → on arrive sur un cue qui porte un fondu : le mix
         calcule la cible, et on y glisse au lieu d'y sauter (cf.
-        `_recompute_memory_mix_faded`). Tous les autres appelants — mouvement de
-        fader, mute, master — gardent la valeur par défaut et donc, au bit près,
+        `_recompute_memory_mix_faded`). Tous les autres appelants - mouvement de
+        fader, mute, master - gardent la valeur par défaut et donc, au bit près,
         le comportement d'avant. `fade_from` sert aux appelants qui ont modifié
         l'état AVANT d'appeler (cf. `_activate_memory_pad`).
         """
@@ -10690,7 +10804,7 @@ class MainWindow(QMainWindow):
         # 1. Collecter les mémoires actives (pad allumé, non mutée)
         # Le PAD allume la mémoire, le FADER n'est que son maître d'intensité
         # (comme un exécuteur grandMA) : fader à 0, la mémoire pose quand même
-        # gobo, position, zoom, prisme… mais aucune lumière — « préparer dans
+        # gobo, position, zoom, prisme… mais aucune lumière - « préparer dans
         # le noir ». Avant (jusqu'au 13/10/2026), fader à 0 = mémoire ignorée :
         # une mémoire « juste un gobo » obligeait à monter le fader. Le mute
         # reste la coupure totale. L'effet, lui, exige toujours fader > 0 (cf.
@@ -10717,7 +10831,7 @@ class MainWindow(QMainWindow):
         # 1 bis. Mémoires tenues par l'entrée DMX alors qu'elles ne sont PAS sur
         # la page affichée : elles n'ont pas de fader à l'écran où lire un
         # niveau, il vient donc du pupitre (voir apply_memory_level). Les
-        # colonnes visibles sont exclues — leur fader vient de les compter.
+        # colonnes visibles sont exclues - leur fader vient de les compter.
         # Un FLASH SOLO les met en silence comme les autres : elles n'ont pas de
         # pad à éteindre (c'est le pupitre qui les tient), donc la seule façon de
         # ne pas les entendre pendant l'appui est de ne pas les compter.
@@ -10793,11 +10907,11 @@ class MainWindow(QMainWindow):
                 b_acc += bc.blue()  * f
 
             # Aucune mémoire active ne touche ce projecteur : même chemin que
-            # « aucune ne l'allume » — on ne retire que ce que les mémoires
+            # « aucune ne l'allume » - on ne retire que ce que les mémoires
             # avaient posé (avant : noir d'office, même sur un look manuel).
             # Une mémoire au fader baissé n'apporte aucune lumière : ses canaux
             # de lumière (UV, ambre, blanc, orange, strobe) ne sont pas proposés
-            # — sinon, première en LTP, elle couperait ceux d'une mémoire levée.
+            # - sinon, première en LTP, elle couperait ceux d'une mémoire levée.
             params, extras = compose_memory_params(
                 [st if b > 0 else {k: v for k, v in st.items()
                                    if k not in _MEM_CANAUX_LUMIERE}
@@ -10816,7 +10930,7 @@ class MainWindow(QMainWindow):
             # qu'elle a posé elle-même. Un paramètre que plus personne n'impose
             # revient au repos seulement s'il vaut encore ce que le mix y avait
             # écrit (la mémoire qui le portait vient de partir). Sinon c'est un
-            # état posé ailleurs — pads, plan 2D/3D, tablette — et on le laisse.
+            # état posé ailleurs - pads, plan 2D/3D, tablette - et on le laisse.
             # Avant : tout paramètre non imposé était remis au repos ; lever une
             # mémoire « juste un gobo » (MEM 35.1 / 35.2, 13/10/2026) refermait
             # zoom, prisme, focus, roue de couleur et recentrait les lyres.
@@ -10878,7 +10992,7 @@ class MainWindow(QMainWindow):
                 # qu'elle porte : la lumière en place, posée aux pads couleur
                 # ou au plan, reste. On n'éteint que la lumière qu'une mémoire
                 # avait elle-même posée et qui vient de partir (fader baissé).
-                # Avant : noir systématique — lever une mémoire gobo seule
+                # Avant : noir systématique - lever une mémoire gobo seule
                 # éteignait la salle (MEM 35.2, 13/10/2026).
                 if getattr(p, '_mem_written', None) == (p.level, p.base_color.name()):
                     p.level = 0
@@ -10914,7 +11028,7 @@ class MainWindow(QMainWindow):
         # 3. Effet : piloté par la mémoire la plus haute qui en porte un
         # Pendant un momentané FLASH / FLASH KILL, on n'y touche pas : sous KILL
         # plus aucune mémoire n'est retenue, l'effet en cours se serait donc fait
-        # arrêter à l'appui — et le relâcher ne l'aurait pas relancé (la mémoire
+        # arrêter à l'appui - et le relâcher ne l'aurait pas relancé (la mémoire
         # revenue ne porte pas forcément d'effet). L'effet mourait pour de bon.
         if getattr(self, '_flash_kind', None) is not None:
             return
@@ -10932,7 +11046,7 @@ class MainWindow(QMainWindow):
         self._mem_drive_effect(new_eff, eff_cfg)
 
     def _cue_fade_secs(self, mem_col: int, row: int) -> float:
-        """Fondu (s) du cue ACTIF de cette mémoire — celui sur lequel on arrive.
+        """Fondu (s) du cue ACTIF de cette mémoire - celui sur lequel on arrive.
 
         Même règle que l'enchaînement minuté : le fondu appartient au cue
         d'arrivée, jamais à celui qu'on quitte. À appeler APRÈS
@@ -10945,7 +11059,7 @@ class MainWindow(QMainWindow):
 
     # ── Fondu d'une mémoire (réglage global au pad) ────────────────────────
     # Le fondu se règle depuis toujours dans le panneau 📋 Cues, cue par cue.
-    # Personne ne l'y trouvait : sur une mémoire MONO-cue — le cas courant — on
+    # Personne ne l'y trouvait : sur une mémoire MONO-cue - le cas courant - on
     # n'ouvre jamais ce panneau, il n'a l'air utile qu'à partir de deux cues.
     # D'où un réglage direct au clic droit du pad, qui pose la MÊME valeur sur
     # tous les cues. Pas de nouveau moteur ni de nouveau champ : on écrit le
@@ -10959,7 +11073,7 @@ class MainWindow(QMainWindow):
 
         Reprise de `cues[0]["fade"]` **uniquement si la mémoire n'a qu'un cue**.
         Là, aucune ambiguïté : sans cue suivant, ce fondu ne pouvait vouloir
-        dire qu'une chose — le temps d'installation à la pose du pad — et c'est
+        dire qu'une chose - le temps d'installation à la pose du pad - et c'est
         bien ce qu'il jouait avant que le fondu de séquence existe. Le reprendre
         garde à ces shows le comportement qu'ils avaient.
 
@@ -11009,7 +11123,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _fmt_mem_fade(secs: float) -> str:
-        """« — » / « 2 s » / « 2,5 s » — formateur des fondus de médias.
+        """« - » / « 2 s » / « 2,5 s » - formateur des fondus de médias.
 
         Emprunté et non recopié : deux formateurs de fondu finiraient par ne
         plus arrondir pareil, et l'utilisateur verrait « 2,5 s » sur un média
@@ -11026,7 +11140,7 @@ class MainWindow(QMainWindow):
         return Sequencer._fmt_fade(int(round(secs * 1000)))
 
     def _mem_fade_icon(self, petite: bool = False):
-        """Rampe ambre du fondu — même symbole que sur une ligne de playlist."""
+        """Rampe ambre du fondu - même symbole que sur une ligne de playlist."""
         from PySide6.QtSvg import QSvgRenderer
         from PySide6.QtCore import QByteArray, QRectF
         cache = getattr(self, "_mem_fade_icon_cache", None)
@@ -11047,7 +11161,7 @@ class MainWindow(QMainWindow):
         return cache[petite]
 
     def _edit_memory_fade(self, mem_col, row):
-        """Boîte de réglage du fondu d'une mémoire — jumelle de celle des médias.
+        """Boîte de réglage du fondu d'une mémoire - jumelle de celle des médias.
 
         Un seul curseur : une mémoire n'a pas de fondu de SORTIE. Le seul
         moment où elle s'éteint est le passage à un autre pad de la même
@@ -11099,13 +11213,13 @@ class MainWindow(QMainWindow):
         # Unité = le dixième de seconde, comme les fondus de médias : la molette
         # de _CurseurCanal avance de 5 crans, soit un demi-pas de seconde.
         # Plafond 60 s : au-delà on est dans le cue minuté, réglé dans 📋 Cues.
-        # SAUF si le pad porte déjà plus long — le panneau Cues monte à 600 s, et
+        # SAUF si le pad porte déjà plus long - le panneau Cues monte à 600 s, et
         # un curseur qui s'arrête à 60 ramènerait ce fondu à 60 s en silence au
         # premier clic sur OK. On élargit plutôt l'échelle pour l'accueillir.
         _debut = int(round(courant * 10)) if courant is not None else 0
         sli.setRange(0, max(600, _debut))
         # Cues divergents : on part de 0 mais on n'écrase rien tant qu'OK n'est
-        # pas cliqué — valider est une décision d'uniformiser le pad.
+        # pas cliqué - valider est une décision d'uniformiser le pad.
         sli.setValue(_debut)
         sli.setStyleSheet(_feuille_curseur(True, self._MEM_FADE_COLOR))
         sli.setFixedHeight(22)
@@ -11149,7 +11263,7 @@ class MainWindow(QMainWindow):
             "QPushButton:hover{background:#440000;color:#ff6666;}")
 
         # Curseur à zéro PUIS validation : « Retirer le fondu » est une
-        # décision, pas un réglage — même geste que côté médias.
+        # décision, pas un réglage - même geste que côté médias.
         def _retirer():
             sli.setValue(0)
             dlg.accept()
@@ -11169,7 +11283,7 @@ class MainWindow(QMainWindow):
         self._set_mem_fade(mem_col, row, sli.value() / 10.0)
 
     def _etat_couleur_courant(self):
-        """Photo (niveau, teinte pure, couleur) du rig — point de départ d'un fondu."""
+        """Photo (niveau, teinte pure, couleur) du rig - point de départ d'un fondu."""
         return [(p.level, QColor(p.base_color), QColor(p.color)) for p in self.projectors]
 
     def _recompute_memory_mix_faded(self, fade_secs: float, fade_from=None):
@@ -11177,8 +11291,8 @@ class MainWindow(QMainWindow):
 
         Le fondu n'était honoré que par un second moteur, `_apply_cue_with_fade`
         (supprimé) : MONO-mémoire, et réservé à l'enchaînement minuté et au
-        panneau Cues. Les deux chemins live — appui sur le pad (UI et AKAI) et
-        bouton GO — passaient, eux, par le mix, qui écrivait sec : « si je ne
+        panneau Cues. Les deux chemins live - appui sur le pad (UI et AKAI) et
+        bouton GO - passaient, eux, par le mix, qui écrivait sec : « si je ne
         suis pas en cue timé je n'arrive pas à avoir de fade » (remontée Julien
         Blondeau, 08/2026). Et symétriquement, l'enchaînement minuté effaçait la
         contribution des autres faders mémoire levés.
@@ -11193,7 +11307,7 @@ class MainWindow(QMainWindow):
         posé net par le mix. C'est déjà le comportement du fondu existant.
 
         `fade_from` : photo prise plus tôt par l'appelant. Indispensable au
-        changement de pad dans une même colonne — `_activate_memory_pad` éteint
+        changement de pad dans une même colonne - `_activate_memory_pad` éteint
         le pad précédent AVANT d'appeler, donc une photo prise ici verrait du
         noir et le fondu ferait un trou avant de remonter.
         """
@@ -11240,7 +11354,7 @@ class MainWindow(QMainWindow):
         return "dashed" if self._mem_pad_mode(mem_col, row) in ("flash", "flash_solo") else "solid"
 
     def _style_memory_pad(self, mem_col, row, active):
-        """Style visuel d'un pad mémoire — met à jour toutes les colonnes mappées sur ce MEM."""
+        """Style visuel d'un pad mémoire - met à jour toutes les colonnes mappées sur ce MEM."""
         for col_akai in self._mem_col_to_faders(mem_col):
             self._style_memory_pad_col(mem_col, row, active, col_akai)
 
@@ -11267,7 +11381,7 @@ class MainWindow(QMainWindow):
             pad.setText("")
 
         # Marqueur de fondu : la rampe ambre des lignes de playlist. Un pad de
-        # 28 px n'a pas la place d'un libellé de plus — l'icône se cale à
+        # 28 px n'a pas la place d'un libellé de plus - l'icône se cale à
         # gauche du « 2/5 » ou du « ⚡ », et prend le centre quand le pad est nu
         # (elle est alors dessinée plus grande, c'est le seul contenu).
         # Fondu de SÉQUENCE uniquement : les fondus entre cues appartiennent à
@@ -11295,7 +11409,7 @@ class MainWindow(QMainWindow):
             pad.setProperty("base_color", color)
             # Texte noir sur fond clair : un pad actif est peint avec SA
             # couleur, et le « 2/5 » des cues ou le « ⚡ » d'un effet
-            # disparaissaient en blanc sur blanc — cas devenu courant depuis
+            # disparaissaient en blanc sur blanc - cas devenu courant depuis
             # qu'une mémoire sans rien d'allumé s'affiche en blanc.
             _txt = "rgba(0,0,0,0.75)" if color.lightness() > 160 else "rgba(255,255,255,0.8)"
             pad.setStyleSheet(f"""
@@ -11330,7 +11444,7 @@ class MainWindow(QMainWindow):
 
         Deux pièges que ce tooltip doit éviter :
         - une mémoire au format « cues » n'a plus de clé `projectors` à la
-          racine — lire `mem["projectors"]` directement ne renvoyait rien ;
+          racine - lire `mem["projectors"]` directement ne renvoyait rien ;
         - une mémoire capture TOUT le rig, y compris les projecteurs qu'elle ne
           vise pas (niveau 0, pan/tilt au centre, canaux au repos) : on ne
           compte donc que ceux réellement touchés, via le prédicat partagé
@@ -11373,8 +11487,8 @@ class MainWindow(QMainWindow):
                 elif memory_state_is_set(ps):
                     # Meme predicat que la fenetre « Contenu sequence » : il
                     # compte AUSSI les canaux de faisceau (gobo, roue, prisme,
-                    # shutter...). Sans eux, une memoire « juste un gobo » —
-                    # capturee rig eteint, donc niveau 0 partout — s'affichait
+                    # shutter...). Sans eux, une memoire « juste un gobo » -
+                    # capturee rig eteint, donc niveau 0 partout - s'affichait
                     # vide dans le tooltip comme dans la fenetre, et on en
                     # concluait que le REC n'avait rien pris.
                     moved[gname] = moved.get(gname, 0) + 1
@@ -11398,7 +11512,7 @@ class MainWindow(QMainWindow):
             # Le fondu se lit ici comme la boucle et les fondus se lisent dans
             # l'infobulle d'une ligne de playlist : la rampe sur le pad dit
             # qu'il y en a un, l'infobulle dit combien. Fondu de séquence
-            # seulement — les fondus entre cues se lisent dans 📋 Cues.
+            # seulement - les fondus entre cues se lisent dans 📋 Cues.
             _fade_c = self._mem_fade_secs(mem_col, row)
             if _fade_c > 0:
                 lines.append(f"<span style='color:{self._MEM_FADE_COLOR}'>"
@@ -11419,8 +11533,8 @@ class MainWindow(QMainWindow):
         """Couleur du pad : celle choisie à la main, sinon la dominante du snapshot.
 
         Le noir est réservé à l'ABSENCE de mémoire. Une mémoire enregistrée dont
-        rien n'est allumé — un noir, une scène qui ne porte que des positions,
-        un strobe ou des canaux bruts — n'a pas de couleur dominante : elle
+        rien n'est allumé - un noir, une scène qui ne porte que des positions,
+        un strobe ou des canaux bruts - n'a pas de couleur dominante : elle
         ressortait noire, donc LED éteinte et pad vide à l'écran, exactement
         comme un emplacement libre. Impossible alors de savoir qu'il y a
         quelque chose dedans. Elle s'affiche donc en blanc.
@@ -11448,7 +11562,7 @@ class MainWindow(QMainWindow):
         return dominant if dominant != QColor("black") else QColor("white")
 
     def _update_memory_pad_led(self, mem_col, row, active):
-        """Envoie LED MIDI pour un pad memoire — met à jour toutes les colonnes mappées sur ce MEM."""
+        """Envoie LED MIDI pour un pad memoire - met à jour toutes les colonnes mappées sur ce MEM."""
         if not (MIDI_AVAILABLE and hasattr(self, 'midi_handler')):
             return
         color = self._get_memory_pad_color(mem_col, row)
@@ -11530,7 +11644,7 @@ class MainWindow(QMainWindow):
                 "zoom":         getattr(p, 'zoom',         0),
                 "strobe_speed": getattr(p, 'strobe_speed', 0),
                 # Ces quatre canaux ne vivaient que dans `channel_extras`. Depuis
-                # qu'ils ont un état propre, il faut les capturer ici aussi —
+                # qu'ils ont un état propre, il faut les capturer ici aussi -
                 # sinon une mémoire enregistrée les perdrait en silence.
                 "focus":        getattr(p, 'focus',        0),
                 "gobo2":        getattr(p, 'gobo2',        0),
@@ -11547,7 +11661,7 @@ class MainWindow(QMainWindow):
                 # menu du plan 2D (roue, prisme, iris, shutter) et depuis les
                 # curseurs bruts, qui écrivent la propriété du projecteur pour
                 # rester d'accord avec ce menu. Sans capture, une mémoire les
-                # perdait en silence — le prisme revenait ouvert au rappel.
+                # perdait en silence - le prisme revenait ouvert au rappel.
                 "color_wheel":     getattr(p, 'color_wheel',     0),
                 "prism":           getattr(p, 'prism',           0),
                 "prism_rotation":  getattr(p, 'prism_rotation',  0),
@@ -11561,7 +11675,7 @@ class MainWindow(QMainWindow):
                 "channel_extras": dict(getattr(p, 'channel_extras', {}) or {}),
             })
         # Effet en cours : capturé comme le reste de l'état. Ce champ valait `{}`
-        # en dur — un REC fait pendant qu'un effet tournait (rotation de gobo,
+        # en dur - un REC fait pendant qu'un effet tournait (rotation de gobo,
         # chenillard…) enregistrait la position, le gobo et les couleurs mais
         # perdait l'effet en silence, et le rappel restituait une lyre figée.
         # `copy.deepcopy` : la config courante continue de vivre pendant le show
@@ -11584,7 +11698,7 @@ class MainWindow(QMainWindow):
 
         Rig éteint, juste un strobe (ou un gobo, une position, un canal brut)
         monté, REC : la mémoire ne porte que ce réglage. Ce n'est plus une
-        erreur — elle se lève par-dessus un look (cf. `compose_memory_params`).
+        erreur - elle se lève par-dessus un look (cf. `compose_memory_params`).
         On le dit dans le journal, sans bloquer le REC par une question.
         """
         try:
@@ -11660,7 +11774,7 @@ class MainWindow(QMainWindow):
         self._save_akai_config_auto()
 
     def _show_memory_info(self, mem_col, row):
-        """« Info » d'un pad mémoire — même fenêtre que le clic droit sur un
+        """« Info » d'un pad mémoire - même fenêtre que le clic droit sur un
         clip Séquence de REC Lumière.
 
         Le cue montré est celui que le pad JOUE (ou jouerait) : sur une
@@ -11668,7 +11782,7 @@ class MainWindow(QMainWindow):
         qu'un enchaînement est en cours.
 
         Ce sont les niveaux de la mémoire qui sont modulés par le FADER de la
-        colonne, exactement comme l'intensité du clip côté REC Lumière — d'où
+        colonne, exactement comme l'intensité du clip côté REC Lumière - d'où
         la colonne « 85 % → 51 % » et l'en-tête qui nomme le fader.
         """
         mem = self.memories[mem_col][row]
@@ -11782,7 +11896,7 @@ class MainWindow(QMainWindow):
 
             # Comportement du pad : c'est encore la question « qu'est-ce qui se
             # passe quand j'appuie ? », donc sa place est ici, avec le contenu
-            # et le fondu — pas dans l'identité du pad.
+            # et le fondu - pas dans l'identité du pad.
             _mode = self._mem_pad_mode(mem_col, row)
             beh_menu = menu.addMenu(
                 tr("mw_mem_behaviour") if _mode == "normal"
@@ -12110,7 +12224,7 @@ class MainWindow(QMainWindow):
             # …et extinction quand ce même fader revient à 0 (« auto off »
             # grandMA). Depuis que fader à 0 n'éteint plus une mémoire (le pad
             # l'allume, le fader dose), une mémoire allumée par le fader seul
-            # resterait sinon en scène — gobo et position compris — fader en bas.
+            # resterait sinon en scène - gobo et position compris - fader en bas.
             # Une mémoire lancée au PAD, elle, reste : c'est le pad qui l'éteint.
             elif value <= 0 and mem_col in self._mem_auto_on and active_row is not None:
                 self._mem_auto_on.discard(mem_col)
@@ -12152,7 +12266,7 @@ class MainWindow(QMainWindow):
 
         # Pad couleur tenu sur fader baissé : la colonne reste à 100 % tant
         # qu'on tient, même si le fader bouge entre-temps. Comme `_flash_level`,
-        # le fader n'est jamais déplacé — on remplace la valeur LUE, ici (modèle,
+        # le fader n'est jamais déplacé - on remplace la valeur LUE, ici (modèle,
         # plan 2D) et dans `_apply_pad_overrides_htp` (fil DMX, par frame).
         if index in getattr(self, "_pad_bump_cols", ()):
             value = 100
@@ -12189,7 +12303,7 @@ class MainWindow(QMainWindow):
                     # SEUL chemin couleur qui ne la pilotait pas : un pad couleur
                     # pressé fader baissé ne posait que `base_color` (activate_pad
                     # ignore la couleur à 0), et monter le fader rallumait la lyre
-                    # sur le slot précédent — « seul le dimmer répond ».
+                    # sur le slot précédent - « seul le dimmer répond ».
                     self._update_color_wheel(p, p.base_color)
                 else:
                     p.color = QColor("black")
@@ -12198,7 +12312,7 @@ class MainWindow(QMainWindow):
         self.send_dmx_update()
 
     def apply_memory_level(self, mem_col, value):
-        """Niveau d'une colonne MEM piloté par l'entrée DMX — page affichée ou non.
+        """Niveau d'une colonne MEM piloté par l'entrée DMX - page affichée ou non.
 
         Une tranche MEM était le seul point aveugle du pilotage par pupitre :
         `apply_slot_level_offpage` renvoie False pour elle, parce que le mix des
@@ -12268,8 +12382,8 @@ class MainWindow(QMainWindow):
 
         Sert a l'entree DMX (dmx_in_link.py) : un pupitre adresse les 20 pages
         de layout d'un coup, alors qu'une seule est a l'ecran. C'est possible
-        parce que la CIBLE d'une tranche — un groupe, une colonne FX, le volume
-        du lecteur — ne depend pas de la page ; seuls les WIDGETS (le fader, le
+        parce que la CIBLE d'une tranche - un groupe, une colonne FX, le volume
+        du lecteur - ne depend pas de la page ; seuls les WIDGETS (le fader, le
         pad actif) sont lies a la colonne visible. On applique donc l'effet sans
         toucher a la surface de controle, exactement dans l'esprit de
         `_sync_controls_to_state` : le rig est la source de verite, l'AKAI n'en
@@ -12279,7 +12393,7 @@ class MainWindow(QMainWindow):
         indexe par colonne VISIBLE (`active_memory_pads`, puis
         `_fader_to_mem_col` qui relit `_fader_map`), et le fader de position
         porte son axe dans le slot de la colonne. Hors de la page affichee, ces
-        deux-la n'ont pas de cible definie — mieux vaut ne rien faire que
+        deux-la n'ont pas de cible definie - mieux vaut ne rien faire que
         piloter la mauvaise memoire.
         """
         stype = slot.get("type")
@@ -12335,7 +12449,7 @@ class MainWindow(QMainWindow):
             # Equivalent hors page de « l'auto-activation du pad blanc » : sur
             # la page affichee, monter un fader sans pad actif allume en blanc.
             # Ici il n'y a pas de pad a interroger, donc c'est `base_color` qui
-            # fait foi — et si elle n'a jamais ete posee, on retombe sur blanc.
+            # fait foi - et si elle n'a jamais ete posee, on retombe sur blanc.
             # Sans ca, un groupe jamais touche resterait noir a fond de fader.
             base = p.base_color
             if not base.isValid() or (base.red() == 0 and base.green() == 0
@@ -12467,7 +12581,7 @@ class MainWindow(QMainWindow):
                 self._log_message(tr("mwx_032", a=effect_idx + 1), "warn")
                 return
 
-            # Sauvegarder l'état précédent — uniquement si l'effet vient d'un FX pad,
+            # Sauvegarder l'état précédent - uniquement si l'effet vient d'un FX pad,
             # pas d'un autre bouton d'effet (sinon désactiver B relancerait A)
             self._prev_effect_state = {
                 "effect":  self.active_effect if self.active_fx_pads else None,
@@ -12531,14 +12645,14 @@ class MainWindow(QMainWindow):
     def toggle_effect_by_name(self, effect_name: str) -> bool:
         """Allume/éteint un effet de la bibliothèque par son NOM.
 
-        Point d'entrée des surfaces qui n'ont pas de pad dédié — la manette
+        Point d'entrée des surfaces qui n'ont pas de pad dédié - la manette
         aujourd'hui. Les 8 boutons FX et les 64 pads FX ne couvrent que les
         effets qu'on y a posés ; la bibliothèque en compte plus de cent.
 
         C'est une BASCULE, là où vMix et OBS ne font que déclencher. La nuance
         n'est pas cosmétique : une scène qui passe à l'antenne est un
         évènement, la suivante remplace l'effet et personne n'attend qu'une
-        scène « éteigne ». Une touche de manette, elle, se rappuie — sans
+        scène « éteigne ». Une touche de manette, elle, se rappuie - sans
         bascule, l'effet lancé depuis la manette ne pourrait plus s'arrêter
         qu'en allant cliquer dans l'interface, au milieu du show.
 
@@ -12565,7 +12679,7 @@ class MainWindow(QMainWindow):
 
         # Un seul effet à la fois, comme pour les pads FX : sans ça, le pad ou
         # le bouton qui portait l'effet précédent resterait allumé alors que
-        # son effet ne tourne plus — l'utilisateur cherche ensuite pourquoi
+        # son effet ne tourne plus - l'utilisateur cherche ensuite pourquoi
         # « le pad est vert mais il ne se passe rien ».
         for k in list(self.active_fx_pads.keys()):
             self.active_fx_pads.pop(k, None)
@@ -12701,7 +12815,7 @@ class MainWindow(QMainWindow):
                      if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
 
         # Appariement preset ↔ lyres : adresse DMX, puis nom, puis rang. Partagé
-        # avec le centre des effets Pan/Tilt (colonne POSITION de l'éditeur) —
+        # avec le centre des effets Pan/Tilt (colonne POSITION de l'éditeur) -
         # les deux doivent viser le même point, sinon un cercle tournerait
         # ailleurs que là où le rappel pose la lyre.
         cibles = position_preset_values(preset, lyres_cur)
@@ -12725,7 +12839,7 @@ class MainWindow(QMainWindow):
 
         # Servir une partie des lyres seulement n'était signalé nulle part : une
         # position enregistrée quand le rig comptait moins de lyres laissait les
-        # nouvelles immobiles, sans message — « la 2e lyre ne prend pas la
+        # nouvelles immobiles, sans message - « la 2e lyre ne prend pas la
         # position », impossible à distinguer d'une panne de la lyre.
         if applied < len(lyres_cur):
             absentes = ", ".join(p.name for p in lyres_cur if not cibles.get(id(p)))
@@ -12776,14 +12890,14 @@ class MainWindow(QMainWindow):
         self._style_position_akai_pad(pos_col, row)
         # La LED physique aussi, pas seulement le pad à l'écran : sans ça, une
         # position fraîchement enregistrée laissait le pad de l'AKAI éteint
-        # jusqu'au premier rappel — impossible de voir, sur le contrôleur, ce
+        # jusqu'au premier rappel - impossible de voir, sur le contrôleur, ce
         # qu'on venait d'enregistrer.
         self._update_pos_pad_led(pos_col, row)
         self._save_akai_config_auto()
         self._log_message(tr("mwx_061", name=name), "success")
 
     def _show_pos_context_menu(self, pos, pos_col, row, btn):
-        """Menu clic droit sur un pad POS — assigner, REC, renommer, effacer."""
+        """Menu clic droit sur un pad POS - assigner, REC, renommer, effacer."""
         from PySide6.QtWidgets import QMenu
         menu = QMenu(btn)
         menu.setStyleSheet(
@@ -12832,7 +12946,7 @@ class MainWindow(QMainWindow):
 
         menu.exec(btn.mapToGlobal(pos))
 
-    _POS_MOVE_DEFAULT = 0.5   # s — durée historique du rappel d'un pad POS
+    _POS_MOVE_DEFAULT = 0.5   # s - durée historique du rappel d'un pad POS
 
     def _pos_move_secs(self, preset) -> float:
         """Temps de déplacement d'un preset position (0,5 s s'il n'est pas réglé)."""
@@ -12847,7 +12961,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _pos_spread_ranks(n, order):
-        """Rang de départ de chaque lyre — cf. `core.position_spread_ranks`."""
+        """Rang de départ de chaque lyre - cf. `core.position_spread_ranks`."""
         from core import position_spread_ranks
         return position_spread_ranks(n, order)
 
@@ -13029,14 +13143,14 @@ class MainWindow(QMainWindow):
         Les positions vivent dans DEUX fichiers (cf. `_load_pdf_presets`). REC
         Lumière ne sait lire que les positions AKAI : quand on y glisse un preset
         du plan de feu, MyStrow en fabrique une COPIE. Cette copie datait du
-        premier usage et n'était jamais rafraîchie — mémoriser à nouveau la
+        premier usage et n'était jamais rafraîchie - mémoriser à nouveau la
         position depuis le plan de feu (typiquement après avoir ajouté une lyre
         au rig) ne changeait donc rien ni à l'aperçu ni au show.
 
         On MET À JOUR, on n'ajoute jamais : créer les copies à la volée
         gonflerait `position_presets` de tous les presets du plan de feu à chaque
         appel. Un preset jamais utilisé dans REC Lumière n'a pas de copie, et
-        c'est très bien. Le plan de feu fait foi pour un nom donné — même
+        c'est très bien. Le plan de feu fait foi pour un nom donné - même
         sémantique que `_import_pdf_preset_to_pad`.
 
         Retourne le nombre de copies mises à jour.
@@ -13067,7 +13181,7 @@ class MainWindow(QMainWindow):
         convertissant si besoin. Renvoie None si la conversion échoue.
 
         Les positions vivent dans DEUX fichiers (cf. `_load_pdf_presets`), et
-        tout ce qui les consomme par INDEX — REC Lumière, l'éditeur d'effets —
+        tout ce qui les consomme par INDEX - REC Lumière, l'éditeur d'effets -
         ne sait lire que la liste AKAI. On y fabrique donc une copie à la
         demande, au moment où l'utilisateur choisit la position, jamais à
         l'affichage : convertir pour afficher recopierait les 30 presets du
@@ -13076,7 +13190,7 @@ class MainWindow(QMainWindow):
         Une copie de même nom est RAFRAÎCHIE, pas seulement retrouvée : elle
         date du premier usage, et une lyre ajoutée au rig depuis puis fusionnée
         dans la position côté plan de feu n'y figurerait pas. Le plan de feu
-        fait foi pour un nom donné — même sémantique que
+        fait foi pour un nom donné - même sémantique que
         `_import_pdf_preset_to_pad` et `sync_pdf_positions_into_akai`.
 
         ⚠️ Point UNIQUE de cette conversion : `light_timeline._resolve_idx`
@@ -13215,7 +13329,7 @@ class MainWindow(QMainWindow):
 
         Une couche par mouvement distinct (forme, vitesse, amplitude), ciblant
         ses lyres dans l'ordre du déphasage. Retourne (couches, {id(proj):
-        (centre_pan, centre_tilt)}) — ([], {}) si aucun effet rapide ne tourne.
+        (centre_pan, centre_tilt)}) - ([], {}) si aucun effet rapide ne tourne.
         """
         from effect_editor import _L
         pdf = getattr(self, 'plan_de_feu', None)
@@ -13236,7 +13350,16 @@ class MainWindow(QMainWindow):
             items.sort(key=lambda x: x[0])
             _o, p0, _g, _i, st0 = items[0]
             shape = self._QE_TO_SHAPE[eff]
-            speed = round(max(0.1, (float(st0.speed) - 0.05) / 7.0 * 100.0), 1)
+            # Les deux moteurs suivent le fader 9, mais pas avec la même
+            # échelle : le pad joue couche × `fx_fader_mult` (×0,8 au défaut),
+            # l'effet rapide `st.speed` × `quick_fx_fader_mult` (×1 au défaut).
+            # Le rapport entre les deux est constant (1/fx_fader_mult(80)) :
+            # on l'applique, et le pad tourne à la vitesse de l'effet rapide
+            # quelle que soit la position du fader (FuraxX, 21/11/2026 :
+            # « même la vitesse ne correspond pas »).
+            from core import fx_fader_mult, FX_FADER_KNEE
+            _hz = float(st0.speed) / fx_fader_mult(FX_FADER_KNEE)
+            speed = round(max(0.1, (_hz - 0.05) / 7.0 * 100.0), 1)
             amp = float(st0.amplitude)
             # Balancier (pan seul) : plus de compensation du ratio angulaire,
             # le moteur ne l'applique plus aux formes à un seul axe
@@ -13249,6 +13372,10 @@ class MainWindow(QMainWindow):
             lay["target_preset"] = "Selection"
             lay["target_selection"] = [[g, int(i)] for _o, _p, g, i, _st in items]
             lay["target_groups"] = []
+            # Centre de chaque lyre gardé AVEC le mouvement : en séquence, il
+            # doit tourner au même endroit que sur le pad (`core.layer_rec_centers`).
+            lay["centers"] = {f"{g}|{int(i)}": [int(st.center_pan), int(st.center_tilt)]
+                              for _o, _p, g, i, st in items}
             layers.append(lay)
             for _o, p, _g, _i, st in items:
                 centres[id(p)] = (int(st.center_pan), int(st.center_tilt))
@@ -13284,6 +13411,49 @@ class MainWindow(QMainWindow):
             # écrivains pan/tilt) : cf. `_stop_quick_moves` dans start_effect.
             effect["quick_move"] = True
         return effect, centres
+
+    def _note_fx_move_center(self, proj, ctr, pan=True, tilt=True):
+        """Retient le centre IMPOSÉ (POSITION, centre enregistré, clip
+        Position) autour duquel l'effet en cours fait tourner cette lyre.
+
+        Lu par `start_effect` quand un effet sans mouvement (strobe…) remplace
+        un mouvement : la lyre reste sur ce centre au lieu de retomber sur sa
+        position d'avant l'effet - le repos 32768, le PLAFOND pour une lyre
+        posée (FuraxX, 25/11/2026).
+        """
+        d = self.__dict__.setdefault('_fx_move_centers', {})
+        cur = d.get(id(proj)) or [None, None]
+        if pan:
+            cur[0] = int(ctr[0])
+        if tilt:
+            cur[1] = int(ctr[1])
+        d[id(proj)] = cur
+
+    @staticmethod
+    def _effect_moves_lyres(cfg) -> bool:
+        """Vrai si l'effet a une couche de mouvement (Pan, Tilt, Pan/Tilt)."""
+        return any((ld or {}).get("attribute") in ("Pan", "Tilt", "Pan/Tilt")
+                   for ld in ((cfg or {}).get("layers") or []))
+
+    def _hold_lyres_on_centers(self, centres):
+        """Pose les lyres sur le centre du mouvement qu'on vient de couper.
+
+        Annule aussi la transition lancée par `stop_effect` vers l'ancienne
+        visée, sinon elle ramènerait la lyre au plafond 500 ms plus tard.
+        """
+        if not centres:
+            return
+        trans = getattr(self, '_pan_tilt_transitions', None)
+        for p in self.projectors:
+            c = centres.get(id(p))
+            if not c:
+                continue
+            if trans is not None:
+                trans.pop(id(p), None)
+            if c[0] is not None:
+                p.pan = c[0]
+            if c[1] is not None:
+                p.tilt = c[1]
 
     def _stop_quick_moves(self):
         """Arrête les effets rapides de lyres du plan 2D, lyres rendues à leur
@@ -13417,6 +13587,11 @@ class MainWindow(QMainWindow):
         if not cfg:
             return
         key = (fx_col, row)
+        # Fader de la colonne à 0 = amplitude nulle : l'effet ne sort pas (et
+        # les effets rapides viennent d'être coupés). Djch28, 21/11/2026 :
+        # « sur un autre pad plus rien ne se passe ».
+        if not self.active_fx_pads.get(key) and self.fx_amplitudes[fx_col] <= 0:
+            self._show_error_toast(tr("mw_fx_col_fader_zero", col=fx_col + 1))
         if self.effect_superposition:
             self._toggle_fx_pad_stacked(key, cfg)
         elif self.active_fx_pads.get(key):
@@ -13521,7 +13696,7 @@ class MainWindow(QMainWindow):
         """Amplitude (0..1) du fader de colonne FX qui pilote l'effet.
 
         Exclusif : la colonne du pad actif. Superposition : la plus forte des
-        effets empilés (un bouton d'effet compte pour 1) — baisser le fader
+        effets empilés (un bouton d'effet compte pour 1) - baisser le fader
         d'une colonne ne doit pas rendre muets les effets des autres colonnes.
         """
         def _amp(fc):
@@ -13534,7 +13709,7 @@ class MainWindow(QMainWindow):
         return 1.0
 
     def _show_fx_context_menu(self, pos, fx_col, row, btn):
-        """Menu clic droit sur un pad FX — identique aux petits carrés verts."""
+        """Menu clic droit sur un pad FX - identique aux petits carrés verts."""
         from PySide6.QtWidgets import (QMenu, QWidgetAction, QLineEdit, QSlider,
                                         QDoubleSpinBox, QHBoxLayout, QVBoxLayout, QLabel)
 
@@ -13581,6 +13756,16 @@ class MainWindow(QMainWindow):
                             _b.update_style()
             else:
                 entry = dict(cfg_or_none)
+                # Effet retouché dans l'éditeur (vitesse, amplitude…) : ses
+                # couches sont dans la bibliothèque, pas dans BUILTIN_EFFECTS.
+                # Sans ça le pad recevait la version d'usine, et l'éditeur la
+                # réaffichait ensuite (FuraxX, 21/11/2026).
+                _lib = (getattr(self, '_effect_library_configs', None) or {}).get(entry.get("name"))
+                if isinstance(_lib, dict) and _lib.get("layers"):
+                    entry["layers"] = copy.deepcopy(_lib["layers"])
+                    for _k in ("play_mode", "duration"):
+                        if _k in _lib:
+                            entry[_k] = _lib[_k]
                 entry["trigger_mode"] = trigger_mode
                 entry["trigger_duration"] = trigger_duration
                 self.fx_pads[fx_col][row] = entry
@@ -13592,7 +13777,7 @@ class MainWindow(QMainWindow):
         _init_groups = list(_lyr0[0].get("target_groups", ["A","B","C","D","E","F","G","H"])) if _lyr0 else ["A","B","C","D","E","F","G","H"]
         # `round` et non `int` : la VITESSE d'une couche se règle au dixième
         # dans l'éditeur, et ce curseur d'accès rapide est entier. Tronquer
-        # afficherait 29 pour une couche à 29,8 — une valeur que l'utilisateur
+        # afficherait 29 pour une couche à 29,8 - une valeur que l'utilisateur
         # n'a jamais posée. Il n'écrit dans la couche que s'il est déplacé.
         _init_speed  = round(_lyr0[0].get("speed", 50)) if _lyr0 else 50
         _sel_groups  = list(_init_groups)
@@ -13804,7 +13989,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, search_input.setFocus)
 
         # « Éditeur d'effets » remonté en TÊTE du menu. Il est construit ici,
-        # après la liste, parce qu'il a besoin de fx_col/row — mais il est
+        # après la liste, parce qu'il a besoin de fx_col/row - mais il est
         # ensuite déplacé en première position : la liste d'effets fait 92
         # entrées, l'entrée se retrouvait tout en bas, hors de vue sans
         # défiler. Rien ne dépend de sa place dans le menu, l'action est
@@ -13869,8 +14054,8 @@ class MainWindow(QMainWindow):
 
         `effect_saved_colors` était un instantané mort, pris au démarrage de
         l'effet et rendu tel quel à l'arrêt. Tout ce que l'utilisateur posait
-        PENDANT l'effet — un pad couleur de l'AKAI, une mémoire, une couleur
-        depuis le plan 2D — était donc jeté à la coupure : bleu au pad, effet de
+        PENDANT l'effet - un pad couleur de l'AKAI, une mémoire, une couleur
+        depuis le plan 2D - était donc jeté à la coupure : bleu au pad, effet de
         mouvement, rouge au pad, relâché → retour au bleu. Le rouge n'avait
         jamais eu de chance : il n'était pas dans la photo.
 
@@ -13878,7 +14063,7 @@ class MainWindow(QMainWindow):
         compare donc l'état courant à ce que le moteur a écrit à la frame
         précédente (`_record_effect_frame`) : tout écart vient forcément d'un
         AUTRE écrivain, et devient le nouvel état « d'avant ». Attribut par
-        attribut — un pad couleur ne doit pas déplacer le centre pan/tilt autour
+        attribut - un pad couleur ne doit pas déplacer le centre pan/tilt autour
         duquel l'effet tourne (`saved[3]`/`saved[4]`).
 
         Neutralisé en restitution (timeline / aperçu REC) : là, les clips
@@ -13918,7 +14103,7 @@ class MainWindow(QMainWindow):
         Renvoie `{id(projecteur): (pan, tilt)}` pour les lyres dont la visée
         vient d'être rendue : c'est la position d'AVANT l'effet (rappel de pad
         POS compris), et donc celle vers laquelle `stop_effect` doit ramener la
-        lyre — surtout pas le centre de la zone.
+        lyre - surtout pas le centre de la zone.
         """
         clear_effect_channels(self.projectors)
         self._fx_level_ids = set()
@@ -13934,7 +14119,7 @@ class MainWindow(QMainWindow):
         tournent encore (superposition). Sans ça, ce que l'effet retiré écrivait
         restait figé sur sa dernière image : couper un Rainbow sous une Lyre
         Cercle laissait la couleur, le niveau forcé à 100 et la roue sur la
-        dernière teinte — souvent une teinte sombre, et le faisceau qui tourne
+        dernière teinte - souvent une teinte sombre, et le faisceau qui tourne
         devenait invisible en 3D (« je perds le mouvement »). Les effets restants
         réécrivent leurs attributs à la frame suivante, avant l'envoi DMX.
         """
@@ -13964,7 +14149,16 @@ class MainWindow(QMainWindow):
         # cibles du nouvel effet) restaient figés/allumés. La garde isActive()
         # évite tout doublon quand l'appelant a déjà fait stop_effect (mémoire/cue).
         if getattr(self, 'effect_timer', None) is not None and self.effect_timer.isActive():
+            # Mouvement → effet SANS mouvement (strobe, pulse…) : la lyre garde
+            # le centre du mouvement coupé. Sans ça elle repartait sur sa visée
+            # d'avant l'effet, le repos 32768 - le plafond pour une lyre posée -
+            # puis revenait au relâché (FuraxX, 25/11/2026).
+            _centres = {}
+            if not self._effect_moves_lyres(self.active_effect_config):
+                _centres = dict(getattr(self, '_fx_move_centers', None) or {})
             self.stop_effect()
+            self._hold_lyres_on_centers(_centres)
+        self._fx_move_centers = {}
         # Effet enregistré depuis des effets rapides du plan 2D : ceux-ci
         # s'arrêtent (lyres au repos) avant la capture, sinon deux écrivains
         # pan/tilt et un « avant-effet » pris en plein mouvement.
@@ -14049,7 +14243,7 @@ class MainWindow(QMainWindow):
 
     def _finish_stacked_once(self, effect_idx, pad=None):
         """Fin d'un effet « Une fois » empilé (superposition) : retiré comme un
-        appui OFF sur son bouton (ou son pad FX si `pad`) — les autres effets
+        appui OFF sur son bouton (ou son pad FX si `pad`) - les autres effets
         continuent, et le dernier retiré restitue l'état d'avant-effet."""
         if pad is not None:
             if any(e.get('pad') == pad for e in self._stacked_effects):
@@ -14069,7 +14263,7 @@ class MainWindow(QMainWindow):
         """Lance une animation fluide pan/tilt vers (new_pan, new_tilt).
 
         `delay_ms` : la lyre attend sur place avant de partir (déplacement
-        décalé d'un pad POS — les lyres partent l'une après l'autre).
+        décalé d'un pad POS - les lyres partent l'une après l'autre).
         """
         import time as _t
         cur_pan  = getattr(proj, 'pan',  32768)
@@ -14080,7 +14274,7 @@ class MainWindow(QMainWindow):
             cur_pan  = getattr(proj, 'pan',  tr['p1'])
             cur_tilt = getattr(proj, 'tilt', tr['t1'])
         # Effet en cours sur cette lyre : la transition déplace le CENTRE autour
-        # duquel l'effet tourne, et part donc de ce centre — pas de la valeur
+        # duquel l'effet tourne, et part donc de ce centre - pas de la valeur
         # instantanée, qui porte l'écart du mouvement (cf. _tick_pan_tilt_anim).
         saved = self._effect_capture_for_pantilt(proj)
         if saved is not None:
@@ -14172,8 +14366,8 @@ class MainWindow(QMainWindow):
         Appelé quand on bascule le mode « superposition » : le moteur de
         restitution change de branche sous les effets en cours
         (`update_effect` ne lit la pile QUE si `effect_superposition`), donc
-        sans ça les effets restaient armés — pads AKAI allumés, projecteurs
-        figés sur la dernière image — sans plus personne pour les animer.
+        sans ça les effets restaient armés - pads AKAI allumés, projecteurs
+        figés sur la dernière image - sans plus personne pour les animer.
         Les pads FX empilés (superposition) sont coupés avec eux ; un pad FX
         lancé en mode exclusif n'est pas touché, il ne dépend pas de la pile.
         """
@@ -14206,9 +14400,9 @@ class MainWindow(QMainWindow):
         """Ramene les lyres a leur visee quand plus AUCUN effet ne tourne.
 
         Ordre de priorite, du plus imperatif au dernier recours :
-        1. `_timeline_pos_centers` — un clip Position de la timeline impose
+        1. `_timeline_pos_centers` - un clip Position de la timeline impose
            encore une visee, elle prime sur tout le reste ;
-        2. `aims` — la position rendue par `_restore_effect_state`, c'est-a-dire
+        2. `aims` - la position rendue par `_restore_effect_state`, c'est-a-dire
            celle d'AVANT l'effet : le preset rappele au pad POS, le pan/tilt
            pose au plan de feu, ou ce que l'utilisateur a envoye PENDANT l'effet
            (`_sync_effect_baseline` fait suivre la capture) ;
@@ -14217,7 +14411,7 @@ class MainWindow(QMainWindow):
 
         Le point 2 manquait : la boucle sautait de la timeline au centre de
         zone, donc en live AKAI la lyre quittait le preset POS rappele juste
-        avant pour aller se planter au milieu — « les lyres reprennent leur
+        avant pour aller se planter au milieu - « les lyres reprennent leur
         position de base ». Une transition deja en vol est laissee tranquille :
         elle vise plus juste que nous (un pad POS rappele il y a 200 ms).
         """
@@ -14251,7 +14445,7 @@ class MainWindow(QMainWindow):
         aims = self._restore_effect_state()
 
         # Ramener les Moving Heads à leur visée quand plus aucun effet n'est
-        # actif (transition fluide) — clip Position de la timeline, sinon la
+        # actif (transition fluide) - clip Position de la timeline, sinon la
         # position rendue par la restitution, sinon le centre de zone.
         any_active = any(
             getattr(btn, 'active', False)
@@ -14328,7 +14522,7 @@ class MainWindow(QMainWindow):
         Avant : réconcilier la capture avec ce que d'autres ont posé depuis la
         frame précédente (pad couleur, mémoire, plan 2D). Après : relever ce que
         le moteur vient d'écrire, témoin de la comparaison suivante. Le `finally`
-        compte — une frame qui sort en exception laisserait sinon un témoin
+        compte - une frame qui sort en exception laisserait sinon un témoin
         périmé, et tout l'état passerait pour une écriture étrangère.
         """
         self._sync_effect_baseline()
@@ -14384,7 +14578,7 @@ class MainWindow(QMainWindow):
         eff = self.active_effect
 
         if eff == "Strobe":
-            # Alternance blanc/noir — intervalle 500 ms (lent) → 25 ms (rapide)
+            # Alternance blanc/noir - intervalle 500 ms (lent) → 25 ms (rapide)
             interval = max(25, int(500 - (self.effect_speed / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             for p in self.projectors:
@@ -14395,7 +14589,7 @@ class MainWindow(QMainWindow):
             self.effect_state += 1
 
         elif eff == "Flash":
-            # Alternance couleur/noir — même mapping vitesse que Strobe
+            # Alternance couleur/noir - même mapping vitesse que Strobe
             interval = max(25, int(500 - (self.effect_speed / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             for p in self.projectors:
@@ -14716,7 +14910,7 @@ class MainWindow(QMainWindow):
         if not active_name:
             return
 
-        # Vérifier qu'un bouton OU un pad FX est vraiment actif — pas juste un effet fantôme
+        # Vérifier qu'un bouton OU un pad FX est vraiment actif - pas juste un effet fantôme
         btn_is_active = any(
             btn.active and btn.current_effect == active_name
             for btn in self.effect_buttons
@@ -14952,12 +15146,12 @@ class MainWindow(QMainWindow):
         # ── Horloge de PHASE ────────────────────────────────────────────────
         # La position dans le cycle valait `freq x temps écoulé`, avec la vitesse
         # générale ENFERMÉE dans `freq`. Bouger le fader FX changeait donc `freq`
-        # sous un `t` déjà grand : la phase sautait de `Δfreq x t` d'un coup —
+        # sous un `t` déjà grand : la phase sautait de `Δfreq x t` d'un coup -
         # 3 tours entiers pour un dixième de Hz après 30 s. En balayant le fader,
         # une salve de sauts : « ça part très vite avant de se caler ».
         # On accumule donc le temps DÉFORMÉ par la vitesse (`dt x fader_mult`) et
         # `freq` n'en dépend plus. À vitesse constante c'est exactement l'ancien
-        # calcul (`fader_mult x t`) — parité totale avec l'aperçu de l'éditeur —
+        # calcul (`fader_mult x t`) - parité totale avec l'aperçu de l'éditeur -
         # mais la phase reste CONTINUE quand la vitesse bouge : seule sa dérivée
         # change, comme sur un vrai pupitre.
         # dt plafonné : une frame en retard (freeze UI, veille) ne doit pas
@@ -14990,7 +15184,7 @@ class MainWindow(QMainWindow):
         # - `duration` > 0 (anciennes configs) : durée en secondes RÉELLES,
         #   comportement d'origine conservé ;
         # - sinon : un tour complet de la couche la plus lente, mesuré sur
-        #   l'horloge de PHASE (`core.effect_cycle_seconds`) — à mi-vitesse
+        #   l'horloge de PHASE (`core.effect_cycle_seconds`) - à mi-vitesse
         #   l'effet dure deux fois plus mais fait bien un tour entier. Rien
         #   d'animé → repli historique de 2 s.
         # Placé après le filtre des projecteurs : un chenillard aller-retour a
@@ -15013,7 +15207,7 @@ class MainWindow(QMainWindow):
                 self.effect_timer.stop()  # stopper immédiatement pour éviter les appels multiples
                 QTimer.singleShot(0, self._stop_once_effect)
                 return
-        # Couches « Canal » : calculées à part, sur TOUS les appareils —
+        # Couches « Canal » : calculées à part, sur TOUS les appareils -
         # machines comprises, mais limitées à leur canal de sortie (cf.
         # core.channel_layer_indices). Même fonction que l'aperçu de l'éditeur.
         # Avant le `n == 0` : un effet qui ne vise qu'une machine à étincelles
@@ -15041,7 +15235,7 @@ class MainWindow(QMainWindow):
         _sel_key_by_id = {id(p): k for p, k in zip(self.projectors, _all_keys)}
         # {clé: rang} et non un set : sur une cible « Sélection », l'étalement
         # suit l'ORDRE de sélection (les pastilles 1, 2, 3… du plan de feu) et
-        # non l'ordre du patch — c'est ce qui permet de diriger un chenillard.
+        # non l'ordre du patch - c'est ce qui permet de diriger un chenillard.
         _layer_sel = {id(ld): layer_selection_ranks(ld) for ld in layers_dicts}
 
         # Couches « Dégradé » (pixel map du plan 2D) : couleur selon la POSITION
@@ -15057,7 +15251,7 @@ class MainWindow(QMainWindow):
         _mh_n     = max(len(_mh_projs), 1)
 
         # SYM : lyres qui partent en Pan miroir. Partage sur la POSITION sur le
-        # plan — même règle que le bouton SYM du plan 2D et que l'aperçu de
+        # plan - même règle que le bouton SYM du plan 2D et que l'aperçu de
         # l'éditeur d'effets. Auparavant c'était l'index dans l'effet, ce qui
         # donnait un miroir différent selon l'ordre du patch.
         _sym_mir = (sym_mirror_ids(_mh_projs, self.projectors)
@@ -15092,7 +15286,7 @@ class MainWindow(QMainWindow):
         # un cercle tourne autour du milieu de course (le « cercle du milieu »).
         # Résolu sur TOUTES les lyres, pas sur la liste filtrée par groupe : le
         # preset a été enregistré sur l'ensemble du rig, et son appariement de
-        # secours se fait par rang — filtrer décalerait les correspondances.
+        # secours se fait par rang - filtrer décalerait les correspondances.
         _all_lyres = [p for p in self.projectors
                       if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
         _pos_centers = {}
@@ -15104,6 +15298,9 @@ class MainWindow(QMainWindow):
                                        _ld.get("pos_preset_name", ""))
             if _pr is not None:
                 _pos_centers[id(_ld)] = position_preset_values(_pr, _all_lyres)
+            elif _ld.get("centers"):
+                # Mouvement enregistré sur un pad : son propre centre.
+                _pos_centers[id(_ld)] = layer_rec_centers(_ld, self.projectors)
 
         def _wave(forme, x):
             if forme == "Sinus":      return (_math.sin(2 * _math.pi * x) + 1) / 2
@@ -15135,7 +15332,7 @@ class MainWindow(QMainWindow):
         # tilt, il faut donc réduire son amplitude pour qu'un cercle soit rond.
         # Lu SUR CHAQUE FIXTURE (`core.pan_angular_ratio`) et non plus figé à
         # 0,5 : une lyre 360°/270° a besoin de 0,75. Même appel que l'aperçu de
-        # l'éditeur d'effets — parité obligatoire.
+        # l'éditeur d'effets - parité obligatoire.
 
         # Amplitude min/max PAR GROUPE (répliquée sur les couches). Si un groupe a
         # une entrée, l'intensité de ses projos est remappée dans [min, max] au
@@ -15166,7 +15363,7 @@ class MainWindow(QMainWindow):
                 groups = ld.get("target_groups", [])
                 # Index d'étalement : par défaut la place dans le patch, mais sur
                 # une cible « Sélection » la place dans la SÉLECTION (pastilles
-                # 1, 2, 3… du plan) — c'est ce qui rend le chenillard dirigeable.
+                # 1, 2, 3… du plan) - c'est ce qui rend le chenillard dirigeable.
                 i_fx, n_fx = i, n
                 _mh_i_sel  = None
                 if preset == "Selection":
@@ -15204,7 +15401,7 @@ class MainWindow(QMainWindow):
 
                 # Plus de `fader_mult` ici : la vitesse générale est portée par
                 # l'horloge de phase (`_effect_clock`, en tête de fonction). L'y
-                # remettre l'appliquerait DEUX fois — et rendrait le saut de
+                # remettre l'appliquerait DEUX fois - et rendrait le saut de
                 # phase qu'elle sert justement à supprimer.
                 freq = layer_frequency(speed)
                 # 180° = distribution parfaite sur 1 cycle (permanent N/2 allumés avec Flash)
@@ -15231,7 +15428,7 @@ class MainWindow(QMainWindow):
                 if forme == "Un par un":
                     # Chenillard exclusif : la fixture est allumée uniquement
                     # quand c'est SON tour. La position vient du rang, pas de la
-                    # forme d'onde — c'est ce qui garantit un seul allumé à la
+                    # forme d'onde - c'est ce qui garantit un seul allumé à la
                     # fois quel que soit le DÉCALAGE (une forme classique reste
                     # allumée une fraction fixe du cycle, d'où plusieurs projos
                     # allumés en même temps).
@@ -15331,6 +15528,9 @@ class MainWindow(QMainWindow):
                     # d'une capture périmée et la lyre quitte sa position.
                     if _ctr is None:
                         _ctr = getattr(self, '_timeline_pos_centers', {}).get(id(proj))
+                    if _ctr is not None:
+                        self._note_fx_move_center(proj, _ctr, pan=(attr == "Pan"),
+                                                  tilt=(attr == "Tilt"))
                     if attr == "Pan":
                         center = (_ctr[0] if _ctr is not None else
                                   saved[3] if saved and len(saved) > 3 else rest_pantilt(proj)[0])
@@ -15393,6 +15593,8 @@ class MainWindow(QMainWindow):
                     _ctr = _pos_centers.get(id(ld), {}).get(id(proj))
                     if _ctr is None:
                         _ctr = getattr(self, '_timeline_pos_centers', {}).get(id(proj))
+                    if _ctr is not None:
+                        self._note_fx_move_center(proj, _ctr, pan=True, tilt=True)
 
                     # Pan
                     if pan_forme and pan_forme != "Fixe":
@@ -15416,7 +15618,7 @@ class MainWindow(QMainWindow):
                 elif attr == "Zoom":
                     proj.zoom = int(max(0, min(255, scaled * 255)))
                 elif attr == "Gobo":
-                    # Le niveau de la couche balaie toute la roue symbolique —
+                    # Le niveau de la couche balaie toute la roue symbolique -
                     # seize crans depuis qu'elle est passée de 8 à 16 motifs.
                     proj.gobo = gobo_slot_dmx(int(scaled * (GOBO_SLOT_COUNT - 1)))
                 elif attr == "ColorWheel":
@@ -15427,10 +15629,10 @@ class MainWindow(QMainWindow):
                     else:
                         proj.color_wheel = int(scaled * 255)
 
-            # Option A — effet DÉCOUPLÉ des blocs couleur : il tourne sur toute la
+            # Option A - effet DÉCOUPLÉ des blocs couleur : il tourne sur toute la
             # durée de SON clip, quel que soit le niveau des clips couleur en dessous.
             # (Avant : on sautait les projos éteints `_base_level == 0`, ce qui faisait
-            #  décrocher l'effet aux coutures/fondus des blocs couleur — « l'effet
+            #  décrocher l'effet aux coutures/fondus des blocs couleur - « l'effet
             #  s'arrête » quand il chevauche plusieurs blocs.)
 
             # Aucune couche lumière n'a produit de signal → laisser niveau/couleur inchangés
@@ -15448,7 +15650,7 @@ class MainWindow(QMainWindow):
             # L'effet contrôle la luminosité indépendamment du fader :
             # on force proj.level=100 et on encode toute la brillance dans proj.color
             bv = level
-            # Option A — l'effet contrôle sa PROPRE brillance et ne suit plus le fade
+            # Option A - l'effet contrôle sa PROPRE brillance et ne suit plus le fade
             # du clip couleur en dessous (sinon il s'éteignait avec lui aux jointures
             # de blocs). Découplage total. `_follow` reste utilisé plus haut uniquement
             # pour l'héritage de couleur des effets « sans couleur ».
@@ -15489,7 +15691,7 @@ class MainWindow(QMainWindow):
             if has_uv:
                 proj.uv = int(min(255, uv * 255))
             # Canal dédié SEUL (UV / Blanc / Ambre sans couche couleur ni dimmer) :
-            # ouvrir le master de la fixture, sinon la LED dédiée reste éteinte —
+            # ouvrir le master de la fixture, sinon la LED dédiée reste éteinte -
             # dans le moteur DMX, Dim vaut proj.level, remis à 0 chaque image par
             # les deux moteurs timeline.
             if (has_uv or has_w or has_ambre) and not (has_color_val or has_rgb_layer or has_dim):
@@ -15673,6 +15875,38 @@ class MainWindow(QMainWindow):
     def _fader8_dispatch(self, index, value):
         """Fader 9 : contrôle de la vitesse des effets."""
         self.effect_speed = value
+        self._sync_manual_strobe_speed()
+
+    def _manual_strobe_rate(self) -> int:
+        """Vitesse du strobe matériel posé à la main (touche S, bloc Strobe
+        EXT) : celle du fader 9, au moins 1 pour que le strobe reste allumé."""
+        try:
+            return max(1, min(100, int(getattr(self, 'effect_speed', 80) or 0)))
+        except (TypeError, ValueError):
+            return 80
+
+    def _track_manual_strobe(self, proj, val):
+        """Registre des strobes posés à la main, que le fader 9 fait suivre."""
+        reg = self.__dict__.setdefault('_manual_strobe_ids', set())
+        if val > 0:
+            reg.add(id(proj))
+        else:
+            reg.discard(id(proj))
+
+    def _sync_manual_strobe_speed(self):
+        """Fader 9 bougé : les strobes posés à la main suivent en direct.
+        Un strobe coupé entre-temps (CLEAR, curseur à 0) sort du registre."""
+        reg = getattr(self, '_manual_strobe_ids', None)
+        if not reg:
+            return
+        rate = self._manual_strobe_rate()
+        for p in self.projectors:
+            if id(p) not in reg:
+                continue
+            if getattr(p, 'strobe_speed', 0) > 0:
+                p.strobe_speed = rate
+            else:
+                reg.discard(id(p))
 
     def set_effect_speed(self, index, value):
         """Definit la vitesse de l'effet (conservé pour compatibilité)"""
@@ -15698,7 +15932,7 @@ class MainWindow(QMainWindow):
         mode = getattr(self, 'tap_button_mode', 'bpm')
         look = self._TAP_BTN_LOOK.get(mode)
         if look is None:
-            # TAP BPM — pastille grise sans libellé, apparence d'origine
+            # TAP BPM - pastille grise sans libellé, apparence d'origine
             btn.setText("")
             btn.setToolTip(tr("tooltip_tap_tempo") + "\n" + tr("tap_btn_mode_hint"))
             btn.setStyleSheet("""
@@ -15873,7 +16107,7 @@ class MainWindow(QMainWindow):
         """Clic droit sur le bouton bas-droite → choisir sa fonction.
 
         Même liste que dans « Configuration du contrôleur », mais sans avoir à
-        ouvrir la fenêtre — c'est le geste des boutons d'effets.
+        ouvrir la fenêtre - c'est le geste des boutons d'effets.
         """
         btn = getattr(self, '_tap_btn', None)
         if btn is None:
@@ -15896,11 +16130,11 @@ class MainWindow(QMainWindow):
         """Niveau d'une colonne mémoire, flash momentané appliqué.
 
         Le flash ne touche AUCUN fader : il se contente de forcer le niveau lu
-        par le mix. Le relâcher n'a donc rien à restaurer — un simple recalcul
+        par le mix. Le relâcher n'a donc rien à restaurer - un simple recalcul
         rend exactement l'état d'avant.
 
         FLASH KILL n'apparaît plus ici : tenu seul il ne coupe rien, et sa
-        coupure est un SOLO décidé à l'appui d'un pad couleur — donc par
+        coupure est un SOLO décidé à l'appui d'un pad couleur - donc par
         PROJECTEUR (`_apply_flash_kill_gate`), pas par colonne de mémoire.
         """
         if self._flash_kind == "full":
@@ -15910,7 +16144,7 @@ class MainWindow(QMainWindow):
     def _tap_next_page(self):
         """Mode PAGE : le bouton bas-droite fait +1 sur les pages de layout.
 
-        Même chemin que la flèche ▶ de l'écran (`_next_bank_page`) — pads,
+        Même chemin que la flèche ▶ de l'écran (`_next_bank_page`) - pads,
         faders et LED suivent donc exactement comme un changement de page à la
         souris. Après la dernière page on revient à la première : un seul bouton
         suffit à faire le tour.
@@ -15955,7 +16189,7 @@ class MainWindow(QMainWindow):
         # `_recompute_memory_mix` compose le rig À PARTIR des mémoires : tout
         # projecteur qu'aucune mémoire active ne touche tombe dans « éteint »,
         # couleur comprise. L'appeler pour un momentané détruit donc le look
-        # manuel (pads couleur, plan 2D) — et le relâcher ne le rend pas.
+        # manuel (pads couleur, plan 2D) - et le relâcher ne le rend pas.
         #
         #  • KILL  : rien à composer, JAMAIS. Sous KILL toutes les mémoires sont
         #    ramenées à 0 par `_flash_level`, le mix serait vide et noircirait
@@ -15991,11 +16225,11 @@ class MainWindow(QMainWindow):
         self._log_message(tr("tap_flash_off"), "info")
 
     def _tap_tempo_released(self):
-        """Relâchement du bouton bas-droite — seul le flash s'en sert."""
+        """Relâchement du bouton bas-droite - seul le flash s'en sert."""
         self._flash_end()
 
     def _tap_tempo(self):
-        """Appui sur le bouton bas-droite — dispatch selon le mode configuré."""
+        """Appui sur le bouton bas-droite - dispatch selon le mode configuré."""
         mode = self.tap_button_mode
         if mode == "go":
             self._go_advance()
@@ -16046,6 +16280,7 @@ class MainWindow(QMainWindow):
         # BPM → fader 0-100 (60 BPM = 0, 300 BPM = 100)
         speed = int(max(0, min(100, (bpm - 60) / (300 - 60) * 100)))
         self.effect_speed = speed
+        self._sync_manual_strobe_speed()
         if 8 in self.faders:
             self.faders[8].set_value(speed)
 
@@ -16162,7 +16397,7 @@ class MainWindow(QMainWindow):
         def _stype(idx):
             return (self._fader_map[idx].get("type")
                     if idx < len(self._fader_map) else None)
-        # Faders à 0 — SAUF la colonne PLAY (volume) : le clear ne doit jamais
+        # Faders à 0 - SAUF la colonne PLAY (volume) : le clear ne doit jamais
         # couper le son (piège ergonomique). Et SAUF les colonnes FX, dont le
         # fader est une amplitude d'effet et non un niveau (voir _sync_fx_fader) :
         # le clear coupe déjà les effets plus bas, la mettre à 0 ne ferait que
@@ -16225,7 +16460,7 @@ class MainWindow(QMainWindow):
                 btn.active = False
                 btn.update_style()
 
-        # Effets du plan de feu 2D — SECOND moteur, avec son propre timer.
+        # Effets du plan de feu 2D - SECOND moteur, avec son propre timer.
         # Sans ça un effet lancé par clic droit (strobe, chenillard, pan/tilt)
         # continuait d'écrire sur les projecteurs 25 fois par seconde : CLEAR
         # semblait sans effet et seul un redémarrage rendait la main.
@@ -16243,7 +16478,7 @@ class MainWindow(QMainWindow):
         for p in self.projectors:
             # Le noir general epargne l'ATMOSPHERE (fumee, brume) : la couper a
             # chaque blackout viderait la salle de ce qui rend les faisceaux
-            # visibles. Il coupe en revanche le PYRO — laisser une gerbe
+            # visibles. Il coupe en revanche le PYRO - laisser une gerbe
             # d'etincelles ou une flamme tourner pendant un noir n'a aucun sens.
             if not fixture_is_fx_machine(p) or fixture_is_pyro(p):
                 p.level      = 0
@@ -16328,7 +16563,7 @@ class MainWindow(QMainWindow):
         self.active_effect_config = {}
         # Rendre l'état d'avant l'effet. Arrêter le timer ne défait rien : les
         # projecteurs restent sur la dernière image écrite (un effet blanc
-        # laisse tout en blanc). Sans objet au démarrage — la capture est vide —
+        # laisse tout en blanc). Sans objet au démarrage - la capture est vide -
         # mais c'est aussi ce chemin qu'emprunte « Arrêter les effets » de la
         # fenêtre externe (`_ext_stop_effects`) et le bouton STOP du contrôleur.
         self._restore_effect_state()
@@ -16425,7 +16660,7 @@ class MainWindow(QMainWindow):
     def _get_live_sequences(self):
         """Mémoires enregistrées sur les pads, pour l'onglet SÉQUENCE du LIVE.
 
-        Ce sont bien les mémoires de PADS — celles que l'utilisateur pose avec
+        Ce sont bien les mémoires de PADS - celles que l'utilisateur pose avec
         Rec MEM et rappelle d'un pad AKAI. Les captures « REC séquence » de REC
         Lumière (colonnes réservées, tag `_rec`) en sont écartées : elles ne
         vivent pas sur les pads, elles appartiennent à la piste Séquence d'un
@@ -16477,15 +16712,15 @@ class MainWindow(QMainWindow):
     # groupes hors périmètre LIVE, et lui seul : le gel de `_apply_live_state`
     # ne couvre que ce que le MOTEUR IA écrit (niveau, couleur, pan/tilt, gobo,
     # strobe), ce qui suffisait tant qu'il était le seul writer. Une mémoire
-    # pose bien davantage — prisme, roue, zoom, shutter, canaux bruts, UV et
-    # boosts — et déborderait donc sur des groupes que l'utilisateur a
+    # pose bien davantage - prisme, roue, zoom, shutter, canaux bruts, UV et
+    # boosts - et déborderait donc sur des groupes que l'utilisateur a
     # explicitement sortis du LIVE.
     # Tout ce qu'une mémoire peut écrire sur un projecteur. Sert au gel des
     # groupes hors périmètre LIVE, et lui seul : le gel de `_apply_live_state`
     # ne couvre que ce que le MOTEUR IA écrit (niveau, couleur, pan/tilt, gobo,
     # strobe), ce qui suffisait tant qu'il était le seul writer. Une mémoire
-    # pose bien davantage — prisme, roue, zoom, shutter, canaux bruts, UV et
-    # boosts — et déborderait donc sur des groupes que l'utilisateur a
+    # pose bien davantage - prisme, roue, zoom, shutter, canaux bruts, UV et
+    # boosts - et déborderait donc sur des groupes que l'utilisateur a
     # explicitement sortis du LIVE.
     _LIVE_SEQ_FROZEN_ATTRS = (
         'level', 'color', 'base_color', 'pan', 'tilt', 'strobe_speed',
@@ -16522,14 +16757,14 @@ class MainWindow(QMainWindow):
 
         `apply_seq_memories_htp` POSE sans jamais effacer (c'est ce qui lui permet
         de s'empiler sur les autres pistes) : gobo, prisme, roue, canaux bruts
-        resteraient donc collés après extinction — le symptôme « faut faire clear
+        resteraient donc collés après extinction - le symptôme « faut faire clear
         partout pour stopper » déjà corrigé côté timeline. On réutilise le même
         nettoyage qu'à l'arrêt d'une timeline, puis on laisse le mix des mémoires
         repeindre l'état manuel réel (en mode IA, le moteur repeint de toute
         façon à l'image suivante).
 
         Nettoyage borné au périmètre LIVE, comme l'application : un groupe exclu
-        n'a jamais rien reçu, il n'y a rien à lui relâcher — et lui remettre le
+        n'a jamais rien reçu, il n'y a rien à lui relâcher - et lui remettre le
         faisceau au repos lui volerait le gobo posé à la main.
         """
         try:
@@ -16561,13 +16796,13 @@ class MainWindow(QMainWindow):
 
         La durée ENREGISTRÉE dans le cue mène : une mémoire à plusieurs cues est
         une séquence qu'on a minutée, elle doit se dérouler au tempo qu'on lui a
-        donné. Le curseur DURÉE n'intervient que pour les cues sans minutage —
+        donné. Le curseur DURÉE n'intervient que pour les cues sans minutage -
         c'est-à-dire pour un simple look, qui n'a aucune durée propre.
 
         Ce curseur compte en SECONDES, là où le cycle des mouvements compte en
         mesures. La raison tient à l'horloge : celle du LIVE avance même dans le
         silence (`live_audio._process_chunk` ajoute 50 ms par bloc, RMS nul ou
-        non), le pool tourne donc sans musique — mais le BPM, lui, retombe à son
+        non), le pool tourne donc sans musique - mais le BPM, lui, retombe à son
         plancher de 60. En mesures, le même réglage aurait valu 20 s en silence
         et 9 s sur un morceau à 128 BPM. Pour un changement de look, une durée
         qu'on lit sur le curseur vaut mieux qu'une durée qui dépend de la
@@ -16590,7 +16825,7 @@ class MainWindow(QMainWindow):
         Déduit du CONTENU de la mémoire, pas d'une règle figée : une mémoire qui
         n'a enregistré ni gobo ni strobe laisse ces onglets vivants, et le
         marquage doit le dire. Marquer les six onglets à chaque séquence serait
-        plus simple et faux — l'utilisateur croirait avoir perdu la main sur des
+        plus simple et faux - l'utilisateur croirait avoir perdu la main sur des
         réglages qui répondent encore.
 
         Calculé au CHANGEMENT de mémoire ou de cue, jamais par image.
@@ -16668,7 +16903,7 @@ class MainWindow(QMainWindow):
         """Pose la mémoire en cours du pool par-dessus l'image LIVE courante.
 
         Même fonction que la piste Séquence du show (`apply_seq_memories_htp`) :
-        une mémoire jouée ici rend exactement ce qu'elle rend en restitution —
+        une mémoire jouée ici rend exactement ce qu'elle rend en restitution -
         c'est tout l'intérêt de passer par elle plutôt que de réécrire un
         applicateur.
 
@@ -16679,17 +16914,17 @@ class MainWindow(QMainWindow):
         viennent d'écrire. Sur un projecteur qu'elle laisse noir, le moteur
         garde la main. Les canaux de faisceau (gobo, prisme, zoom, roue…)
         suivent la même règle : posés s'ils sont réglés dans la mémoire,
-        intacts sinon — l'onglet GOBO continue donc de vivre.
+        intacts sinon - l'onglet GOBO continue donc de vivre.
 
         DEUX canaux échappaient à cette règle, et c'est un vrai défaut :
         `apply_seq_memories_htp` écrit `strobe_speed` et `channel_extras` SANS
-        CONDITION, sur tout le rig. Dans le show c'est sans conséquence — la
+        CONDITION, sur tout le rig. Dans le show c'est sans conséquence - la
         timeline remet tout au repos avant chaque image, elle est writer absolu.
         En LIVE, non : le strobe matériel que l'onglet STROB vient de poser
         était remis à 0 quarante fois par seconde, et les canaux bruts vidés.
         L'onglet STROB devenait muet dès qu'une séquence tournait. On restaure
         donc ces deux canaux partout où la mémoire, elle, les a laissés AU
-        REPOS — ce qui aligne leur comportement sur celui des canaux de
+        REPOS - ce qui aligne leur comportement sur celui des canaux de
         faisceau, juste au-dessus.
 
         ⚠️ « Au repos » et non « projecteur éteint » : un laser se pilote par
@@ -16700,7 +16935,7 @@ class MainWindow(QMainWindow):
         projecteurs qu'elle ne vise pas. Elle ne peut donc pas être appliquée
         telle quelle quand le LIVE est restreint à certains groupes : on gèle
         les autres autour de l'appel (`_LIVE_SEQ_FROZEN_ATTRS`), plutôt que de
-        filtrer les entrées — `apply_seq_memories_htp` s'aligne sur les INDEX
+        filtrer les entrées - `apply_seq_memories_htp` s'aligne sur les INDEX
         de `projectors`, une liste filtrée décalerait toute la correspondance.
 
         ⚠️ L'index de cue reste DANS l'état LIVE, il n'est jamais écrit dans
@@ -16718,7 +16953,7 @@ class MainWindow(QMainWindow):
         # (`strobe_speed` en tête) ne sont pas déclarés sur `Projector`, ils
         # n'existent que si quelqu'un les a écrits. Avec un `None`, la mémoire
         # pouvait donc les CRÉER sur un projecteur hors périmètre et le dégel
-        # les y laissait — un groupe exclu du LIVE qui se met à strober.
+        # les y laissait - un groupe exclu du LIVE qui se met à strober.
         _ABSENT = object()
 
         gel = []        # groupes hors périmètre LIVE : tout est restauré
@@ -16745,7 +16980,7 @@ class MainWindow(QMainWindow):
         # par `lock_pantilt_idxs`, le verrou que la fonction expose DÉJÀ pour la
         # piste Position du show : là-bas, un clip de position prime sur la
         # mémoire de la piste Séquence. En LIVE, c'est l'onglet MOUVEMENT qui
-        # tient ce rôle — et il le tient en permanence, puisqu'il refuse de
+        # tient ce rôle - et il le tient en permanence, puisqu'il refuse de
         # rester vide. Sans ce verrou, toute mémoire enregistrée hors du centre
         # figeait les lyres tant qu'elle tournait.
         verrou_pt = (None if self.seq.live_panel.sequence_positions
@@ -16819,7 +17054,7 @@ class MainWindow(QMainWindow):
         self.video_frame.setVisible(visible)
         # Le bas du color picker tapait dans le splitter quand la video est
         # masquee. La marge suivait « mode live » ; elle suit desormais la
-        # VIDEO, qui est la vraie cause — donc aussi en « aucun panneau ».
+        # VIDEO, qui est la vraie cause - donc aussi en « aucun panneau ».
         bloc = getattr(self, 'color_picker_block', None)
         if bloc is not None and bloc.layout() is not None:
             bloc.layout().setContentsMargins(12, 8, 12, 8 if visible else 20)
@@ -16897,7 +17132,7 @@ class MainWindow(QMainWindow):
 
         Un widget Qt n'a qu'un seul parent : la surface ne peut pas être aux deux
         endroits à la fois. On déplace donc l'unique exemplaire au lieu d'en créer
-        un second — ça garde un seul writer sur l'état des blocs (et un seul
+        un second - ça garde un seul writer sur l'état des blocs (et un seul
         _state_timer), et évite que deux surfaces se disputent ~/.mystrow_ext.json.
         """
         if getattr(self, "_pads_surface", None) is not None:
@@ -16921,7 +17156,7 @@ class MainWindow(QMainWindow):
         # La colonne centrale est plus étroite que la fenêtre PADS (conçue pour
         # 1240 px) : sans ça les blocs de droite sont rognés et inatteignables.
         # On empêche le canvas de descendre sous son contenu et on rend le tout
-        # défilant — uniquement ici, la fenêtre flottante garde son comportement.
+        # défilant - uniquement ici, la fenêtre flottante garde son comportement.
         canvas = getattr(win, "canvas", None)
         if canvas is not None:
             cw, ch = canvas.content_size()
@@ -16948,7 +17183,7 @@ class MainWindow(QMainWindow):
         if surface is None:
             return
         # ExtWindow ne sauve son layout que dans closeEvent : embarquée, sa
-        # fenêtre ne se ferme jamais, donc on sauve ici — sinon les blocs
+        # fenêtre ne se ferme jamais, donc on sauve ici - sinon les blocs
         # déplacés en vue Pads seraient perdus.
         try:
             self._ext_window._save_layout()
@@ -16980,13 +17215,13 @@ class MainWindow(QMainWindow):
         self._view_actions["live" if live_on else "media"].setChecked(True)
 
     def _on_live_toggle(self, checked: bool):
-        """Slot Qt — entrée/sortie du mode LIVE, protégé.
+        """Slot Qt - entrée/sortie du mode LIVE, protégé.
 
         C'était le SEUL slot du mode LIVE sans garde, alors que ses voisins en
         ont une : une exception qui remonte dans un slot Qt termine l'application
-        (PySide6 appelle qFatal). Or ce slot est le plus exposé de tous — il
+        (PySide6 appelle qFatal). Or ce slot est le plus exposé de tous - il
         touche la mise en page, le lecteur média, le moteur audio, le détecteur
-        de logiciels et le panneau — et c'est justement à la sortie du live que
+        de logiciels et le panneau - et c'est justement à la sortie du live que
         des utilisateurs voyaient MyStrow se fermer tout seul.
         """
         try:
@@ -17049,7 +17284,7 @@ class MainWindow(QMainWindow):
             # échec (lecteur média, détecteur, widget) n'empêche pas les
             # suivantes. Avant, tout s'enchaînait à la file : une erreur au
             # milieu laissait le moteur audio en marche derrière un séquenceur
-            # rendu — ou faisait tomber l'application.
+            # rendu - ou faisait tomber l'application.
             def _etape(nom, fn):
                 try:
                     fn()
@@ -17074,13 +17309,13 @@ class MainWindow(QMainWindow):
 
             def _reset_panneau():
                 self.seq.live_panel.set_vu(0)
-                self.seq.live_panel.set_status(bpm=0, section='—')
+                self.seq.live_panel.set_status(bpm=0, section='-')
                 self.seq.live_panel.set_connection_status('off')
             _etape('panneau', _reset_panneau)
 
             # Le moteur est arrêté : plus personne n'appellera
             # `_live_set_hw_strobe(0)`, et les canaux Strobe resteraient
-            # latchés sur leur dernière vitesse — une salle qui continue de
+            # latchés sur leur dernière vitesse - une salle qui continue de
             # stroboscoper après la sortie du LIVE.
             _etape('strobe', self._release_live_hw_strobe)
 
@@ -17122,7 +17357,7 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_live_transient(self, hit_type: str):
-        """Slot signal (thread audio) protégé — voir _log_live_error."""
+        """Slot signal (thread audio) protégé - voir _log_live_error."""
         try:
             self._on_live_transient_inner(hit_type)
         except Exception as e:
@@ -17145,7 +17380,7 @@ class MainWindow(QMainWindow):
 
         if hit_type == 'kick':
             self._live_transient_flash['contre_until'] = pos + 70
-            # Le kick FFT est le beat le plus fiable — l'utiliser pour tout
+            # Le kick FFT est le beat le plus fiable - l'utiliser pour tout
             panel.flash_beat()
             auto = panel.is_tile_active('auto')
             if panel.is_tile_active('flash') or auto:
@@ -17154,7 +17389,7 @@ class MainWindow(QMainWindow):
                 bs['strobe_until'] = max(bs['strobe_until'], pos + 380)
             if panel.is_tile_active('gobo') or auto:
                 bs['gobo_idx'] = (bs['gobo_idx'] + 1) % GOBO_SLOT_COUNT
-            # ── Strobe blanc drop — déclenché dès le premier kick du drop ─────────
+            # ── Strobe blanc drop - déclenché dès le premier kick du drop ─────────
             _section = getattr(self.live_engine, '_section_state', 'verse')
             import time as _t
             if not hasattr(self, '_smart_fx'):
@@ -17177,7 +17412,7 @@ class MainWindow(QMainWindow):
                     _sfx['last_flash_ts'] = _now
                     bs['smart_flash_until'] = pos + 140
                 # Strobe blanc court. Ce déclencheur MANQUAIT : `smart_strobe_until`
-                # était lu à la restitution mais jamais écrit — la branche « strobe
+                # était lu à la restitution mais jamais écrit - la branche « strobe
                 # intelligent » ne pouvait pas se produire, et le mode STROB LENT
                 # n'avait plus que le strobe de section « build » de la tuile AUTO,
                 # d'où « on ne le voit presque jamais ».
@@ -17194,14 +17429,14 @@ class MainWindow(QMainWindow):
             self._live_transient_flash['lyre_chop_until'] = pos + 40
 
     def _on_live_ia_mode_changed(self, mode: str):
-        """Slot signal protégé — le basculement de mode ne doit jamais crasher."""
+        """Slot signal protégé - le basculement de mode ne doit jamais crasher."""
         try:
             self._on_live_ia_mode_changed_inner(mode)
         except Exception as e:
             self._log_live_error('ia_mode', e)
 
     def _on_live_ia_mode_changed_inner(self, mode: str):
-        """Changement de mode IA — réinitialise les états persistants si nécessaire."""
+        """Changement de mode IA - réinitialise les états persistants si nécessaire."""
         for attr in ('_live_sec', '_live_beat_state', '_live_transient_flash',
                      '_ambiance_phase', '_ambiance_t', '_smart_fx',
                      '_live_lyre_switch', '_ambiance_color_switch', '_ambiance_gobo_switch'):
@@ -17258,7 +17493,7 @@ class MainWindow(QMainWindow):
         (32768) avec une amplitude fixe, sans jamais lire `pan_min/pan_max` ni
         `tilt_min/tilt_max` : la zone réglée dans le profil de la lyre était
         purement ignorée. Le clamp de sortie (`artnet_dmx`) empêchait bien de
-        SORTIR de la zone, mais en écrêtant — la lyre passait le plus clair du
+        SORTIR de la zone, mais en écrêtant - la lyre passait le plus clair du
         cycle plaquée en butée, le cercle/huit rogné, et une zone décentrée la
         collait sur un bord. On centre donc sur le milieu de la ZONE et on
         plafonne l'amplitude à sa demi-largeur : le motif garde sa forme, à
@@ -17272,7 +17507,7 @@ class MainWindow(QMainWindow):
         # `+ 1` : sur la course pleine le milieu vaut 32768, la valeur de repos
         # employée partout ailleurs (rappel au centre, défaut des effets, patch).
         # Avec cette forme, une lyre SANS limites retrouve au bit près l'ancien
-        # calcul `32768 + int(norm * amp)` — aucune régression sur les rigs qui
+        # calcul `32768 + int(norm * amp)` - aucune régression sur les rigs qui
         # n'utilisent pas la zone.
         amp    = min(abs(amp), (hi - lo) / 2.0)
         if center is None:
@@ -17424,7 +17659,7 @@ class MainWindow(QMainWindow):
             _asw = self._ambiance_color_switch
             # Gate sur beat : caler le changement de couleur sur un nouveau beat,
             # AVEC repli au temps quand il n'y a pas de musique. Sans ce repli,
-            # le mode Ambiance — précisément celui qui doit tourner sans musique —
+            # le mode Ambiance - précisément celui qui doit tourner sans musique -
             # restait bloqué sur une seule couleur du pool : aucun des chemins de
             # détection de `live_audio` ne pose `_beat_pending` en quasi-silence
             # (seuil `norm > 0.20`), donc la condition n'était jamais vraie.
@@ -17527,8 +17762,8 @@ class MainWindow(QMainWindow):
         couleur dominante, un cercle codé en dur pour les lyres).
 
         En interposant cette propriété, le même moteur sert les deux : en LIVE il
-        rend le panneau — comportement rigoureusement inchangé, c'est la même
-        expression qu'avant — et pendant la playlist il rend l'`IASettings` de la
+        rend le panneau - comportement rigoureusement inchangé, c'est la même
+        expression qu'avant - et pendant la playlist il rend l'`IASettings` de la
         ligne en cours, ce qui donne à chaque média son ambiance propre.
 
         ⚠️ Le panneau LIVE n'est JAMAIS écrit depuis la playlist : le moteur
@@ -17549,7 +17784,7 @@ class MainWindow(QMainWindow):
 
         En LIVE, l'analyse est produite au fil de l'eau par le moteur audio :
         elle vit dans `live_engine.audio_ai`. En playlist, elle est PRÉ-CALCULÉE
-        à l'ajout du média et vit dans `self.audio_ai` — `live_engine.audio_ai`
+        à l'ajout du média et vit dans `self.audio_ai` - `live_engine.audio_ai`
         n'y est qu'une instance neuve, palette vide.
 
         Le moteur lisant `live_engine.audio_ai` en dur, la playlist retombait
@@ -17566,7 +17801,7 @@ class MainWindow(QMainWindow):
         Ce moteur n'avait qu'un seul appelant, le mode LIVE : ses deux points
         d'entrée s'ouvraient donc sur `if not live_mode_active: return`. Depuis
         que la playlist l'utilise aussi, cette garde le rendait MUET pendant la
-        lecture d'un média — l'ancien moteur ayant disparu, plus personne
+        lecture d'un média - l'ancien moteur ayant disparu, plus personne
         n'allumait quoi que ce soit et tout le plan restait noir.
 
         Deux appelants légitimes, donc deux conditions : le mode LIVE, ou une
@@ -17581,7 +17816,7 @@ class MainWindow(QMainWindow):
         """`id()` des fixtures dont le canal Strobe MATÉRIEL porte le strobe.
 
         Sert deux fois par image, et c'est le même jeu de fixtures dans les deux
-        cas — sans quoi les deux mécanismes se marcheraient dessus :
+        cas - sans quoi les deux mécanismes se marcheraient dessus :
 
         1. `_live_set_hw_strobe` y pose la vitesse ;
         2. les blocs de hachage laissent ces fixtures TRANQUILLES.
@@ -17589,7 +17824,7 @@ class MainWindow(QMainWindow):
         Le point 2 est le correctif de 3.1.85 : le hachage coupe `level` une
         image sur deux, ce qui éteint le dimmer pendant la moitié des éclats
         que la fixture produit toute seule. Les deux cadences n'étant pas en
-        phase (celle de la fixture est libre), l'un mange l'autre au hasard —
+        phase (celle de la fixture est libre), l'un mange l'autre au hasard -
         d'où un strobe « très léger, de temps en temps » là où le hachage seul
         donnait des éclairs francs. Sur ces fixtures, le canal matériel fait le
         travail en entier ; on garde donc le niveau plein.
@@ -17606,10 +17841,10 @@ class MainWindow(QMainWindow):
         """Pousse le strobe MATÉRIEL des fixtures qui ont un canal Strobe.
 
         Se substitue au hachage de `level` sur les fixtures concernées, il ne
-        s'y ajoute pas — voir `_live_hw_strobe_ids`. Le hachage garde la main
+        s'y ajoute pas - voir `_live_hw_strobe_ids`. Le hachage garde la main
         sur les fixtures sans canal Strobe (la majorité des PAR), pendant que
         le canal matériel va chercher les strobes que le modèle ne sait pas
-        atteindre — l'anneau d'une lyre, dont les canaux sont typés
+        atteindre - l'anneau d'une lyre, dont les canaux sont typés
         « Mode »/« Unused ».
 
         `strobe_speed` est un scalaire par projecteur, et le moteur DMX le
@@ -17658,7 +17893,7 @@ class MainWindow(QMainWindow):
     # exact tant que `state` contenait exactement ces six clés. Le jour où G et
     # H y sont entrés (10/09/2026), le test aurait basculé tout seul et les
     # lyres de ces deux groupes auraient troqué leur couleur per-lyre contre la
-    # couleur plate du groupe — une régression invisible, sur un point que
+    # couleur plate du groupe - une régression invisible, sur un point que
     # personne n'avait demandé de changer. La liste est donc figée ici.
     _IA_BASE_COLOR_GROUPS = frozenset((
         'face', 'lat', 'contre', 'douche1', 'douche2', 'douche3',
@@ -17718,7 +17953,7 @@ class MainWindow(QMainWindow):
             # Un effet SPÉCIAL en cours passe devant, lui. Le moteur le déclare
             # « priorité absolue » et c'est le bouton panique du live :
             # Stroboscope, Strobe couleur, Fixe blanc. Sans cette garde, la
-            # mémoire réécrivait par-dessus les projecteurs qu'elle allume — on
+            # mémoire réécrivait par-dessus les projecteurs qu'elle allume - on
             # appuyait sur STROBE et une partie de la salle ne strobait pas.
             # Même condition que le moteur : l'Ambiance n'a pas de spécial.
             if self.seq.live_mode_active and not self._live_special_actif():
@@ -17727,7 +17962,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             # Slot appelé via un signal émis depuis le thread audio du moteur
             # LIVE : une exception non rattrapée ici fait crasher tout MyStrow
-            # (PySide6 abort). On logge (throttlé) au lieu de crasher — notamment
+            # (PySide6 abort). On logge (throttlé) au lieu de crasher - notamment
             # lors du basculement Manuel ↔ Ambiance/Musical IA.
             self._log_live_error('apply_state', e)
         finally:
@@ -17850,7 +18085,7 @@ class MainWindow(QMainWindow):
                         p.level = 0;   p.color = QColor("black")
                 _hw_sp = _live_strobe_rate(_sms_sp)
             elif _special_fx == 'passage_blanc':
-                # Passage séquentiel — couleurs du pool COULEURS, blanc par défaut
+                # Passage séquentiel - couleurs du pool COULEURS, blanc par défaut
                 _spd_p = self._fx_src.passage_speed / 100.0
                 _interval_ms = max(40, int(800 - _spd_p * 760))
                 _projs = [p for p in self.projectors
@@ -17879,7 +18114,7 @@ class MainWindow(QMainWindow):
             self._live_set_hw_strobe(_hw_sp)
             # Le spécial garde la priorité absolue sur le NIVEAU et la COULEUR,
             # mais plus sur le MOUVEMENT : ce `return` coupait la fin du tick,
-            # donc la rotation des lyres, les gobos, les positions et la roue —
+            # donc la rotation des lyres, les gobos, les positions et la roue -
             # « quand tu mets les strobes, les mouvements de lyre s'arrêtent ».
             # En Musical IA on laisse maintenant le tick aller au bout, et on
             # REJOUE le spécial tout à la fin pour reprendre la main sur la
@@ -17900,7 +18135,7 @@ class MainWindow(QMainWindow):
             # Les projecteurs conservent leur état courant (AKAI / plan de feu / clic droit).
             # Seule exception : on relâche le strobe matériel que le LIVE avait
             # allumé lui-même, sans quoi il resterait latché en passant en
-            # Manuel — la main serait rendue sur tout SAUF le strobe.
+            # Manuel - la main serait rendue sur tout SAUF le strobe.
             self._live_set_hw_strobe(0)
             return
         if ia_mode == 'ambiance':
@@ -17923,7 +18158,7 @@ class MainWindow(QMainWindow):
             # Volume ABSOLU bas ET plus aucun temps détecté. Le volume seul ne
             # suffit pas : un micro de portable loin de l'enceinte reste sous
             # 0.008 alors que les beats (détection relative) tombent en
-            # rythme — on faisait le noir en pleine musique (client César,
+            # rythme - on faisait le noir en pleine musique (client César,
             # 14/11/2026 : BEAT qui clignote, projecteur éteint).
             _beats_alive = False
             try:
@@ -17940,7 +18175,7 @@ class MainWindow(QMainWindow):
                 # Démarrer le fondu si pas encore commencé
                 if not getattr(self, '_silence_fade_start', None):
                     self._silence_fade_start = _time.monotonic()
-                # (on ne retourne pas — le traitement normal continue, le fade est appliqué en fin)
+                # (on ne retourne pas - le traitement normal continue, le fade est appliqué en fin)
             else:
                 # Son présent → annuler le fondu immédiatement
                 self._silence_fade_start = None
@@ -17962,13 +18197,13 @@ class MainWindow(QMainWindow):
         # et lateraux alternaient une couleur sur deux en mode bicolore, la
         # face non. Sur une facade ou tous les PAR sont dans le meme groupe
         # (le cas par defaut depuis que toute fixture importee arrive en A),
-        # cela donnait UNE seule teinte plate pour toute la rampe — « les PAR
+        # cela donnait UNE seule teinte plate pour toute la rampe - « les PAR
         # LED ne changeaient pas enormement de couleurs » (retour client,
         # 02/09/2026).
         face_alt   = state.get('face_alt')
         lat_effect = state.get('lat_effect')
 
-        # État persistant de section (wall-clock pour drop_start — résistant au trim)
+        # État persistant de section (wall-clock pour drop_start - résistant au trim)
         if not hasattr(self, '_live_sec'):
             self._live_sec = {'last': None, 'drop_start_ts': -1.0}
         ss = self._live_sec
@@ -18022,7 +18257,7 @@ class MainWindow(QMainWindow):
         #
         # Ce compteur est lu par la palette de la section suivante (`pal`) ET
         # par la couleur des lyres : il pilote la couleur de TOUT le plan de
-        # feu. Il vivait pourtant dans le bloc `if moving_heads:` — sur un plan
+        # feu. Il vivait pourtant dans le bloc `if moving_heads:` - sur un plan
         # sans lyre, aucune couleur ne défilait et une seule teinte tenait tout
         # le morceau. Il est remonté ici, avant que `pal` ne le lise, pour que
         # le changement prenne effet sur la même image.
@@ -18035,7 +18270,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, '_live_lyre_color_switch'):
                 del self._live_lyre_color_switch   # repart du début avec la nouvelle couleur
 
-        # `color_cycle` — et non `color_max > 1`. Les deux sources de réglages
+        # `color_cycle` - et non `color_max > 1`. Les deux sources de réglages
         # ne donnent pas le même sens au nombre de couleurs simultanées :
         # dans le panneau LIVE, « 1 » veut dire une couleur À LA FOIS, qui
         # défile au rythme du curseur DURÉE ; dans le préréglage d'un média,
@@ -18282,7 +18517,7 @@ class MainWindow(QMainWindow):
             if self._fx_src.is_tile_active('gobo') and _eff_ok('gobo'):
                 bs['gobo_idx'] = (bs['gobo_idx'] + 1) % GOBO_SLOT_COUNT
 
-        # Couleur du flash — suit la tuile couleur sélectionnée (None = AUTO = blanc)
+        # Couleur du flash - suit la tuile couleur sélectionnée (None = AUTO = blanc)
         _fc1, _ = self._fx_src.get_color_data(self._fx_src.current_color_tile)
 
         # Flash coloré : éclat décroissant sur 110 ms
@@ -18305,7 +18540,7 @@ class MainWindow(QMainWindow):
                             min(255, int(_fc1.blue()  * punch * 1.25)),
                         )
 
-        # Strobe beat : on/off rapide pendant 450 ms — filtré par onglet STROB
+        # Strobe beat : on/off rapide pendant 450 ms - filtré par onglet STROB
         _beat_strobe_on = (_allow_strob_fast
                            and ia_mode_check != 'ambiance'
                            and self._fx_src.is_tile_active('strobe')
@@ -18335,7 +18570,7 @@ class MainWindow(QMainWindow):
                             min(255, int(_fc1.blue()  * _punch * 1.25)),
                         )
 
-        # ── Lyres — rotation continue dont la vitesse suit le rythme ────────
+        # ── Lyres - rotation continue dont la vitesse suit le rythme ────────
         moving_heads = [p for p in self.projectors
                         if getattr(p, 'fixture_type', '') in ("Moving Head", "Laser")
                         or fixture_motor_only(p)]
@@ -18362,7 +18597,7 @@ class MainWindow(QMainWindow):
             dt = max(0.0, min(0.12, (position - self._live_lyre_last_pos) / 1000.0))
             self._live_lyre_last_pos = position
 
-            # Tempo : BPM tiré des beats de l'analyse — même source en LIVE
+            # Tempo : BPM tiré des beats de l'analyse - même source en LIVE
             # (`live_engine.audio_ai`, au fil de l'eau) et en playlist
             # (pré-analyse), positions dans la même base de temps que `position`.
             # Cf. `live_mouvements` pour le pourquoi.
@@ -18377,7 +18612,7 @@ class MainWindow(QMainWindow):
                 _lyr_frac = max(0.0, min(1.0, (position - _lyr_beats[_lyr_bidx])
                                          / (60000.0 / _lyr_bpm)))
 
-            # Vitesse cible (rot/s) — slider VITESSE + section + énergie
+            # Vitesse cible (rot/s) - slider VITESSE + section + énergie
             _mspd_raw = self._fx_src.movement_speed / 100.0
             if _lyr_bpm > 0:
                 # Calée sur le tempo : un cycle = N temps selon la section.
@@ -18502,7 +18737,7 @@ class MainWindow(QMainWindow):
                         self._live_beat_state['gobo_idx'] = (
                             self._live_beat_state['gobo_idx'] + 1) % GOBO_SLOT_COUNT
 
-            # Application pan/tilt — pattern depuis le panel Mouvements
+            # Application pan/tilt - pattern depuis le panel Mouvements
             ph    = self._live_lyre_phase
             _mspd = self._fx_src.movement_speed    / 100.0  # 0–1
             _msz  = self._fx_src.movement_size     / 100.0  # 0–1
@@ -18687,7 +18922,7 @@ class MainWindow(QMainWindow):
 
         # Vitesse à envoyer au canal Strobe MATÉRIEL cette image. Les quatre
         # blocs ci-dessous la revendiquent (le plus rapide gagne), et un seul
-        # appel en fin de parcours l'applique — un `strobe_speed` par bloc se
+        # appel en fin de parcours l'applique - un `strobe_speed` par bloc se
         # serait écrasé au fil des lignes.
         #
         # ⚠️ La demande se pose quand le bloc est ACTIF, pas seulement sur ses
@@ -18701,7 +18936,7 @@ class MainWindow(QMainWindow):
         # strobe paraît « très léger ». Voir `_live_hw_strobe_ids`.
         _hw_ids = self._live_hw_strobe_ids()
 
-        # AUTO tile — comportement intelligent par section
+        # AUTO tile - comportement intelligent par section
         _auto_on = self._fx_src.is_tile_active('auto') and _eff_ok('auto')
         if _auto_on and not _no_auto_strobe:
             if section == 'drop' and _allow_strob_fast:
@@ -18736,7 +18971,7 @@ class MainWindow(QMainWindow):
                         p.level = 0
                         p.color = QColor("black")
 
-        # ── Strobe blanc intelligent (court — voir _SMART_STROBE_MS) ────────
+        # ── Strobe blanc intelligent (court - voir _SMART_STROBE_MS) ────────
         # Restitué dans les DEUX modes STROB : le mode ne décide que du hachage
         # (LENT = période nominale, RAPIDE = plus serré), pas de l'existence de
         # l'effet. « Pas de strobe » coupe les deux drapeaux, donc rien ne sort.
@@ -18757,7 +18992,7 @@ class MainWindow(QMainWindow):
 
         # ── Filtre groupes (paramètres Live) ────────────────────────────────────
         # Filtre groupes : les groupes non autorisés sont ignorés par l'IA
-        # (leur état manuel AKAI/faders est conservé — pas de blackout)
+        # (leur état manuel AKAI/faders est conservé - pas de blackout)
         pass  # le filtrage est fait en amont dans la boucle d'assignation
 
         # ── Strobe blanc drop (déclenché dès le 1er kick du drop) ───────────────
@@ -18818,7 +19053,7 @@ class MainWindow(QMainWindow):
         # ── Reprise du spécial (Stroboscope, Strobe couleur, Passage…) ────────
         # Le bloc « Effets SPÉCIAUX » a laissé filer le tick pour que les lyres
         # continuent de bouger ; il reprend ici la main sur ce qu'il pilote
-        # vraiment — niveau, couleur, roue de couleur, canal Strobe matériel.
+        # vraiment - niveau, couleur, roue de couleur, canal Strobe matériel.
         # Pan/tilt, gobo et positions ne sont VOLONTAIREMENT pas restaurés :
         # c'est exactement le mouvement qu'on vient de laisser tourner.
         _hold = self.__dict__.pop('_live_special_hold', None)
@@ -18838,14 +19073,14 @@ class MainWindow(QMainWindow):
         Les strobes du moteur ne se déclenchent pas tout seuls : ils lisent
         `_smart_fx['drop_strobe_active']` et `_live_beat_state['smart_strobe_until']`.
         Or le seul endroit qui écrivait ces deux clés était `_on_live_transient_inner`,
-        branché sur le signal audio TEMPS RÉEL — et qui sort immédiatement si
+        branché sur le signal audio TEMPS RÉEL - et qui sort immédiatement si
         `live_mode_active` est faux.
 
         Résultat : en playlist, aucun strobe ne pouvait partir. Ni le strobe de
         drop, ni le strobe intelligent, ni celui de la tuile AUTO (dont le
         `is_tile_active` rend False sans condition depuis que les tuiles ont
         disparu du panneau). Les réglages STROBE avaient beau être sur RAPIDE,
-        il n'y avait rien à autoriser — d'où « rien ne s'est activé ».
+        il n'y avait rien à autoriser - d'où « rien ne s'est activé ».
 
         Cette méthode rejoue donc, sur un beat pré-analysé, ce que le kick
         temps réel fait en LIVE. Les seuils (cooldown, probabilité, durées) sont
@@ -18929,20 +19164,20 @@ class MainWindow(QMainWindow):
         self._apply_live_state(state)
 
     def update_audio_ai(self):
-        """IA Lumiere — pilote les projecteurs depuis la pre-analyse audio.
+        """IA Lumiere - pilote les projecteurs depuis la pre-analyse audio.
 
         Cette methode portait autrefois son PROPRE moteur (~490 lignes) : une
         couleur dominante dont on derivait 8 teintes, des effets tires au sort
         dans un pool code en dur, et un cercle a vitesse fixe pour les lyres.
         Le mode LIVE, lui, avait deja un pool de couleurs, un pool de mouvements
-        qui s'enchainent, des gobos et une nervosite reglable — mais rien de tout
+        qui s'enchainent, des gobos et une nervosite reglable - mais rien de tout
         cela n'etait atteignable depuis la playlist.
 
         Les deux moteurs ont donc ete fusionnes sur celui du LIVE. La seule
         difference entre les deux usages tient a la SOURCE des reglages
         (`_fx_src`) : le panneau en LIVE, le prereglage de la ligne en playlist.
         Les evenements musicaux, eux, viennent des memes `audio_ai.get_state_at`
-        et `audio_ai.beats` qu'avant — la pre-analyse est inchangee.
+        et `audio_ai.beats` qu'avant - la pre-analyse est inchangee.
         """
         try:
             # Mode LIVE actif : les reglages viennent du panneau.
@@ -18959,7 +19194,7 @@ class MainWindow(QMainWindow):
             # D'où la remise à zéro AVANT tous les retours anticipés.
             self._ia_settings_src = None
 
-            # Ne pas interférer avec un effet en cours — l'effet a la priorité
+            # Ne pas interférer avec un effet en cours - l'effet a la priorité
             if getattr(self, 'active_effect', None) is not None:
                 return
             # Ne pas interférer avec le fade-out de fin de média
@@ -18995,7 +19230,7 @@ class MainWindow(QMainWindow):
     # reste moins que la durée du fondu.
     #
     # Un seul QAudioOutput pour toute la playlist : le fondu est donc séquentiel
-    # (le morceau descend, puis le suivant démarre), jamais un fondu enchaîné —
+    # (le morceau descend, puis le suivant démarre), jamais un fondu enchaîné -
     # celui-ci demanderait un deuxième lecteur.
 
     _AUDIO_FADE_MS = 40          # ~25 pas/s, la cadence du reste de l'app
@@ -19005,7 +19240,7 @@ class MainWindow(QMainWindow):
 
         Séparé de `_audio_fade_reset` à dessein : `start_audio_fade` appelle
         celui-ci, et effacer l'armement au passage relancerait le fondu de queue
-        à chaque tick de position — il s'arme, se lance, se désarme, se réarme.
+        à chaque tick de position - il s'arme, se lance, se désarme, se réarme.
         """
         t = getattr(self, '_audio_fade_timer', None)
         if t is not None and t.isActive():
@@ -19013,7 +19248,7 @@ class MainWindow(QMainWindow):
         self._audio_fade_cb = None
 
     def _audio_fade_reset(self):
-        """Coupe le fondu ET oublie l'armement — au démarrage d'un nouveau média."""
+        """Coupe le fondu ET oublie l'armement - au démarrage d'un nouveau média."""
         self._audio_fade_cancel()
         self._audio_fade_armed = False
 
@@ -19052,7 +19287,7 @@ class MainWindow(QMainWindow):
         self._audio_fade_timer.stop()
         self.audio.setVolume(self._audio_fade_to)
         # Callback détaché AVANT l'appel : il relance souvent une lecture, qui
-        # rappelle start_audio_fade — sans ça le fondu d'entrée du morceau
+        # rappelle start_audio_fade - sans ça le fondu d'entrée du morceau
         # suivant serait écrasé au retour.
         cb = self._audio_fade_cb
         self._audio_fade_cb = None
@@ -19194,25 +19429,25 @@ class MainWindow(QMainWindow):
                     velocity = rgb_to_akai_velocity(base_color)
                     self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=self.akai_active_brightness)
                 elif slot["type"] == "fx":
-                    # Pads FX — toggle l'effet mappé sur ce pad
+                    # Pads FX - toggle l'effet mappé sur ce pad
                     fx_col = slot.get("fx_col", 0)
                     self._toggle_fx_pad(fx_col, row)  # met à jour visuel + LEDs physiques
                 elif slot["type"] == "pos":
-                    # Pads POS — rappelle la position lyre
+                    # Pads POS - rappelle la position lyre
                     pos_col = slot.get("pos_col", 0)
                     self._activate_position_akai_pad(pad, pos_col, row, col_akai=col)
                 elif slot["type"] == "play":
-                    # Colonne PLAY/TRANSPORT — le rôle dépend de la ligne + la variante
+                    # Colonne PLAY/TRANSPORT - le rôle dépend de la ligne + la variante
                     rows = _play_rows(slot)
                     action = rows[row][0] if row < len(rows) else None
                     if action:
                         self._activate_play_pad(action)
                 elif slot["type"] == "vfx":
-                    # Colonne VFX — le pad porte l'effet qu'on lui a assigné.
+                    # Colonne VFX - le pad porte l'effet qu'on lui a assigné.
                     # _activate_vfx_pad rafraîchit lui-même styles et LEDs.
                     self._activate_vfx_pad(row)
                 elif slot["type"] == "video":
-                    # Colonne VIDÉO — coupure, effets, extinction (voir _VIDEO_ROWS).
+                    # Colonne VIDÉO - coupure, effets, extinction (voir _VIDEO_ROWS).
                     # _activate_video_pad rafraîchit lui-même styles et LEDs.
                     if row < len(_VIDEO_ROWS):
                         self._activate_video_pad(_VIDEO_ROWS[row][0])
@@ -19234,7 +19469,7 @@ class MainWindow(QMainWindow):
                 velocity = 1 if self.effect_buttons[row].active else 0
                 self.midi_handler.set_pad_led(row, col, velocity, brightness_percent=100)
             return
-        # Grille 8x8 : deux colonnes ont quelque chose à rendre au relâché —
+        # Grille 8x8 : deux colonnes ont quelque chose à rendre au relâché -
         # un pad couleur pris en momentané (bouton FLASH) et un pad mémoire
         # réglé en flash / flash solo. Les autres l'ignorent, comme avant.
         slot = self._fader_map[col] if col < len(self._fader_map) else {}
@@ -19356,7 +19591,7 @@ class MainWindow(QMainWindow):
         Rien n'est écrasé quand la clé est absente : un show enregistré avec une
         version antérieure ne doit pas vider la bibliothèque de positions de la
         machine qui l'ouvre. C'est la différence entre « ce show n'a pas de
-        positions » et « ce show dit qu'il n'y en a aucune » — seul le second
+        positions » et « ce show dit qu'il n'y en a aucune » - seul le second
         cas, une liste vide explicitement enregistrée, remet à zéro.
         """
         presets = raw.get("position_presets")
@@ -19520,6 +19755,8 @@ class MainWindow(QMainWindow):
             "cartouches_superposer": self.cart_superposer,
             # Absent d'un ancien show = "enchaine".
             "playlist_transition": self.playlist_transition,
+            # Absent d'un ancien show = False.
+            "playlist_loop": self.playlist_loop,
             "memories": self.memories,
             "memory_custom_colors": custom_colors_serial,
             "active_memory_pads": active_pads_serial,
@@ -19529,14 +19766,14 @@ class MainWindow(QMainWindow):
             # ── Contenu de show qui ne voyageait pas (ajouté en version 6) ──
             # Ces trois entrepôts ne vivaient QUE dans ~/.maestro_akai_config.json,
             # c'est-à-dire sur la machine. Emporter son .tui sur un poste de
-            # secours donnait donc un show sans positions et sans effets — et
+            # secours donnait donc un show sans positions et sans effets - et
             # surtout des REC Lumière inertes : un clip Position désigne son
             # preset par index+nom (voir core.find_position_preset), donc sans
             # `position_presets` il ne vise rien et la séquence paraît vide.
             #
             # On n'emporte QUE ce qui appartient au spectacle. Les préférences
-            # de la machine — luminosité de l'APC, contrôleur épinglé, réglages
-            # vMix/OBS, disposition des pages de la surface — restent locales :
+            # de la machine - luminosité de l'APC, contrôleur épinglé, réglages
+            # vMix/OBS, disposition des pages de la surface - restent locales :
             # charger le show d'un collègue ne doit pas reconfigurer votre régie.
             "position_presets": self.position_presets,
             "position_pads":    self.position_pads,
@@ -19544,7 +19781,7 @@ class MainWindow(QMainWindow):
         }
 
     def _autosave(self):
-        """Autosave silencieux toutes les 5 min — écriture disque en thread background."""
+        """Autosave silencieux toutes les 5 min - écriture disque en thread background."""
         if not self.seq.is_dirty or self.seq.table.rowCount() == 0:
             return
 
@@ -19611,6 +19848,7 @@ class MainWindow(QMainWindow):
                 cart_data = []
                 self.cart_superposer = False
                 self.playlist_transition = "enchaine"
+                self.set_playlist_loop(False)
                 mem_data = None
                 custom_colors_data = None
                 active_pads_data = None
@@ -19620,6 +19858,7 @@ class MainWindow(QMainWindow):
                 self.cart_superposer = bool(raw.get("cartouches_superposer", False))
                 _trans = raw.get("playlist_transition")
                 self.playlist_transition = _trans if _trans in ("clear", "enchaine") else "enchaine"
+                self.set_playlist_loop(bool(raw.get("playlist_loop", False)))
                 mem_data = raw.get("memories")
                 custom_colors_data = raw.get("memory_custom_colors")
                 active_pads_data = raw.get("active_memory_pads")
@@ -19780,7 +20019,7 @@ class MainWindow(QMainWindow):
                     self.cartouches[i].set_idle()
 
             # Les mémoires/cues sont gérés UNIQUEMENT par la config AKAI
-            # (jamais écrasés par le .tui — _load_akai_config_auto est la source de vérité)
+            # (jamais écrasés par le .tui - _load_akai_config_auto est la source de vérité)
 
             # Mettre a jour l'affichage des pads memoire
             for fi, mc in self._bank_memory_slots():
@@ -19932,7 +20171,7 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────────
 
     # Le départ vaut pour CHAQUE JOUR : c'est le seul comportement, il n'y a
-    # rien à décocher. Une occurrence manquée est perdue — pas de rattrapage,
+    # rien à décocher. Une occurrence manquée est perdue - pas de rattrapage,
     # un show ne part pas avec vingt minutes de retard sur son horaire.
     _SCHEDULE_WINDOW_S = 60     # simple garde anti-freeze autour de l'heure
 
@@ -19987,7 +20226,7 @@ class MainWindow(QMainWindow):
 
         `consume_today` : marque l'occurrence du jour comme déjà passée si
         l'heure est écoulée. C'est le cas quand l'utilisateur règle lui-même
-        l'horaire — il est devant l'écran, il ne veut pas que le show parte
+        l'horaire - il est devant l'écran, il ne veut pas que le show parte
         dans la seconde parce qu'il a saisi une heure déjà dépassée. Au
         CHARGEMENT d'un show, au contraire, le rattrapage doit pouvoir jouer.
         """
@@ -20475,7 +20714,7 @@ class MainWindow(QMainWindow):
                     p.pan  = int(pt.get("pan",  32768))
                     p.tilt = int(pt.get("tilt", 32768))
 
-        # Luminosité APC Mini — respecte le réglage sauvegardé (ou auto-détection Apple Silicon)
+        # Luminosité APC Mini - respecte le réglage sauvegardé (ou auto-détection Apple Silicon)
         if "apc_bright_mode" in config and hasattr(self, 'midi_handler') and self.midi_handler:
             self.midi_handler.set_apc_bright_mode(bool(config["apc_bright_mode"]))
         if "akai_active_brightness" in config:
@@ -20513,7 +20752,7 @@ class MainWindow(QMainWindow):
                                         if isinstance(v, str)}
 
         # Régies vidéo : on mémorise la config sans instancier la liaison. Elle
-        # n'est créée — et la socket ouverte — que si l'utilisateur avait coché
+        # n'est créée - et la socket ouverte - que si l'utilisateur avait coché
         # « Activer », ou s'il ouvre le menu. Le démarrage est différé : ici,
         # les mémoires et les cartouches ne sont pas encore en place, et un
         # événement reçu dans la seconde déclencherait une action dans le vide.
@@ -20534,7 +20773,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(1500, self._start_obs_if_enabled)
 
         # Manette : même création paresseuse. Le démarrage est différé pour que
-        # projecteurs et mémoires existent avant le premier mouvement — et, pour
+        # projecteurs et mémoires existent avant le premier mouvement - et, pour
         # les raccourcis boutons, avant qu'un appui ne puisse rappeler une
         # mémoire qui ne serait pas encore chargée.
         _gp = config.get("gamepad")
@@ -20549,7 +20788,7 @@ class MainWindow(QMainWindow):
             if _gp.get("enabled") or _a_des_boutons:
                 QTimer.singleShot(1500, self._start_gamepad_if_enabled)
 
-        # Contrôleur épinglé (sélection manuelle) — reconnecte sur le bon si défini
+        # Contrôleur épinglé (sélection manuelle) - reconnecte sur le bon si défini
         if hasattr(self, 'midi_handler') and self.midi_handler:
             pinned = config.get("pinned_controller")
             self.midi_handler.pinned_id = pinned or None
@@ -20565,7 +20804,7 @@ class MainWindow(QMainWindow):
         un fichier tronqué si l'app crashe pendant l'écriture. Et FILET DE SÉCURITÉ :
         si on s'apprête à écrire une grille de mémoires VIDE par-dessus un fichier
         qui en contenait (typiquement après un chargement raté qui a réinitialisé
-        self.memories), on archive d'abord l'ancien fichier en .bak horodaté —
+        self.memories), on archive d'abord l'ancien fichier en .bak horodaté -
         sinon les mémoires du musicien seraient perdues définitivement.
         """
         try:
@@ -20591,7 +20830,7 @@ class MainWindow(QMainWindow):
                     if old_has_mem:
                         bak = f"{path}.{time.strftime('%Y%m%d-%H%M%S')}.bak"
                         shutil.copy2(path, bak)
-                        print(f"[AKAI] Mémoires vides à écrire — ancien fichier archivé : {bak}")
+                        print(f"[AKAI] Mémoires vides à écrire - ancien fichier archivé : {bak}")
                 except Exception:
                     pass
 
@@ -20619,7 +20858,7 @@ class MainWindow(QMainWindow):
                     # Fichier illisible/corrompu : NE PAS continuer vers un état vide
                     # qui serait ensuite ré-écrit par-dessus (perte des mémoires).
                     # On archive le fichier corrompu pour récupération manuelle et on
-                    # relève l'erreur — la config par défaut ne sera pas persistée ici.
+                    # relève l'erreur - la config par défaut ne sera pas persistée ici.
                     import shutil
                     bak = f"{self._AKAI_CONFIG_PATH}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
                     try:
@@ -20630,7 +20869,7 @@ class MainWindow(QMainWindow):
                     raise parse_err
                 self._apply_akai_config(config)
                 # Migrer uniquement si le fichier n'a pas de section memories explicite
-                # (vieux fichier de config sans memories) — évite d'écraser un effacement volontaire
+                # (vieux fichier de config sans memories) - évite d'écraser un effacement volontaire
                 if "memories" not in config:
                     self._migrate_missing_pad_colors()
             # Reconstruire les pads/faders avec le layout restauré
@@ -20644,7 +20883,7 @@ class MainWindow(QMainWindow):
             self._update_bank_page_indicator()   # reflète le nombre de pages chargées
             # Toujours activer le pad du haut de chaque colonne memoire au demarrage.
             # (Les faders sont forcés BAISSÉS au lancement par _startup_faders_down, ~650 ms
-            # après l'init — après les syncs de connexion — pour rien allumer au démarrage.)
+            # après l'init - après les syncs de connexion - pour rien allumer au démarrage.)
             self._activate_top_pads_default()
         except Exception as e:
             print(f"Erreur chargement config AKAI: {e}")
@@ -20815,7 +21054,7 @@ class MainWindow(QMainWindow):
     # en place.
 
     def _clearable_items(self):
-        """[(clé, groupe, libellé, aide, nombre)] — l'inventaire de ce qui est effaçable.
+        """[(clé, groupe, libellé, aide, nombre)] - l'inventaire de ce qui est effaçable.
 
         Le décompte sert autant à informer qu'à désactiver les lignes vides :
         proposer d'effacer un entrepôt déjà vide n'apporte rien.
@@ -20896,7 +21135,7 @@ class MainWindow(QMainWindow):
                                   "letter-spacing:1px; margin-top:6px;")
                 root.addWidget(hdr)
 
-            chk = QCheckBox(f"{label}  —  "
+            chk = QCheckBox(f"{label}  -  "
                             + (tr("clr_count", n=count) if count else tr("clr_empty")))
             chk.setToolTip(hint)
             chk.setEnabled(count > 0)
@@ -21310,7 +21549,7 @@ class MainWindow(QMainWindow):
     def _undo_plan_2d(self):
         """Ctrl+Z : annule la dernière modification faite depuis le plan 2D.
 
-        Sans effet — et sans bip — si rien n'a encore été touché.
+        Sans effet - et sans bip - si rien n'a encore été touché.
         """
         try:
             if hasattr(self, 'plan_de_feu') and self.plan_de_feu.undo():
@@ -21743,6 +21982,17 @@ class MainWindow(QMainWindow):
         from obs_link import ObsDialog
         ObsDialog(self, self._get_obs_link()).exec()
 
+    # ── MyStrow Up : téléphones du public (PROTOTYPE) ──────────────────────
+
+    def _open_crowd_dialog(self):
+        # Création paresseuse, comme OBS : rien n'est chargé tant que personne
+        # n'ouvre le menu. La session survit à la fermeture de la fenêtre.
+        if getattr(self, '_crowd_link', None) is None:
+            from crowd_link import CrowdLink
+            self._crowd_link = CrowdLink(self)
+        from crowd_link import CrowdDialog
+        CrowdDialog(self, self._crowd_link).exec()
+
     def _start_obs_if_enabled(self):
         """Reconnecte la liaison OBS au démarrage si elle était active.
 
@@ -21798,7 +22048,7 @@ class MainWindow(QMainWindow):
         """Réouvre l'écoute au lancement si l'entrée DMX était active.
 
         Protégé : port 6454 déjà pris ou carte réseau absente ne doivent pas
-        empêcher MyStrow de démarrer — l'utilisateur verra pourquoi dans le
+        empêcher MyStrow de démarrer - l'utilisateur verra pourquoi dans le
         dialogue, qui affiche l'erreur d'ouverture telle quelle.
         """
         try:
@@ -21876,7 +22126,7 @@ class MainWindow(QMainWindow):
                 try:
                     import qrcode as _qr
                 except ImportError:
-                    print("[Tablet] qrcode absent — installation...")
+                    print("[Tablet] qrcode absent - installation...")
                     import subprocess, sys
                     subprocess.check_call(
                         [sys.executable, "-m", "pip", "install", "--quiet", "qrcode"],
@@ -21937,7 +22187,7 @@ class MainWindow(QMainWindow):
         root.addWidget(s)
 
         if running:
-            # QR code — QLabel avec pixmap PNG chargé depuis mémoire
+            # QR code - QLabel avec pixmap PNG chargé depuis mémoire
             lbl_qr = QLabel()
             lbl_qr.setAlignment(Qt.AlignCenter)
             lbl_qr.setStyleSheet("background:#ffffff; border-radius:8px; padding:6px;")
@@ -22206,7 +22456,7 @@ class MainWindow(QMainWindow):
         # Overrides HTP (mémoires lumière au fader, aperçu d'effet…) : la boucle
         # DMX les applique aux projecteurs, envoie, puis RESTAURE. Au moment où
         # la tablette lit p.color/p.level, ils sont donc déjà revenus à leur
-        # valeur d'avant — noir la plupart du temps. C'est la source du
+        # valeur d'avant - noir la plupart du temps. C'est la source du
         # « allumé en DMX, éteint sur la scène 2D ». Le plan de feu du desktop
         # lit ces mêmes overrides (_get_fill_color) : on fait pareil ici, sinon
         # les deux représentations divergent.
@@ -22269,7 +22519,7 @@ class MainWindow(QMainWindow):
     _TABLET_HANDLED_CH = {"R", "G", "B", "Dim", "Dim2", "Strobe", "Shutter", "DimStrobe",
                           "Pan", "PanFine", "Tilt", "TiltFine", "ColorWheel", "Gobo1"}
     # Canaux à état dédié : écrits dans leur attribut, comme le menu du plan de
-    # feu — via `channel_extras`, ils masqueraient ce curseur-là au PC.
+    # feu - via `channel_extras`, ils masqueraient ce curseur-là au PC.
     _TABLET_CH_ATTR = {"UV": "uv", "W": "white_boost", "Ambre": "amber_boost",
                        "Orange": "orange_boost", "Effects": "effects", "Focus": "focus",
                        "Gobo2": "gobo2", "Speed": "speed", "Mode": "mode_value",
@@ -22315,7 +22565,7 @@ class MainWindow(QMainWindow):
         return out
 
     def _apply_tablet_channel(self, p, k, v):
-        """Curseur « Canaux avancés » de la tablette — même écriture que le
+        """Curseur « Canaux avancés » de la tablette - même écriture que le
         menu du plan de feu (`_build_special_row` / `_make_adv_cb`)."""
         v = max(0, min(255, int(v)))
         attr = self._TABLET_CH_ATTR.get(k) if isinstance(k, str) else None
@@ -22353,7 +22603,7 @@ class MainWindow(QMainWindow):
 
         has_gobo/has_wheel = présence du canal (profil DMX). gobo/color_wheel =
         valeur DMX courante. gobo_slots/wheel_slots = presets réels (OFL) ou repli
-        générique — mêmes valeurs que le menu du plan de feu (parité)."""
+        générique - mêmes valeurs que le menu du plan de feu (parité)."""
         prof = getattr(p, 'dmx_profile', []) or []
         has_rgb = 'R' in prof
         has_gobo  = ('Gobo1' in prof)
@@ -22368,7 +22618,7 @@ class MainWindow(QMainWindow):
             else:
                 # Le nom du motif plutôt qu'un « G3 » : la tablette montre ainsi
                 # ce que les plans vont dessiner. Tronqué à 8 caractères comme
-                # les slots importés — les pastilles sont étroites.
+                # les slots importés - les pastilles sont étroites.
                 gobo_slots = [{"dmx": gobo_slot_dmx(i),
                                "label": tr_name(GOBO_SLOT_NAMES[i])[:8]}
                               for i in range(GOBO_SLOT_COUNT)]
@@ -22505,7 +22755,7 @@ class MainWindow(QMainWindow):
                     targets.append((proj, proj.group, li))
                 self.plan_de_feu._apply_color_to_targets(targets, QColor(hex_color))
                 # Lyres à roue de couleurs (sans RGB) : faire suivre la roue
-                # sur le slot le plus proche — sinon poser une couleur ne fait
+                # sur le slot le plus proche - sinon poser une couleur ne fait
                 # rien sur ces fixtures. No-op pour les fixtures RGB.
                 for proj, _g, _i in targets:
                     self._update_color_wheel(proj, QColor(hex_color))
@@ -22612,7 +22862,7 @@ class MainWindow(QMainWindow):
             self._open_akai_layout_editor()
 
     def _drain_tablet_events(self):
-        """Appelé toutes les 50 ms — traite les events envoyés par la tablette."""
+        """Appelé toutes les 50 ms - traite les events envoyés par la tablette."""
         import tablet_server as _ts
         if not _ts.is_running():
             return
@@ -22667,7 +22917,7 @@ class MainWindow(QMainWindow):
                     self._tablet_last_carts[i] = key
                     _ts.push_cart(i, cart.media_title or "", cart.state)
 
-            # Boutons d'effet — refléter l'état actif (carré vert) quel que soit
+            # Boutons d'effet - refléter l'état actif (carré vert) quel que soit
             # le déclencheur (AKAI, tablette, UI, superposition). On NE PEUT PAS
             # compter sur la LED : sa mise à jour est conditionnée à un AKAI
             # physique branché (set_pad_led n'est appelé que si midi_out existe),
@@ -22680,7 +22930,7 @@ class MainWindow(QMainWindow):
                     self._tablet_last_effects[_r] = _act
                     _ts.push_effect(_r, _act)
 
-            # Projecteurs — mise à jour couleurs/niveaux
+            # Projecteurs - mise à jour couleurs/niveaux
             snap = self._proj_snapshot()
             colors_only = [{"color": p["color"], "base_color": p.get("base_color","#ffffff"),
                             "level": p["level"], "muted": p["muted"],
@@ -23225,7 +23475,7 @@ class MainWindow(QMainWindow):
         """Appele apres une activation reussie - re-verifie et applique.
 
         silent : l'appelant a déjà dit « licence activée » (boîtier détecté au
-        branchement, cf. boitier_detect.py) — pas de « Connecté ! » par-dessus."""
+        branchement, cf. boitier_detect.py) - pas de « Connecté ! » par-dessus."""
         from license_manager import pop_login_result
         new_result = pop_login_result()
         if new_result is None:
@@ -23475,7 +23725,7 @@ class MainWindow(QMainWindow):
             # Touche tenue = bouton FLASH tenu. Même momentané, même sortie : les
             # mémoires montent (ou tombent en KILL) et les pads couleur pressés
             # pendant ce temps sont rendus au relâché. Marche quelle que soit la
-            # fonction du bouton bas-droite — c'est un raccourci à part entière.
+            # fonction du bouton bas-droite - c'est un raccourci à part entière.
             if not event.isAutoRepeat():
                 self._flash_begin()
                 self._held_shortcuts[event.key()] = aid
@@ -23522,7 +23772,7 @@ class MainWindow(QMainWindow):
                 targets.append(projs[i])
         for proj in targets:
             # « BLACK LIGHT » / « Ambre » : LED dédiée seule (cf. les blocs du
-            # REC Lumière). Sinon on éteint ces canaux — les boutons couleur se
+            # REC Lumière). Sinon on éteint ces canaux - les boutons couleur se
             # remplacent l'un l'autre, un UV posé avant ne doit pas rester collé.
             if apply_special_block(proj, color, 100):
                 continue
@@ -23574,9 +23824,12 @@ class MainWindow(QMainWindow):
         if not targets:
             return
         any_on = any(getattr(p, 'strobe_speed', 0) > 0 for p in targets)
-        new_val = 0 if any_on else 100   # 100 = strobe rapide ; 0 = arrêt
+        # Vitesse = fader 9 (vitesse des effets), plus un 100 figé : « le fader
+        # vitesse FX ne fait rien sur le strobe » (FuraxX, 25/11/2026).
+        new_val = 0 if any_on else self._manual_strobe_rate()
         for proj in targets:
             proj.strobe_speed = new_val
+            self._track_manual_strobe(proj, new_val)
         if self.dmx:
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
@@ -23731,7 +23984,7 @@ class MainWindow(QMainWindow):
     # Canaux hors RVB qu'un bouton couleur de la fenêtre EXT peut bouger.
     # Un flash doit les rendre EXACTEMENT tels qu'il les a trouvés : sans eux,
     # `clear_special_blocks` avait éteint l'UV/l'ambre sans que rien ne les
-    # rallume, et la roue de couleurs restait sur le slot du flash — la lampe
+    # rallume, et la roue de couleurs restait sur le slot du flash - la lampe
     # « revenait au blanc » dans le modèle mais sortait encore rouge sur le fil.
     _EXT_SNAP_CHANNELS = ("uv", "white_boost", "amber_boost", "orange_boost",
                           "strobe_speed", "color_wheel")
@@ -23801,9 +24054,10 @@ class MainWindow(QMainWindow):
             projs = [p for p in self.projectors if p.group == g]
             if i < len(projs):
                 targets.append(projs[i])
-        val = 100 if on else 0
+        val = self._manual_strobe_rate() if on else 0   # suit le fader 9
         for proj in targets:
             proj.strobe_speed = val
+            self._track_manual_strobe(proj, val)
         if self.dmx:
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
@@ -24143,7 +24397,7 @@ class MainWindow(QMainWindow):
         # Liaisons régie vidéo : le thread réseau est en recv() bloquant, c'est
         # stop() qui ferme la socket sous lui pour le débloquer. Sans ça, la
         # fermeture de MyStrow attendrait le prochain événement de la régie.
-        for _attr in ('_vmix_link', '_obs_link', '_gamepad_link', '_dmx_in_link'):
+        for _attr in ('_vmix_link', '_obs_link', '_gamepad_link', '_dmx_in_link', '_crowd_link'):
             _lien = getattr(self, _attr, None)
             if _lien is not None:
                 try:
@@ -24154,7 +24408,7 @@ class MainWindow(QMainWindow):
         # Fermeture demandée par la mise à jour : la question du show a déjà été
         # posée par l'updater, juste avant de lancer l'installeur. La reposer
         # ici ouvrirait une modale pendant que l'installeur attend la sortie du
-        # processus — c'est ainsi que la mise à jour restait bloquée sur
+        # processus - c'est ainsi que la mise à jour restait bloquée sur
         # « MyStrow est ouvert ».
         if self.seq.is_dirty and not getattr(self, '_fermeture_pour_maj', False):
             res = QMessageBox.question(self, tr("mw_quit"),
@@ -24183,8 +24437,8 @@ class MainWindow(QMainWindow):
 
         Le plan de feu 3D est créé sans parent (pour éviter le bleeding visuel
         sous Windows) et son closeEvent masque au lieu de fermer. Résultat : à
-        la fermeture de MyStrow elle restait à l'écran — épinglée par-dessus
-        tout si l'utilisateur l'avait épinglée — et empêchait Qt de quitter,
+        la fermeture de MyStrow elle restait à l'écran - épinglée par-dessus
+        tout si l'utilisateur l'avait épinglée - et empêchait Qt de quitter,
         `quitOnLastWindowClosed` n'étant déclenché que par une vraie fermeture.
         Appelé seulement une fois la sortie confirmée (pas sur « Annuler »).
         """
@@ -24197,7 +24451,7 @@ class MainWindow(QMainWindow):
 
         # Rafraîchissement de la bibliothèque de fixtures encore en vol : sur
         # une connexion faible il peut durer une quinzaine de secondes. Quitter
-        # maintenant détruirait un QThread en cours d'exécution — Qt abandonne
+        # maintenant détruirait un QThread en cours d'exécution - Qt abandonne
         # alors le processus. On le laisse finir (borné), le socket ayant de
         # toute façon son propre timeout.
         for _t, _w in list(getattr(self, '_fixture_refresh_jobs', [])):
@@ -24214,7 +24468,7 @@ class MainWindow(QMainWindow):
             QMainWindow { background: #050505; }
             QWidget { color: #ddd; font-family: 'Segoe UI'; font-size: 10pt; }
             QFrame { background: #0f0f0f; border: 1px solid #1a1a1a; border-radius: 8px; }
-            /* QLabel derive de QFrame : sans cette regle, la bordure ci-dessus dessine un petit rectangle autour de CHAQUE texte de l'application. C'est la raison des innombrables `border: none` recopies label par label ailleurs dans le code — ils restent valables, un style pose sur un widget primant sur celui herite. */
+            /* QLabel derive de QFrame : sans cette regle, la bordure ci-dessus dessine un petit rectangle autour de CHAQUE texte de l'application. C'est la raison des innombrables `border: none` recopies label par label ailleurs dans le code - ils restent valables, un style pose sur un widget primant sur celui herite. */
             QLabel { border: none; background: transparent; }
             QMenuBar { background: #1a1a1a; border-bottom: 1px solid #2a2a2a; padding: 4px; }
             QMenuBar::item { padding: 6px 12px; background: transparent; border-radius: 4px; }
@@ -24326,7 +24580,7 @@ class MainWindow(QMainWindow):
                 self._ext_btn.setChecked(True)
 
     def show_dmx_patch_config(self, select_idx=None, add_search=None, add_qty=1):
-        """Interface de configuration DMX — master-detail + Plan de feu.
+        """Interface de configuration DMX - master-detail + Plan de feu.
 
         `add_search` : l'assistant (« ajoute une lyre Shields ») ouvre le patch
         puis la bibliothèque déjà filtrée ; l'utilisateur choisit et valide lui-même.
@@ -24393,7 +24647,7 @@ class MainWindow(QMainWindow):
         # « Gradateur » manquait ici alors qu'il existe partout ailleurs
         # (fixture_editor, dix profils integres, l'import d'un patch QLC+ qui
         # deplie les blocs de puissance). Un appareil de ce type selectionne
-        # laissait le combo sur le type de l'appareil PRECEDENT — donc un type
+        # laissait le combo sur le type de l'appareil PRECEDENT - donc un type
         # faux, reecrit sur la fixture au premier changement de valeur.
         FIXTURE_TYPES = ["PAR LED", "Moving Head", "Laser", "Barre LED", "Stroboscope",
                          "Machine a fumee", "Machine a brouillard",
@@ -24542,7 +24796,7 @@ class MainWindow(QMainWindow):
         root.addWidget(tabs)
 
         # ════════════════════════════════════════════════════════════════
-        # TAB 0 — FIXTURES  (master-detail)
+        # TAB 0 - FIXTURES  (master-detail)
         # ════════════════════════════════════════════════════════════════
         tab_fx = QWidget()
         tab_fx.setStyleSheet("background:#0f0f0f;")
@@ -24929,7 +25183,7 @@ class MainWindow(QMainWindow):
         for ft in FIXTURE_TYPES:
             det_type_cb.addItem(tr_name(ft), ft)
 
-        btn_group = QPushButton("—")
+        btn_group = QPushButton("-")
         btn_group.setFixedSize(_GRP_W, 38)
         btn_group.setStyleSheet(
             "QPushButton { background:#1a1a1a; color:#fff; border:1px solid #2a2a2a;"
@@ -24957,7 +25211,7 @@ class MainWindow(QMainWindow):
         det_group_cb = None  # remplacé par btn_group + menu
         fv.addWidget(_hdiv())
 
-        uni_cb = uni_cb_top   # alias — l'univers est maintenant dans la ligne Groupe/Type
+        uni_cb = uni_cb_top   # alias - l'univers est maintenant dans la ligne Groupe/Type
 
         fv.addWidget(_sec(tr("mwy_175")))
 
@@ -25068,12 +25322,12 @@ class MainWindow(QMainWindow):
         pt_vl.addWidget(pt_hint)
 
         def _sync_pt_laser(is_laser):
-            """Point vert pour un laser, jaune pour une lyre — et l'aide suit."""
+            """Point vert pour un laser, jaune pour une lyre - et l'aide suit."""
             pt_widget.set_laser(is_laser)
             pt_hint.setText(tr("mw_drag_green" if is_laser else "mw_drag_yellow"))
 
         # ── Débattement mécanique ───────────────────────────────────────
-        # Ce que l'appareil SAIT faire, en degrés — à ne pas confondre avec la
+        # Ce que l'appareil SAIT faire, en degrés - à ne pas confondre avec la
         # zone de mouvement ci-dessus, qui est ce qu'on l'AUTORISE à faire.
         # Sert à convertir DMX → angle : sans lui, la 3D supposait 360° de pan
         # pour tout le monde et une lyre 540° n'y tournait qu'à moitié.
@@ -25213,7 +25467,7 @@ class MainWindow(QMainWindow):
         # Sans cette information, une barre est dessinée d'après son NOMBRE de
         # pixels : une barre d'1 m et une de 20 cm avec autant de segments
         # sortaient identiques. Les bibliothèques QLC+ ne fournissent aucune
-        # dimension, donc c'est ici que l'utilisateur la donne — une fois.
+        # dimension, donc c'est ici que l'utilisateur la donne - une fois.
         px_row3 = QHBoxLayout()
         px_row3.setSpacing(6)
         px_row3.setContentsMargins(0, 0, 0, 0)
@@ -25578,7 +25832,7 @@ class MainWindow(QMainWindow):
         # faisaient pas : le bouton « Sauvegarder » restait GRISÉ après avoir
         # dessiné une zone de mouvement, et la seule façon d'écrire le fichier
         # était Fichier → Enregistrer Patch. Qui fermait la fenêtre perdait ses
-        # limites sans le moindre avertissement — le bouton grisé lui disant
+        # limites sans le moindre avertissement - le bouton grisé lui disant
         # même, à tort, qu'il n'y avait rien à enregistrer.
         # Seul `_on_pt_position_changed` reste volontairement propre : le point
         # jaune teste le mouvement en direct, il ne règle rien de sauvegardable.
@@ -25743,19 +25997,19 @@ class MainWindow(QMainWindow):
         vl_canvas.setSpacing(0)
 
         # ── Barre d'édition inline ────────────────────────────────
-        _ES = (  # Selection buttons style — neutral
+        _ES = (  # Selection buttons style - neutral
             "QPushButton { background:#111111; color:#4a4a4a; border:1px solid #1c1c1c;"
             " border-radius:5px; padding:3px 12px; font-size:11px; }"
             "QPushButton:hover { background:#1a1a1a; color:#888888; border-color:#2a2a2a; }"
             "QPushButton:pressed { background:#0e0e0e; }"
         )
-        _EA = (  # Action buttons — blue tint
+        _EA = (  # Action buttons - blue tint
             "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
             " border-radius:5px; padding:3px 14px; font-size:11px; }"
             "QPushButton:hover { background:#142030; color:#66aadd; border-color:#2a5070; }"
             "QPushButton:pressed { background:#090e18; }"
         )
-        _ED = (  # Destructive button style — red
+        _ED = (  # Destructive button style - red
             "QPushButton { background:#130606; color:#663333; border:1px solid #220d0d;"
             " border-radius:5px; padding:3px 12px; font-size:11px; }"
             "QPushButton:hover { background:#1c0808; color:#dd4444; border-color:#551111; }"
@@ -26090,7 +26344,7 @@ class MainWindow(QMainWindow):
                 snap.append(entry)
             return snap
 
-        # Snapshot à l'ouverture — utilisé pour "Ignorer les modifications"
+        # Snapshot à l'ouverture - utilisé pour "Ignorer les modifications"
         _initial_snap = _snapshot_current()
 
         def _restore_snap(snap):
@@ -26164,6 +26418,9 @@ class MainWindow(QMainWindow):
         def _get_conflicts():
             occ = {}
             for i, fd in enumerate(fixture_data):
+                # MyStrow Up : virtuel, n'émet rien → jamais en conflit d'adresse.
+                if fd.get('manufacturer') == "MyStrow Up":
+                    continue
                 uni = fd.get('universe', 0)
                 for c in range(fd['start_address'], fd['start_address'] + len(fd['profile'])):
                     occ.setdefault((uni, c), []).append(i)
@@ -26293,7 +26550,7 @@ class MainWindow(QMainWindow):
                     # `_set_default` a DÉJÀ écrit la valeur dans fixture_data et
                     # sur le projecteur. La ligne qui suivait (`ch_defs[...] = …`)
                     # visait une variable disparue : NameError à chaque cran du
-                    # curseur, qui coupait la fin du handler — la pastille du
+                    # curseur, qui coupait la fin du handler - la pastille du
                     # canal ne se remettait plus à jour. Vu 3× dans le log user.
                     _set_default(ch_type, v, snap_idx)
                     chip_lbl.setToolTip(
@@ -26334,7 +26591,7 @@ class MainWindow(QMainWindow):
                     rg_bar.setToolTip(tr("mw_channel_range_bar_tip"))
                     wl.addWidget(rg_bar, 0, Qt.AlignHCenter)
 
-                    # Ce que fait le fader, en clair — la seule façon de voir
+                    # Ce que fait le fader, en clair - la seule façon de voir
                     # d'un coup d'œil qu'un canal est bridé.
                     rg_state = QLabel()
                     rg_state.setAlignment(Qt.AlignCenter)
@@ -26452,7 +26709,7 @@ class MainWindow(QMainWindow):
                     wl.addLayout(tog_row)
 
                 # ── Shutter : bande DMX du strobe ────────────────────────────
-                # Uniquement quand la fixture n'a PAS de canal Strobe dedie —
+                # Uniquement quand la fixture n'a PAS de canal Strobe dedie -
                 # sinon c'est lui qui porte le strobe et ce reglage ne servirait
                 # a rien. Sur les autres, `strobe_speed` n'atteignait le fil
                 # nulle part : le plan 2D faisait clignoter la pastille pendant
@@ -26512,7 +26769,7 @@ class MainWindow(QMainWindow):
                     # Test en direct : c'est le SEUL moyen honnete de trouver la
                     # bande, elle n'est ecrite dans aucun fichier constructeur
                     # que MyStrow sache lire. L'etat complet du projecteur est
-                    # remis en place a l'extinction ET a la fermeture du menu —
+                    # remis en place a l'extinction ET a la fermeture du menu -
                     # un test laisse allume, c'est une lyre blanche pleine
                     # lumiere en pleine balance.
                     _sh_saved = {}
@@ -26717,7 +26974,7 @@ class MainWindow(QMainWindow):
                         )
                         for i, p in cands:
                             it = QListWidgetItem(
-                                f"{p.name or p.group}   —   U{getattr(p, 'universe', 0) + 1}"
+                                f"{p.name or p.group}   -   U{getattr(p, 'universe', 0) + 1}"
                                 f" · CH {p.start_address}"
                             )
                             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
@@ -26791,7 +27048,7 @@ class MainWindow(QMainWindow):
                 col = CH_COLORS.get(ch, "#444455")
                 # Le nom du constructeur d'abord : sur un laser, dix-huit
                 # pastilles disaient « Unused » sans qu'on puisse les
-                # distinguer. Abrégé pour que la pastille reste une pastille —
+                # distinguer. Abrégé pour que la pastille reste une pastille -
                 # le nom entier est dans l'infobulle.
                 _lb = _chip_labels[ci] if ci < len(_chip_labels) else ""
                 _disp = (_lb if len(_lb) <= 14 else _lb[:13] + "…") or channel_label(ch)
@@ -26889,7 +27146,7 @@ class MainWindow(QMainWindow):
                     f"QPushButton:hover {{ background:{color}cc; }}"
                 )
             else:
-                btn_group.setText("—")
+                btn_group.setText("-")
                 btn_group.setToolTip("")
                 btn_group.setStyleSheet(
                     "QPushButton { background:#1a1a1a; color:#fff; border:1px solid #2a2a2a;"
@@ -27204,7 +27461,12 @@ class MainWindow(QMainWindow):
             det_type_cb.blockSignals(False)
             _refresh_group_blocks(fd['group'])
             uni_cb.blockSignals(True);   uni_cb.setCurrentIndex(fd.get('universe', 0));  uni_cb.blockSignals(False)
-            addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);           addr_sb.blockSignals(False)
+            # Lever le plafond AVANT setValue : il vaut encore 512 − taille de
+            # l'appareil sélectionné juste avant. Passer d'une lyre 13 canaux
+            # (plafond 500) à un PAR en 505 affichait 500 - et le moindre
+            # changement de nom réécrivait 500 dans le patch (20/11/2026).
+            addr_sb.blockSignals(True);  addr_sb.setMaximum(512)
+            addr_sb.setValue(fd['start_address']);  addr_sb.blockSignals(False)
             _update_addr_range()
             # Barre/matrice : montrer les canaux de TOUT l'appareil, pas ceux
             # du seul membre représentant (3 pour un pixel RGB).
@@ -27219,6 +27481,7 @@ class MainWindow(QMainWindow):
                 for j, fd2 in enumerate(fixture_data):
                     if j == idx: continue
                     if fd2.get('universe', 0) != fd.get('universe', 0): continue
+                    if fd2.get('manufacturer') == "MyStrow Up": continue
                     s1, e1 = fd['start_address'], fd['start_address'] + len(fd['profile']) - 1
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
@@ -27232,12 +27495,12 @@ class MainWindow(QMainWindow):
             if idx < len(_cards) and _cards[idx] is not None:
                 scroll.ensureWidgetVisible(_cards[idx])
 
-            # Pan/tilt limits section — lyres, lasers, et tout appareil à Pan/Tilt
+            # Pan/tilt limits section - lyres, lasers, et tout appareil à Pan/Tilt
             is_mh = _pt_visible(idx, fd.get('fixture_type', ''))
             pt_section.setVisible(is_mh)
             rng_box.setVisible(is_mh)
 
-            # Disposition des pixels — seulement sur la carte d'une barre/matrice
+            # Disposition des pixels - seulement sur la carte d'une barre/matrice
             _gpx = _matrix_info_for(idx)
             px_section.setVisible(bool(_gpx))
             if _gpx:
@@ -27295,7 +27558,7 @@ class MainWindow(QMainWindow):
                 proj.dmx_profile = fd['profile']
 
             # Barre/matrice : l'appareil est UN tout. Réadresser le seul membre
-            # représentant disloquerait la barre — les autres pixels garderaient
+            # représentant disloquerait la barre - les autres pixels garderaient
             # leurs anciens canaux et se chevaucheraient. On réadresse donc en
             # chaîne depuis la nouvelle base, et on propage groupe/univers/nom.
             _mid_c = fd.get('matrix_id')
@@ -27389,6 +27652,7 @@ class MainWindow(QMainWindow):
                 for j, fd2 in enumerate(fixture_data):
                     if j == idx: continue
                     if fd2.get('universe', 0) != fd.get('universe', 0): continue
+                    if fd2.get('manufacturer') == "MyStrow Up": continue
                     s1, e1 = fd['start_address'], fd['start_address'] + len(fd['profile']) - 1
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
@@ -27440,7 +27704,7 @@ class MainWindow(QMainWindow):
         btn_ap.clicked.connect(lambda: addr_sb.setValue(min(512, addr_sb.value() + 1)))
 
         def _do_delete_at(idx):
-            """Supprime la fixture à l'index idx — appelé après confirmation."""
+            """Supprime la fixture à l'index idx - appelé après confirmation."""
             if idx is None or idx >= len(fixture_data):
                 return
             _push_history()
@@ -27548,7 +27812,7 @@ class MainWindow(QMainWindow):
 
             Le fichier reprend le profil RÉEL du patch (canaux, noms, valeurs par
             défaut, roues couleur/gobo calibrées), donc ce qu'on a corrigé à la
-            main part avec — et il se réimporte tel quel dans la bibliothèque.
+            main part avec - et il se réimporte tel quel dans la bibliothèque.
             """
             import re as _re
             from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -27740,7 +28004,7 @@ class MainWindow(QMainWindow):
                 fd['profile']      = list(new_fx.get("profile", fd['profile']))
                 # Les noms de canaux appartiennent au NOUVEAU profil. Sans cette
                 # ligne, remplacer une fixture par sa version corrigée gardait les
-                # libellés de l'ancienne — donc des noms décalés, ou aucun, juste
+                # libellés de l'ancienne - donc des noms décalés, ou aucun, juste
                 # là où on vient de les rétablir. La racine décrit le premier mode ;
                 # une fixture venue de la bibliothèque ne les porte que dans `modes`.
                 _nlb = (new_fx.get("labels") or new_fx.get("channel_labels")
@@ -28345,7 +28609,7 @@ class MainWindow(QMainWindow):
                     box.raise_(); box.activateWindow(); box.exec()
                     return
                 n_fx = len(config['fixtures'])
-                print(f"[ImportPatch] {n_fx} fixture(s) détectée(s) — confirmation…")
+                print(f"[ImportPatch] {n_fx} fixture(s) détectée(s) - confirmation…")
                 confirm = QMessageBox(QMessageBox.Question, tr("mwy_209"),
                     tr("mwy_210", n_fx=n_fx, a='s' if n_fx > 1 else ''),
                     QMessageBox.Yes | QMessageBox.No, dialog)
@@ -28662,7 +28926,7 @@ class MainWindow(QMainWindow):
             Le calcul vit dans `repartir_canvas` (plan_3d_webwindow) : c'est là
             que se trouve la conversion mètres ↔ plan de feu, et les deux vues
             doivent rester dans le même repère. « Répartir H/V » ci-contre
-            couvre l'autre besoin — conserver l'ordre visuel en n'égalisant que
+            couvre l'autre besoin - conserver l'ordre visuel en n'égalisant que
             les écarts, sans dire où.
             """
             projs = _get_selected_projs()
@@ -28897,7 +29161,7 @@ class MainWindow(QMainWindow):
 
             Le patch est modal (`exec()`) : réduit seul, il disparaissait (pas
             d'icône à lui dans la barre des tâches) tout en continuant de
-            bloquer la fenêtre principale — un main visible mais figé, dont on
+            bloquer la fenêtre principale - un main visible mais figé, dont on
             ne sortait qu'en rouvrant le patch. On remet donc le patch dans son
             état d'avant et on réduit la fenêtre principale : il est réduit avec
             elle (fenêtre possédée) et revient par-dessus au clic sur MyStrow.
@@ -29129,7 +29393,7 @@ class MainWindow(QMainWindow):
         """Dialog bibliotheque de fixtures. Retourne (preset, qty, custom_name) ou None.
 
         `replace_n` > 0 : même fenêtre, ouverte pour remplacer `replace_n`
-        fixtures du patch — sans quantité, bouton « Remplacer »."""
+        fixtures du patch - sans quantité, bouton « Remplacer »."""
         from PySide6.QtWidgets import QListWidget, QSplitter, QListWidgetItem
         from builtin_fixtures import BUILTIN_FIXTURES
         import json as _json
@@ -29194,7 +29458,7 @@ class MainWindow(QMainWindow):
                 _ftype = _qfx.get("fixture_type", "PAR LED")
                 _modes = _qfx.get("modes", [])
                 for _m in _modes:
-                    _entry_name = _model if len(_modes) == 1 else f"{_model} — {_m['name']}"
+                    _entry_name = _model if len(_modes) == 1 else f"{_model} - {_m['name']}"
                     _key = (_entry_name, _mfr)
                     if _key in _qlc_seen:
                         continue
@@ -29213,7 +29477,7 @@ class MainWindow(QMainWindow):
         # Groupement par fabricant CANONIQUE : les quatre bibliothèques
         # n'écrivaient pas les marques pareil (« cameo » / « Cameo »,
         # « MacMah » / « Mac Mah », « ADJ » / « American DJ »…), ce qui donnait
-        # deux à quatre rubriques pour un même fabricant — 23 marques
+        # deux à quatre rubriques pour un même fabricant - 23 marques
         # concernées. Voir `core.canonical_manufacturer`.
         FIXTURE_LIBRARY = build_fixture_library(ALL_FIXTURES)
         _TOTAL_FIXTURES = len(ALL_FIXTURES)
@@ -29384,7 +29648,7 @@ class MainWindow(QMainWindow):
                 _ftype = _fx.get("fixture_type", "")
                 _lbl = f"{_n}  ({_nch}ch)"
                 if _ftype:
-                    _lbl += f"   — {_ftype}"
+                    _lbl += f"   - {_ftype}"
                 _item = QListWidgetItem(_lbl)
                 _item.setData(Qt.UserRole, _fx)
                 my_list.addItem(_item)
@@ -29485,7 +29749,7 @@ class MainWindow(QMainWindow):
 
                 # Défilement ET focus une fois la fenêtre affichée : appelé ici,
                 # avant exec(), scrollToItem agissait sur une liste sans hauteur
-                # et ne faisait rien — la machine était sélectionnée mais hors
+                # et ne faisait rien - la machine était sélectionnée mais hors
                 # de vue, il fallait descendre l'ascenseur pour la trouver.
                 def _reveal(it=_hit):
                     my_list.scrollToItem(it, QListWidget.PositionAtCenter)
@@ -29538,7 +29802,7 @@ class MainWindow(QMainWindow):
                     _n = _sizes[0] if _sizes else len(preset.get("profile", []))
                     label = tr("mwy_265", name=name, n=_n) if _n == 1 else tr("mwy_266", name=name, n=_n)
                 if show_mfr and mfr:
-                    label += f"   — {mfr}"
+                    label += f"   - {mfr}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.UserRole, preset)
                 preset_list.addItem(item)
@@ -29648,7 +29912,7 @@ class MainWindow(QMainWindow):
                         ftype = ofl_fx.get("fixture_type", "PAR LED")
                         candidates = [{
                             "name":         ofl_fx.get("name", Path(path).stem)
-                                            + (f" — {m['name']}" if len(modes) > 1 else ""),
+                                            + (f" - {m['name']}" if len(modes) > 1 else ""),
                             "manufacturer": ofl_fx.get("manufacturer", ""),
                             "fixture_type": ftype,
                             "group":        DEFAULT_GROUP,
@@ -29715,7 +29979,7 @@ class MainWindow(QMainWindow):
             # d'entrées et il fallait la rechercher à la main juste après
             # l'avoir ajoutée. On passe par le champ de recherche plutôt que par
             # un défilement : la liste est alors réduite à ce qu'on cherche, et
-            # le fabricant repart sur « tous » — sinon un import rangé sous un
+            # le fabricant repart sur « tous » - sinon un import rangé sous un
             # autre fabricant que celui sélectionné resterait invisible.
             if newly_imported:
                 _cible = newly_imported[0].get("name", "")
@@ -29840,7 +30104,7 @@ class MainWindow(QMainWindow):
                         # Le renouvellement du jeton est un appel RÉSEAU (8 s de
                         # timeout). Il était fait dans le thread GUI : sur une
                         # connexion faible l'appli restait figée « ne répond
-                        # pas » tout le temps du timeout — et l'utilisateur la
+                        # pas » tout le temps du timeout - et l'utilisateur la
                         # tuait. Il appartient donc au worker, comme la lecture
                         # Firestore. La bibliothèque est publique : ne pas
                         # avoir de jeton n'est pas une erreur.
@@ -29860,8 +30124,8 @@ class MainWindow(QMainWindow):
 
                 Un signal connecté à une fonction NUE (sans QObject de
                 contexte) est délivré en connexion directe : le slot tourne
-                dans le thread worker, et y toucher un widget Qt — a fortiori
-                y ouvrir un QMessageBox, ce que fait le chemin d'erreur — fait
+                dans le thread worker, et y toucher un widget Qt - a fortiori
+                y ouvrir un QMessageBox, ce que fait le chemin d'erreur - fait
                 planter l'appli. Parenté au dialogue, ce relais force la
                 connexion queued vers le thread principal ; et si la fenêtre a
                 été fermée entre-temps il est détruit avec elle, si bien que le
@@ -29884,7 +30148,7 @@ class MainWindow(QMainWindow):
                     _f.setdefault("source", "firestore")
                     # Marque de provenance : c'est elle qui autorisera le
                     # prochain Actualiser à remplacer cette copie. `source` ne
-                    # suffit pas — un document distant peut très bien porter
+                    # suffit pas - un document distant peut très bien porter
                     # « ma3 », exactement comme un fichier importé à la main.
                     _f["_from_library"] = True
                 # Fusionner : conserver les fixtures user locales, remplacer les firestore
@@ -29897,7 +30161,7 @@ class MainWindow(QMainWindow):
                     existing = []
                 # Une fixture VENUE de la bibliothèque repart : sa version
                 # distante la remplace, corrections comprises. C'est tout l'objet
-                # du bouton — il ne faisait jusqu'ici qu'AJOUTER ce qui manquait,
+                # du bouton - il ne faisait jusqu'ici qu'AJOUTER ce qui manquait,
                 # si bien qu'un profil corrigé puis republié ne redescendait
                 # jamais chez qui l'avait déjà. Voir `vient_de_la_bibliotheque`.
                 try:
@@ -29950,7 +30214,7 @@ class MainWindow(QMainWindow):
 
             # Le thread n'est PAS parenté au dialogue : fermer la fenêtre
             # pendant un rafraîchissement détruirait un QThread encore en cours
-            # d'exécution — crash immédiat, exactement le cas d'une connexion
+            # d'exécution - crash immédiat, exactement le cas d'une connexion
             # lente où l'attente est assez longue pour qu'on referme. Les
             # références vivent donc sur la fenêtre principale, jusqu'à la fin
             # RÉELLE du thread.
@@ -30008,7 +30272,7 @@ class MainWindow(QMainWindow):
         # ── Sélecteur de mode ─────────────────────────────────────────────────
         # Une fixture OFL a souvent plusieurs modes DMX (la Chroma-Q Color Force
         # en a 121). Sans ce sélecteur seul le mode 0 était accessible : sur
-        # cette barre c'est « Look », 1 canal — tous les modes pixel étaient
+        # cette barre c'est « Look », 1 canal - tous les modes pixel étaient
         # hors d'atteinte.
         mode_row = QWidget()
         mode_h = QHBoxLayout(mode_row)
@@ -30102,7 +30366,7 @@ class MainWindow(QMainWindow):
                 mode_cb.clear()
                 for m in modes:
                     n = len(m.get("profile") or [])
-                    mode_cb.addItem(f"{m.get('name', '?')}   —   {n} "
+                    mode_cb.addItem(f"{m.get('name', '?')}   -   {n} "
                                     f"{'canal' if n == 1 else 'canaux'}")
                 mode_cb.blockSignals(False)
                 # Un seul mode exploitable → le sélecteur n'apporte rien
@@ -30537,7 +30801,7 @@ class MainWindow(QMainWindow):
             if isinstance(explicit, list) and explicit:
                 # Machine patchée depuis l'ancienne bibliothèque QLC+ : aucun
                 # canal Smoke, débit mort. On le retrouve (nom de canal, ou
-                # canal unique) — sans ça, seul un re-patch la réparait.
+                # canal unique) - sans ça, seul un re-patch la réparait.
                 fixed = fix_machine_profile(
                     getattr(proj, 'fixture_type', ''), explicit,
                     getattr(proj, 'channel_labels', None))
@@ -30577,7 +30841,7 @@ class MainWindow(QMainWindow):
         # onglets MOUVEMENT et GOBO, selon la présence d'une lyre dans le patch.
         # Ce point de passage l'ignorait, alors que c'est CELUI par lequel passe
         # l'ajout d'une fixture (`_add_fixture` → `_rebuild_dmx_patch`) : ajouter
-        # une lyre laissait les onglets masqués jusqu'au redémarrage — « je
+        # une lyre laissait les onglets masqués jusqu'au redémarrage - « je
         # n'arrive pas à envoyer ma lyre dans LIVE ».
         if hasattr(self, 'seq') and hasattr(self.seq, 'live_panel'):
             try:
@@ -30593,7 +30857,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_plan3d'):
             scene_3d['preset'] = getattr(self._plan3d, '_scene_preset_code', 'festival_plein_air')
             scene_3d['trusses'] = list(getattr(self._plan3d, '_trusses', []))
-            # Décor importé : on garde le CHEMIN, pas le contenu — un GLB fait
+            # Décor importé : on garde le CHEMIN, pas le contenu - un GLB fait
             # plusieurs Mo et ce fichier de config doit rester léger.
             _imp = getattr(self._plan3d, '_imported_path', '')
             if _imp:
@@ -30631,7 +30895,7 @@ class MainWindow(QMainWindow):
     # L'export .msp avait sa propre liste de champs, qui s'était arrêtée à la
     # position 2D : un plan de feu réimporté perdait l'inclinaison 3D (lyres
     # retournées), la hauteur, la rotation, l'inversion et le débattement du
-    # tilt, les roues, etc. — « l'inclinaison des projecteurs n'est plus la
+    # tilt, les roues, etc. - « l'inclinaison des projecteurs n'est plus la
     # bonne ». Tout champ ajouté ici voyage désormais dans les deux sens.
     def _fixture_to_config(self, i, proj):
         proj_key = f"{proj.group}_{i}"
@@ -30672,7 +30936,7 @@ class MainWindow(QMainWindow):
             'channel_defaults':   dict(getattr(proj, 'channel_defaults', {})),
             'channel_ranges':     normalize_channel_ranges(getattr(proj, 'channel_ranges', None)),
             # Convention d'obturateur inversée (0 = ouvert). Réglée par
-            # « Ma lyre ne s'allume pas » dans la calibration de roue —
+            # « Ma lyre ne s'allume pas » dans la calibration de roue -
             # elle n'était PAS sauvegardée : le réglage était perdu au
             # redémarrage et la lyre repartait noire.
             'shutter_inverted':   bool(getattr(proj, 'shutter_inverted', False)),
@@ -30714,7 +30978,7 @@ class MainWindow(QMainWindow):
         # `pos_3d_src: null` AVEC `pos_3d_x: null` n'est pas un
         # placement manuel : un placement manuel a forcément une
         # position 3D. C'est la trace des patchs écrits par la
-        # version qui sérialisait l'attribut absent en `null` —
+        # version qui sérialisait l'attribut absent en `null` -
         # on laisse l'attribut absent pour que la migration
         # reprenne, sinon ces fixtures restaient débranchées du
         # plan de feu 2D pour toujours.
@@ -30869,7 +31133,7 @@ class MainWindow(QMainWindow):
         # ligne), en même temps que les couleurs et les mouvements de lyres :
         # une ballade et un morceau club de la même playlist n'ont pas la même
         # nervosité. Le curseur global qui vivait ici n'était plus lu par le
-        # moteur — mieux vaut pas de réglage qu'un réglage qui ment.
+        # moteur - mieux vaut pas de réglage qu'un réglage qui ment.
         nerv_sl = None
         layout.addWidget(_section_title(tr("mwy_300")))
         nerv_info = QLabel(
@@ -30992,7 +31256,7 @@ class MainWindow(QMainWindow):
             print(f"Erreur chargement IA config: {e}")
 
     def test_dmx_on_startup(self):
-        """Connexion DMX au démarrage — en arrière-plan.
+        """Connexion DMX au démarrage - en arrière-plan.
 
         L'ouverture du port est déportée dans un thread : sur un boîtier USB qui
         ne répond pas, l'appel bloquait le thread GUI et MyStrow ne s'affichait
@@ -31020,7 +31284,7 @@ class MainWindow(QMainWindow):
         artnet_dmx.py). Un essai déjà en vol fait simplement ignorer l'appel.
         """
         if getattr(self, '_dmx_connect_worker', None) is not None:
-            print("[DMX] connexion déjà en cours — appel ignoré")
+            print("[DMX] connexion déjà en cours - appel ignoré")
             return
 
         worker = _DmxConnectWorker(self.dmx, kwargs)
@@ -31048,13 +31312,13 @@ class MainWindow(QMainWindow):
     def _log_startup_status(self):
         """Rapport d'état initial des sorties au démarrage.
 
-        On rapporte l'ÉTAT VOULU — le bouton DMX du plan de feu — et surtout
+        On rapporte l'ÉTAT VOULU - le bouton DMX du plan de feu - et surtout
         pas le résultat d'une connexion. Deux versions s'y sont cassé les dents
         en interrogeant `dmx.connected` : la connexion part dans un thread et
         se rétablit toute seule en cours de route, si bien que le journal
         annonçait « désactivée » sur une sortie qui marchait très bien. Un
         rapport de démarrage décrit ce que l'utilisateur a demandé, pas l'état
-        d'un port à un instant t — les vrais problèmes de liaison ont leur
+        d'un port à un instant t - les vrais problèmes de liaison ont leur
         place dans le diagnostic (Connexions ▸ Sortie DMX), qui teste, lui."""
         if not self._license.dmx_allowed:
             self._log_message(tr("mwx_084"), "info")
@@ -31142,7 +31406,7 @@ class MainWindow(QMainWindow):
             _dlg.exec()
             return
 
-        # Pas connecté — tenter reconnexion automatique d'abord
+        # Pas connecté - tenter reconnexion automatique d'abord
         self.midi_handler.connect_akai()
         reconnected = False
         if self.midi_handler.midi_in and self.midi_handler.midi_out:
@@ -31181,7 +31445,7 @@ class MainWindow(QMainWindow):
             _lay.addWidget(_btn)
             _dlg.exec()
         else:
-            # Échec — dialog intermédiaire avec bouton "Ouvrir le diagnostic"
+            # Échec - dialog intermédiaire avec bouton "Ouvrir le diagnostic"
             import sys as _sys
             import subprocess as _sub
             _dlg = QDialog(self)
@@ -31486,7 +31750,7 @@ class MainWindow(QMainWindow):
             # Reprendre la cadence NOMINALE. Ce `start()` réarmait le timer à
             # 40 ms au lieu des 25 ms d'origine : un simple passage par le
             # testeur faisait tomber tout le parc de 40 à 25 fps jusqu'à la
-            # fermeture du logiciel — d'où « le DMX rame, un redémarrage règle ».
+            # fermeture du logiciel - d'où « le DMX rame, un redémarrage règle ».
             self.dmx_send_timer.start(DMX_FRAME_MS)
 
     def _restore_akai_leds_after_tester(self):
@@ -31511,7 +31775,7 @@ class MainWindow(QMainWindow):
         Contrairement au testeur, elle n'ecrit rien et ne touche pas au timer
         d'envoi : elle reste ouverte pendant le spectacle, sur un second ecran.
         La fenetre est conservee entre deux ouvertures pour garder sa taille et
-        sa position — on la place une fois sur le bon ecran, pas a chaque show.
+        sa position - on la place une fois sur le bon ecran, pas a chaque show.
         """
         win = getattr(self, '_dmx_monitor', None)
         if win is None:
@@ -31538,7 +31802,7 @@ class MainWindow(QMainWindow):
         NODE DMX (renvoi depuis l'assistant USB)."""
         # Garde licence : impossible d'activer la sortie DMX si l'essai est terminé
         # ou le logiciel non activé. Le menu n'étant plus grisé, c'est ici que
-        # l'utilisateur apprend pourquoi — avec un accès direct aux plans.
+        # l'utilisateur apprend pourquoi - avec un accès direct aux plans.
         if not self._license.dmx_allowed:
             self._dmx_locked_notice()
             return
@@ -31571,7 +31835,7 @@ class MainWindow(QMainWindow):
             pass
 
     def open_brad_diagnostic(self):
-        """Ouvre l'assistant BRAD — diagnostic complet DMX/réseau."""
+        """Ouvre l'assistant BRAD - diagnostic complet DMX/réseau."""
         from brad_diagnostic import BradDiagnosticDialog
         dlg = BradDiagnosticDialog(self)
         dlg.exec()
@@ -31625,7 +31889,7 @@ class MainWindow(QMainWindow):
     def _rj45_deep_report(self):
         """Rapport détaillé réseau / Art-Net, dans l'esprit de BRAD.
 
-        Le test RJ45 affiche deux voyants — carte réseau, node — ce qui suffit
+        Le test RJ45 affiche deux voyants - carte réseau, node - ce qui suffit
         à savoir SI ça marche, pas POURQUOI ça ne marche pas. Ce rapport
         rassemble ce qu'on finit toujours par demander à l'utilisateur : ses
         cartes, sa route vers le boîtier, qui répond, et qui tient le port.
@@ -31636,7 +31900,7 @@ class MainWindow(QMainWindow):
         L = []
         A = L.append
         A("═══ DIAGNOSTIC RÉSEAU / ART-NET ═══")
-        A(f"MyStrow {VERSION} — {_sys.platform}")
+        A(f"MyStrow {VERSION} - {_sys.platform}")
         A("")
 
         A("[ 1 ] Cartes réseau")
@@ -31646,7 +31910,7 @@ class MainWindow(QMainWindow):
             adapters = []
             A(f"  ✗  énumération impossible : {e}")
         if not adapters:
-            A("  ✗  aucune carte détectée — câble RJ45 branché ?")
+            A("  ✗  aucune carte détectée - câble RJ45 branché ?")
         for name, ip, desc, up in adapters:
             mark = "★" if str(ip).startswith("2.") else " "
             A(f"  {mark} {name}")
@@ -31670,7 +31934,7 @@ class MainWindow(QMainWindow):
             _p.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
             _p.bind(("", TARGET_PORT))
             _p.close()
-            A("  ✓  libre — aucune autre application DMX ne l'occupe")
+            A("  ✓  libre - aucune autre application DMX ne l'occupe")
         except Exception as e:
             A(f"  ⚠  occupé ({e})")
             A("      QLC+, Chataigne ou un autre logiciel DMX est ouvert.")
@@ -31745,7 +32009,7 @@ class MainWindow(QMainWindow):
     def _firewall_port_status(port):
         """(entrées bloquées par défaut ?, une règle couvre-t-elle ce port ?).
 
-        Chaque valeur vaut None si l'information n'a pas pu être obtenue — on ne
+        Chaque valeur vaut None si l'information n'a pas pu être obtenue - on ne
         présente jamais une incertitude comme un diagnostic.
 
         Les libellés de `netsh` sont traduits, mais pas les mots-clés de
@@ -31805,7 +32069,7 @@ class MainWindow(QMainWindow):
         dont les delais autorises cumulent ~35 s. Il tournait sur le thread Qt :
         pendant tout ce temps la fenetre ne repeint plus (Windows la declare
         « ne repond pas » et propose de la fermer) et le timer DMX ne part
-        plus — mesure ici : 1,14 s de gel et ~45 trames DMX perdues sur une
+        plus - mesure ici : 1,14 s de gel et ~45 trames DMX perdues sur une
         machine RAPIDE, bien pire ailleurs. D'ou des utilisateurs convaincus
         que MyStrow avait plante.
         """
@@ -31837,7 +32101,7 @@ class MainWindow(QMainWindow):
         """Construit le rapport de diagnostic tablette (APPEL BLOQUANT).
 
         Le symptôme classique (« la tablette affiche une page vide ») a plusieurs
-        causes très différentes — serveur non démarré, dépendances absentes, port
+        causes très différentes - serveur non démarré, dépendances absentes, port
         occupé, pare-feu. Ce test les distingue au lieu de laisser deviner.
         """
         import socket as _s
@@ -31849,7 +32113,7 @@ class MainWindow(QMainWindow):
         # route /stream ouvre lui-même une connexion SSE, que le serveur inscrit
         # aussitôt dans _clients et ne retire qu'à la fermeture effective du flux.
         # Lu après coup, le compteur affichait donc « Tablettes connectées : 1 »
-        # alors qu'AUCUNE tablette n'était là — le diagnostic se comptait lui-même.
+        # alors qu'AUCUNE tablette n'était là - le diagnostic se comptait lui-même.
         try:
             n_clients_avant = len(_ts._clients)
         except Exception:
@@ -31860,14 +32124,14 @@ class MainWindow(QMainWindow):
             lines.append(f"{mark}  {label} : {detail}")
             return ok
 
-        # 1. Dépendances (Flask/waitress) — installées à la volée au 1er démarrage
+        # 1. Dépendances (Flask/waitress) - installées à la volée au 1er démarrage
         try:
             deps_ok = bool(_ts._try_import())
         except Exception as e:
             deps_ok = False
             print(f"[Tablet] test dépendances: {e}")
         add("Dépendances (Flask/waitress)", deps_ok,
-            "présentes" if deps_ok else "absentes — le serveur ne peut pas démarrer")
+            "présentes" if deps_ok else "absentes - le serveur ne peut pas démarrer")
 
         # 2. Serveur démarré ?
         running = False
@@ -31876,7 +32140,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[Tablet] test is_running: {e}")
         add("Serveur tablette", running,
-            "démarré" if running else "arrêté — Connexion ▸ Contrôle externe pour l'allumer")
+            "démarré" if running else "arrêté - Connexion ▸ Contrôle externe pour l'allumer")
 
         # 3. IP locale et URL à saisir sur la tablette
         ip = ""
@@ -31885,7 +32149,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[Tablet] test IP: {e}")
         add("Adresse du PC sur le réseau", bool(ip),
-            f"http://{ip}:{_ts.TABLET_PORT}" if ip else "introuvable — carte réseau active ?")
+            f"http://{ip}:{_ts.TABLET_PORT}" if ip else "introuvable - carte réseau active ?")
 
         # 4. Le port répond-il vraiment ? (le serveur peut se croire démarré)
         port_ok = False
@@ -31896,7 +32160,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"[Tablet] test port: {e}")
             add(f"Port {_ts.TABLET_PORT} en écoute", port_ok,
-                "répond" if port_ok else "ne répond pas — port occupé ou serveur planté")
+                "répond" if port_ok else "ne répond pas - port occupé ou serveur planté")
 
         # 4 bis. Celui qui répond, est-ce bien NOUS ?
         #    « Le port répond » ne veut pas dire « MyStrow répond ». Sur Mac, le
@@ -31929,8 +32193,8 @@ class MainWindow(QMainWindow):
                     qui = ""
             add("Le logiciel qui répond est bien MyStrow", mine,
                 "oui" if mine else
-                ("NON — port pris par : " + qui if qui else
-                 f"NON — un autre logiciel occupe le port ({detail})"))
+                ("NON - port pris par : " + qui if qui else
+                 f"NON - un autre logiciel occupe le port ({detail})"))
 
         # 5. Le socket est-il ouvert sur l'IP du réseau (et pas seulement en local) ?
         #    ⚠️ Ce test NE PROUVE PAS qu'une tablette peut joindre le serveur.
@@ -31940,7 +32204,7 @@ class MainWindow(QMainWindow):
         #    longtemps été présenté comme « LE test qui compte », d'où des
         #    diagnostics tout verts en face d'une tablette qui affiche
         #    « Ce site est inaccessible ». Il dit seulement que le serveur écoute
-        #    sur 0.0.0.0 et non sur 127.0.0.1 — utile, mais rien de plus.
+        #    sur 0.0.0.0 et non sur 127.0.0.1 - utile, mais rien de plus.
         lan_ok = False
         if running and ip:
             try:
@@ -31949,8 +32213,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"[Tablet] test LAN: {e}")
             add(f"Socket ouvert sur {ip} (vu depuis ce PC)", lan_ok,
-                "oui — ne préjuge pas du pare-feu" if lan_ok else
-                "NON — le serveur n'écoute que sur 127.0.0.1")
+                "oui - ne préjuge pas du pare-feu" if lan_ok else
+                "NON - le serveur n'écoute que sur 127.0.0.1")
 
         # 6. Les deux routes que la tablette utilise réellement.
         #    /stream est le flux temps réel : c'est lui qui a déjà cassé en
@@ -31975,16 +32239,16 @@ class MainWindow(QMainWindow):
         #    C'est la cause n°1 de « site inaccessible » côté tablette alors que
         #    tout est vert côté PC. Absence de règle = indication forte, pas une
         #    preuve : une règle peut aussi viser le PROGRAMME (python.exe) plutôt
-        #    que le port — d'où un libellé prudent.
+        #    que le port - d'où un libellé prudent.
         if sys.platform == "win32" and running:
             bloque, regle = self._firewall_port_status(_ts.TABLET_PORT)
             if bloque is not None:
-                add("Pare-feu — entrées par défaut", not bloque,
+                add("Pare-feu - entrées par défaut", not bloque,
                     "autorisées" if not bloque else "BLOQUÉES (une règle est nécessaire)")
             if regle is not None:
                 add(f"Règle pare-feu pour le port {_ts.TABLET_PORT}", regle,
                     "présente" if regle else
-                    "AUCUNE — cause la plus probable du « site inaccessible »")
+                    "AUCUNE - cause la plus probable du « site inaccessible »")
 
         # 8. Tablettes actuellement connectées (comptées AVANT nos propres tests)
         n_clients = n_clients_avant
@@ -32016,7 +32280,7 @@ class MainWindow(QMainWindow):
             lines.append("les tests partent de ce PC et ne traversent pas son pare-feu.")
             lines.append("")
             lines.append("Si la tablette affiche « Ce site est inaccessible », dans l'ordre :")
-            lines.append(f"  1. Pare-feu Windows — autoriser le port {_ts.TABLET_PORT} en entrée.")
+            lines.append(f"  1. Pare-feu Windows - autoriser le port {_ts.TABLET_PORT} en entrée.")
             lines.append("     En ligne de commande, en ADMINISTRATEUR :")
             lines.append(f'     netsh advfirewall firewall add rule name="MyStrow tablette" '
                          f'dir=in action=allow protocol=TCP localport={_ts.TABLET_PORT}')
@@ -32232,7 +32496,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-            # 2b. Ping fallback — beaucoup de nodes Art-Net ne répondent pas à ArtPoll
+            # 2b. Ping fallback - beaucoup de nodes Art-Net ne répondent pas à ArtPoll
             if not node_ok:
                 import subprocess as _sp
                 _ping_flags = ["-n", "1", "-w", "800"] if __import__('sys').platform == "win32" else ["-c", "1", "-W", "1"]
@@ -32294,7 +32558,7 @@ class MainWindow(QMainWindow):
         # Envoi du rapport : on relit les libellés affichés, c'est exactement ce
         # que l'utilisateur a sous les yeux au moment où il clique.
         def _rj45_report():
-            return ("Test RJ45 — réseau / Node Art-Net\n\n"
+            return ("Test RJ45 - réseau / Node Art-Net\n\n"
                     f"IP cible configurée : {self.dmx.target_ip}\n\n"
                     f"{icon_net.text()}  Carte réseau : {detail_net.text()}\n"
                     f"{icon_node.text()}  Node Art-Net : {detail_node.text()}\n")
@@ -32314,8 +32578,8 @@ class MainWindow(QMainWindow):
         btn_row.insertWidget(btn_row.count() - 1, btn_send)
 
         # Analyse approfondie : les deux voyants disent SI ça marche, pas
-        # POURQUOI ça ne marche pas. Ce bouton ouvre le détail — cartes, route,
-        # conflit de port, réponse ArtPoll nominative — avec copie et envoi.
+        # POURQUOI ça ne marche pas. Ce bouton ouvre le détail - cartes, route,
+        # conflit de port, réponse ArtPoll nominative - avec copie et envoi.
         btn_deep = QPushButton(tr("mw_detailed_scan"))
         btn_deep.setFixedHeight(30)
         btn_deep.setStyleSheet(
@@ -32637,7 +32901,7 @@ class MainWindow(QMainWindow):
         labels = []
         for i, sc in enumerate(QApplication.screens()):
             geo = sc.geometry()
-            label = f"{tr('vg_screen')} {i + 1} — {sc.name()} ({geo.width()}×{geo.height()})"
+            label = f"{tr('vg_screen')} {i + 1} - {sc.name()} ({geo.width()}×{geo.height()})"
             if sc.name() == here_name:
                 label += f"  · {tr('vg_screen_main')}"
             labels.append(label)
@@ -32696,12 +32960,12 @@ class MainWindow(QMainWindow):
         # Fondu de mémoire en cours → c'est LUI l'autorité sur niveau et couleur.
         # `_recompute_memory_mix` a déjà composité toutes les mémoires levées
         # dans la cible du fondu (`_fade_to`) : repasser ici par-dessus, frame
-        # après frame, n'ajoute rien — sauf que la comparaison HTP se fait
+        # après frame, n'ajoute rien - sauf que la comparaison HTP se fait
         # contre le niveau INSTANTANÉ de la rampe, jamais contre sa cible. Dès
         # que la mémoire d'arrivée est ne serait-ce qu'un cran plus haute que le
         # look de départ (une lyre à 24 % qui passe à 25 %), `mem_level >
         # proj.level` est vrai pendant TOUTE la rampe : la couleur cible était
-        # reposée sèche dès la première frame, et le fondu ne se voyait pas —
+        # reposée sèche dès la première frame, et le fondu ne se voyait pas -
         # ni sur le plan 2D (qui affiche ces overrides) ni sur les lampes. Les
         # fixtures dont le niveau ne bouge pas entre les deux looks (PAR à
         # 100 % des deux côtés) passaient au travers, d'où « le fondu marche
@@ -32718,7 +32982,7 @@ class MainWindow(QMainWindow):
             # CHAQUE frame DMX et repose les mémoires en HTP par-dessus le
             # modèle. Sans elle, le FLASH KILL avait beau noircir les
             # projecteurs dans `_recompute_memory_mix`, la frame suivante les
-            # rallumait au niveau du fader — le momentané ne se voyait jamais.
+            # rallumait au niveau du fader - le momentané ne se voyait jamais.
             fv = self._mem_flash_level(
                 col_akai,
                 self.faders[col_akai].value if col_akai in self.faders else 0)
@@ -32769,13 +33033,13 @@ class MainWindow(QMainWindow):
         Applique la sortie live de l'éditeur d'effets, le temps d'une frame DMX.
 
         Format volontairement distinct des overrides HTP : l'éditeur produit
-        `(level, color, pan, tilt)` — il pilote aussi le mouvement des lyres,
+        `(level, color, pan, tilt)` - il pilote aussi le mouvement des lyres,
         ce que les mémoires ne font pas. Retourne l'état sauvegardé, à restaurer
         après l'envoi comme pour les autres sources temporaires.
 
         La ROUE de couleurs suit la couleur, comme dans le moteur du show
         (`_update_effect_from_layers`) : sur une lyre sans canal R/G/B, le fil
-        ne porte QUE `color_wheel` — sans ce mappage, une couche couleur en
+        ne porte QUE `color_wheel` - sans ce mappage, une couche couleur en
         sortie live faisait défiler les couleurs à l'écran pendant que la vraie
         lyre restait sur son slot d'avant. Sauvegardée et restaurée comme le
         reste : ces overrides ne durent qu'une frame, une roue laissée sur la
@@ -32849,7 +33113,7 @@ class MainWindow(QMainWindow):
             proj.color_wheel = cw
 
     # Canaux qui émettent de la lumière hors du RGB : un KILL qui ne baisse que
-    # `level` laisserait l'UV et les boosts allumés — la salle ne serait pas au
+    # `level` laisserait l'UV et les boosts allumés - la salle ne serait pas au
     # noir. Le strobe est coupé aussi : un éclair sur un dimmer à 0 ne se voit
     # pas, mais une lyre à shutter mécanique, si.
     _KILL_EXTRA_CHANNELS = ("uv", "white_boost", "amber_boost", "orange_boost",
@@ -32926,7 +33190,7 @@ class MainWindow(QMainWindow):
                 continue
             # Momentané FLASH / FLASH KILL : les pads manuels font partie du
             # « reste » que le KILL doit couper, et du plein feu que le FLASH
-            # doit monter. Comme pour les mémoires, on ne touche pas au fader —
+            # doit monter. Comme pour les mémoires, on ne touche pas au fader -
             # on ne fait que remplacer la valeur LUE le temps de l'appui.
             fader_value = self._flash_level(
                 self.faders[col_idx].value if col_idx in self.faders else 0)
@@ -32948,7 +33212,7 @@ class MainWindow(QMainWindow):
                 target_groups = []
             # Un effet à couche Dimmer baisse `proj.level` à chaque frame : le
             # comparer au fader faisait gagner le pad dès que l'effet passait
-            # sous le fader — fader à fond, Pulse Doux ou Chase Retour restaient
+            # sous le fader - fader à fond, Pulse Doux ou Chase Retour restaient
             # fixes sur les lampes pendant que le plan 2D, lui, les animait.
             # L'effet a déjà pris la couleur du pad (`base_color`) : on le laisse.
             fx_ids = getattr(self, '_fx_level_ids', ())
@@ -32985,7 +33249,7 @@ class MainWindow(QMainWindow):
     def send_dmx_update(self):
         """Envoie les donnees DMX avec HTP memoires + pads AKAI + refresh plan de feu"""
         self._sync_rest_positions()
-        # Appliquer l'effet en cours — sauf si un autre moteur pilote déjà les
+        # Appliquer l'effet en cours - sauf si un autre moteur pilote déjà les
         # projecteurs et appelle update_effect() lui-même :
         #  • timeline (Play Lumière) → apply_timeline_to_dmx
         #  • aperçu REC Lumière → _apply_preview_to_projectors
@@ -33029,7 +33293,7 @@ class MainWindow(QMainWindow):
         # Solo FLASH KILL : le montrer a l'ecran. La coupure elle-meme se fait
         # juste avant l'envoi et se defait aussitot (aucun etat du show n'est
         # touche), donc le plan 2D restait allume alors que les lampes etaient
-        # noires — le solo avait l'air de ne rien faire.
+        # noires - le solo avait l'air de ne rien faire.
         if hasattr(self.plan_de_feu, 'set_kill_display'):
             self.plan_de_feu.set_kill_display(self._kill_solo_groups())
 
@@ -33042,12 +33306,12 @@ class MainWindow(QMainWindow):
             saved_pads = self._apply_pad_overrides_htp()
 
             # Sortie live de l'éditeur d'effets : appliquée en DERNIER, donc
-            # prioritaire — c'est une action explicite de l'utilisateur qui règle
+            # prioritaire - c'est une action explicite de l'utilisateur qui règle
             # son effet et veut voir CE qu'il règle sur ses lampes.
             saved_editor = self._apply_editor_live_overrides()
 
             # FLASH KILL : dernier mot sur la frame. Le noir doit couper « le
-            # reste » sans exception — mémoires, pads, effet en cours, IA,
+            # reste » sans exception - mémoires, pads, effet en cours, IA,
             # timeline, sortie live de l'éditeur. Le filtrer source par source
             # revenait à en oublier une (l'effet rallumait tout au tick
             # suivant) : la coupure se fait donc ICI, juste avant l'envoi, et se

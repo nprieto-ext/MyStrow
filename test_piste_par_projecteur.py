@@ -1,5 +1,5 @@
 """
-test_piste_par_projecteur.py — Une piste par projecteur dans le REC Lumiere.
+test_piste_par_projecteur.py - Une piste par projecteur dans le REC Lumiere.
 
 Les pistes de la timeline etaient toutes des pistes de GROUPE (A a F, Lyres,
 Barres, Strobos) : impossible d'eclairer un projecteur a part de ses voisins
@@ -9,7 +9,7 @@ replie le paquet d'un clic).
 
 Deux points portent toute la mecanique, et c'est eux qu'on verrouille ici :
 
-  * la CLE de la piste (`core.projector_track_key`) — « @A2 », soit le groupe
+  * la CLE de la piste (`core.projector_track_key`) - « @A2 », soit le groupe
     d'affichage plus le rang du projo DANS son groupe. C'est elle qui part dans
     le .tui, donc elle ne doit dependre ni du NOM de la fixture (qui se renomme)
     ni de son index GLOBAL (qui bouge des qu'on patche ailleurs). Le libelle
@@ -46,7 +46,7 @@ class FauxProj:
 
 
 def _patch():
-    """4 faces, 2 contres, 2 lyres — indices 0..7."""
+    """4 faces, 2 contres, 2 lyres - indices 0..7."""
     return ([FauxProj("face", "Face %d" % (i + 1)) for i in range(4)] +
             [FauxProj("contre", "Contre %d" % (i + 1)) for i in range(2)] +
             [FauxProj("lyre", "Lyre %d" % (i + 1), "Moving Head") for i in range(2)])

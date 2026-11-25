@@ -1,5 +1,5 @@
 """
-test_effect_position_pdf.py — Positions du plan de feu dans l'editeur d'effets.
+test_effect_position_pdf.py - Positions du plan de feu dans l'editeur d'effets.
 
 Les positions de lyre vivent dans DEUX fichiers, jamais fusionnes :
 
@@ -64,7 +64,7 @@ class FauxMW:
     def _save_akai_config_auto(self):
         self.sauvegardes += 1
 
-    def _load_pdf_presets(self):          # noqa: F811 — remplace la vraie lecture disque
+    def _load_pdf_presets(self):          # noqa: F811 - remplace la vraie lecture disque
         return list(self._pdf)
 
 

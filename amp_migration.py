@@ -1,5 +1,5 @@
 """
-amp_migration.py — Outil « Amplitudes 3.1.91 » : AMP Pan/Tilt × 4.
+amp_migration.py - Outil « Amplitudes 3.1.91 » : AMP Pan/Tilt × 4.
 
 Pourquoi cet outil existe
 -------------------------
@@ -10,7 +10,7 @@ devenir 280 (le plafond de la colonne est à 400 depuis la 3.1.93).
 
 Aucune migration automatique n'est possible : les couches ne portent ni date
 ni version, et un AMP 70 réglé AVANT la 3.1.91 est déjà juste. Seul
-l'utilisateur sait quels effets datent de cette semaine-là — il les coche par
+l'utilisateur sait quels effets datent de cette semaine-là - il les coche par
 NOM, et l'outil convertit ce nom partout où une copie des couches vit :
 
   * effets personnalisés      ~/.mystrow_custom_effects.json
@@ -25,7 +25,7 @@ COPIE FIGÉE de ses couches. Convertir la seule config machine ne suffit pas.
 
 Règles de conversion (voir `a_convertir`)
 -----------------------------------------
-  * couche Pan / Tilt / Pan-Tilt uniquement — ailleurs AMP est une intensité ;
+  * couche Pan / Tilt / Pan-Tilt uniquement - ailleurs AMP est une intensité ;
   * AMP entre 1 et 100 : au-delà, la couche a été réglée après la 3.1.93
     (la colonne plafonnait à 100 en 3.1.91) ;
   * pas déjà marquée `amp_x4` : relancer l'outil ne multiplie jamais deux fois.
@@ -50,7 +50,7 @@ PLAFOND  = 400    # LayerRow._AMP_MAX_PT
 SEUIL    = 100    # plafond de la colonne AMP en 3.1.91
 SUFFIXE_SAUVEGARDE = ".avant-amp-x4.bak"
 
-# (clé de la liste de couches, clé du nom de l'effet) — configs d'effet d'un côté,
+# (clé de la liste de couches, clé du nom de l'effet) - configs d'effet d'un côté,
 # clips de REC Lumière de l'autre.
 _PORTEURS = (("layers", "name"), ("effect_layers", "effect_name"))
 
@@ -79,7 +79,7 @@ def porteurs(obj):
     """Tous les (dict, clé, nom d'effet) qui portent une liste de couches dans obj.
 
     Parcours générique d'une structure JSON : un seul code pour les boutons, les
-    pads, les mémoires, la bibliothèque, les clips d'un .tui ou d'un .lrec — et
+    pads, les mémoires, la bibliothèque, les clips d'un .tui ou d'un .lrec - et
     pour les entrepôts qu'on ajoutera demain."""
     if isinstance(obj, dict):
         for cle, cle_nom in _PORTEURS:
@@ -195,7 +195,7 @@ def _meme_fichier(a, b) -> bool:
 
 
 def sources_memoire(mw):
-    """Entrepôts vivants de la fenêtre principale — convertis en mémoire puis
+    """Entrepôts vivants de la fenêtre principale - convertis en mémoire puis
     réécrits par leurs propres fonctions de sauvegarde (sinon la prochaine
     sauvegarde de l'app écraserait la conversion)."""
     seq = getattr(mw, "seq", None)

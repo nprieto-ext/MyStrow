@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# build_intel_mac.sh  —  Build MyStrow_intel.dmg sur Mac Intel (signé + notarisé)
+# build_intel_mac.sh  -  Build MyStrow_intel.dmg sur Mac Intel (signé + notarisé)
 #
 # PREMIÈRE FOIS :
 #   1. Cloner le dépôt :  git clone https://github.com/nprieto-ext/MyStrow.git MyStrow
@@ -36,7 +36,7 @@ DIST_DIR="$SCRIPT_DIR/dist"
 # Où déposer le DMG. Par défaut le Bureau (lancement à la main).
 # MYSTROW_OUT_DIR impose un autre dossier : indispensable en automatique, car
 # macOS protège Bureau/Documents/Téléchargements et un processus lancé par
-# launchd n'y a AUCUN accès — `rm` y répond « Operation not permitted » et le
+# launchd n'y a AUCUN accès - `rm` y répond « Operation not permitted » et le
 # build s'arrête juste avant la création du DMG, alors que tout le reste a
 # réussi. Le Terminal, lui, a cette autorisation : d'où un build qui marche à la
 # main et échoue tout seul.
@@ -81,7 +81,7 @@ IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
 if [ -n "$IDENTITY" ]; then
   ok "Identité de signature : $IDENTITY"
 else
-  warn "Aucun certificat 'Developer ID Application' trouvé — le DMG ne sera PAS signé."
+  warn "Aucun certificat 'Developer ID Application' trouvé - le DMG ne sera PAS signé."
   warn "L'app affichera l'avertissement Gatekeeper à l'ouverture."
 fi
 
@@ -91,12 +91,12 @@ if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1
   NOTARY_OK=true
   ok "Profil notarisation '$NOTARY_PROFILE' trouvé"
 else
-  warn "Profil notarisation '$NOTARY_PROFILE' introuvable — l'app ne sera pas notarisée."
+  warn "Profil notarisation '$NOTARY_PROFILE' introuvable - l'app ne sera pas notarisée."
   warn "Pour configurer (une seule fois) :"
   warn "  xcrun notarytool store-credentials '$NOTARY_PROFILE' --apple-id TON@APPLE.ID --team-id TEAMID --password APP-PASSWORD"
 fi
 
-# ── 1) Synchronisation Git — GARANTIT la dernière version ─────────────────────
+# ── 1) Synchronisation Git - GARANTIT la dernière version ─────────────────────
 # On force le working tree à correspondre EXACTEMENT à la référence demandée
 # (reset --hard). → impossible de builder une vieille version, et plus besoin de
 #   `git pull` ni de `git checkout MyStrow.spec` avant : toute modif locale
@@ -119,10 +119,10 @@ git fetch origin --tags --force 2>&1 | sed 's/^/    /'
 REMOTE=$(git rev-parse "$BUILD_REF" 2>/dev/null || echo "")
 
 if [ -z "$REMOTE" ]; then
-  warn "Référence $BUILD_REF introuvable — build avec la version locale."
+  warn "Référence $BUILD_REF introuvable - build avec la version locale."
 else
   git reset --hard "$REMOTE" 2>&1 | sed 's/^/    /'
-  ok "Synchronisé sur $BUILD_REF → $(git log -1 --pretty='%h — %s')"
+  ok "Synchronisé sur $BUILD_REF → $(git log -1 --pretty='%h - %s')"
 fi
 
 VERSION=$("$PY" -c "
@@ -175,7 +175,7 @@ fi
 [ -f "$SCRIPT_DIR/mystrow.icns" ] && ok "Icône : mystrow.icns" || warn "Pas d'icône"
 
 # ── 5) PyInstaller ────────────────────────────────────────────────────────────
-step "PyInstaller — génération de l'app"
+step "PyInstaller - génération de l'app"
 cd "$SCRIPT_DIR"
 rm -rf "$DIST_DIR" "$SCRIPT_DIR/build"
 
@@ -221,7 +221,7 @@ APP_PATH="$DIST_DIR/$APP_NAME.app"
 ok "App générée : $APP_PATH  ($(du -sh "$APP_PATH" | cut -f1))"
 
 # Supprimer le binaire brut dist/MyStrow (onefile EXE hors bundle)
-# create-dmg emballe tout dist/ — ce fichier non-signé ferait échouer la notarisation
+# create-dmg emballe tout dist/ - ce fichier non-signé ferait échouer la notarisation
 if [ -f "$DIST_DIR/$APP_NAME" ]; then
   rm -f "$DIST_DIR/$APP_NAME"
   ok "Binaire brut dist/$APP_NAME supprimé (hors bundle)"
@@ -279,7 +279,7 @@ if command -v create-dmg >/dev/null 2>&1; then
     "$DMG_OUT" "$DIST_DIR/"
 else
   # Fallback hdiutil si create-dmg absent
-  warn "create-dmg absent — utilisation de hdiutil (installe avec : brew install create-dmg)"
+  warn "create-dmg absent - utilisation de hdiutil (installe avec : brew install create-dmg)"
   STAGING=$(mktemp -d)
   trap "rm -rf '$STAGING'" EXIT
   cp -r "$APP_PATH" "$STAGING/"
@@ -295,13 +295,13 @@ if [ -n "$IDENTITY" ]; then
   if codesign --sign "$IDENTITY" --timestamp "$DMG_OUT" 2>/dev/null; then
     ok "DMG signé"
   else
-    warn "Signature du DMG ignorée (trousseau verrouillé) — l'app intérieure est signée, la notarisation fonctionnera quand même"
+    warn "Signature du DMG ignorée (trousseau verrouillé) - l'app intérieure est signée, la notarisation fonctionnera quand même"
   fi
 fi
 
 # ── 9) Notarisation ───────────────────────────────────────────────────────────
 if [ "$NOTARY_OK" = true ]; then
-  step "Notarisation (envoi à Apple — peut prendre 1-5 min)"
+  step "Notarisation (envoi à Apple - peut prendre 1-5 min)"
   NOTARY_JSON=$(xcrun notarytool submit "$DMG_OUT" \
     --keychain-profile "$NOTARY_PROFILE" \
     --wait --output-format json)
@@ -326,14 +326,14 @@ UPLOAD_OK=false
 # MYSTROW_NO_UPLOAD=1 : build de TEST (ex. DMG envoyé à un seul client). Sans
 # ça, --clobber remplacerait le DMG Intel public de la release en cours.
 if [ "${MYSTROW_NO_UPLOAD:-0}" = "1" ]; then
-  warn "MYSTROW_NO_UPLOAD=1 — build de test, rien n'est envoyé sur GitHub."
+  warn "MYSTROW_NO_UPLOAD=1 - build de test, rien n'est envoyé sur GitHub."
 elif [ "$VERSION" = "?" ]; then
-  warn "Version inconnue (core.py illisible) — upload ignoré, upload le DMG à la main."
+  warn "Version inconnue (core.py illisible) - upload ignoré, upload le DMG à la main."
 elif ! command -v gh >/dev/null 2>&1; then
-  warn "GitHub CLI 'gh' introuvable — upload ignoré."
+  warn "GitHub CLI 'gh' introuvable - upload ignoré."
   warn "  Installe-le une fois : brew install gh && gh auth login"
 elif ! gh auth status >/dev/null 2>&1; then
-  warn "'gh' non authentifié — upload ignoré. Lance : gh auth login  puis relance."
+  warn "'gh' non authentifié - upload ignoré. Lance : gh auth login  puis relance."
 else
   # La release est créée par le CI au moment de la sortie. Comme on lance ce
   # script APRÈS, elle existe en général déjà ; on laisse quand même quelques
@@ -347,11 +347,11 @@ else
       fi
       break
     fi
-    warn "Release $TAG pas encore publiée — nouvelle tentative dans 20 s ($attempt/6)…"
+    warn "Release $TAG pas encore publiée - nouvelle tentative dans 20 s ($attempt/6)…"
     sleep 20
   done
   [ "$UPLOAD_OK" = true ] || \
-    warn "Upload non effectué (release $TAG absente ?) — vérifie que la version est bien sortie, puis relance ou upload le DMG à la main."
+    warn "Upload non effectué (release $TAG absente ?) - vérifie que la version est bien sortie, puis relance ou upload le DMG à la main."
 fi
 
 # ── 10) Résumé ────────────────────────────────────────────────────────────────
@@ -366,7 +366,7 @@ echo "  Version  : $VERSION  |  Arch : $ARCH"
 [ -n "$IDENTITY" ]    && echo "  Signé    : ✓" || echo "  Signé    : ✗ (certificat manquant)"
 [ "$NOTARY_OK" = true ] && echo "  Notarisé : ✓" || echo "  Notarisé : ✗ (profil '$NOTARY_PROFILE' non configuré)"
 if [ "${MYSTROW_NO_UPLOAD:-0}" = "1" ]; then
-  echo "  Upload   : — (build de test, volontairement non publié)"
+  echo "  Upload   : - (build de test, volontairement non publié)"
 else
   [ "$UPLOAD_OK" = true ] && echo "  Upload   : ✓ release $TAG" || echo "  Upload   : ✗ (à faire à la main)"
 fi

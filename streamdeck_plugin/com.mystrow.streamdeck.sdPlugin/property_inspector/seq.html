@@ -67,14 +67,14 @@ function _loadSequences() {
                     if (s.index === currentRow) opt.selected = true;
                     sel.appendChild(opt);
                 });
-                document.getElementById("status").textContent = "MyStrow connecté — " + seqs.length + " entrée(s)";
+                document.getElementById("status").textContent = "MyStrow connecté - " + seqs.length + " entrée(s)";
                 document.getElementById("status").className = "status ok";
             }
         })
         .catch(function() {
             var sel = document.getElementById("seq_row");
             sel.innerHTML = "<option value='0'>(MyStrow non lancé)</option>";
-            document.getElementById("status").textContent = "MyStrow non détecté — lancez le logiciel puis cliquez Actualiser.";
+            document.getElementById("status").textContent = "MyStrow non détecté - lancez le logiciel puis cliquez Actualiser.";
             document.getElementById("status").className = "status err";
         });
 }

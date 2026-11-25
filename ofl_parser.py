@@ -446,7 +446,7 @@ def _extract_wheel_slots(obj: dict, available: dict) -> dict:
 def _machine_output(raw_modes, modes, available, ftype):
     """Désigne le canal Smoke (et Fan) de chaque mode d'une machine OFL.
 
-    Priorité au canal dont une capacité est `FogOutput` — OFL le dit
+    Priorité au canal dont une capacité est `FogOutput` - OFL le dit
     explicitement, mais souvent APRÈS une plage « NoFunction », que
     `_get_channel_type` (première capacité seule) ne dépasse pas. Sinon,
     lecture des noms de canaux (`core.fix_machine_profile`).
@@ -541,7 +541,7 @@ def parse_ofl_json(
     if "Laser" in (obj.get("categories") or []):
         ftype = "Laser"
     # Machines : OFL les range en « Smoke » / « Hazer ». Sans ça elles
-    # arrivaient en PAR LED, débit en « Mode » — mortes côté sortie DMX.
+    # arrivaient en PAR LED, débit en « Mode » - mortes côté sortie DMX.
     _cats = obj.get("categories") or []
     if "Hazer" in _cats:
         ftype = "Machine a brouillard"

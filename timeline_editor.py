@@ -169,7 +169,7 @@ class LightTimelineEditor(QDialog):
             self.media_name = "Pause"
         elif str(self.media_path or "").startswith("WEB:"):
             # Site internet : pas de son, sa durée est celle posée sur la ligne
-            # (exigée avant d'ouvrir l'éditeur) — traité comme une pause timée.
+            # (exigée avant d'ouvrir l'éditeur) - traité comme une pause timée.
             self.is_tempo = True
             web_secs = main_window.seq.image_durations.get(media_row, 60)
             self.media_duration_override = int(web_secs) * 1000
@@ -240,7 +240,7 @@ class LightTimelineEditor(QDialog):
         self._prev_playback_position = self.playback_position
 
         self._seq_clip_active  = None   # clip de séquence actuellement actif (pour effets)
-        self._eff_clips_active = {}     # {track_name: clip} — clips d'effet actifs par piste
+        self._eff_clips_active = {}     # {track_name: clip} - clips d'effet actifs par piste
         self._eff_speed_active = None   # VIT appliquée au dernier effet monté (garde)
         self._pos_clip_active  = None   # clip de position lyre actuellement actif
 
@@ -249,7 +249,7 @@ class LightTimelineEditor(QDialog):
         # que jouera le show, pas une autre image du même montage.
         self.playback_timer = make_precise_timer()
         self.playback_timer.timeout.connect(self.update_playhead)
-        # Horloge lissée, cf. core.MediaClock — mêmes bonds de position()
+        # Horloge lissée, cf. core.MediaClock - mêmes bonds de position()
         # qu'en restitution, donc mêmes saccades à l'aperçu sans elle.
         self._media_clock = MediaClock()
 
@@ -288,7 +288,7 @@ class LightTimelineEditor(QDialog):
         layout.setSpacing(0)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Préférences d'affichage (menu Affichage) — lues avant la barre de
+        # Préférences d'affichage (menu Affichage) - lues avant la barre de
         # menus, qui coche les entrées à partir d'elles.
         self._pdf_show_action  = None
         self._proj_show_action = None
@@ -572,7 +572,7 @@ class LightTimelineEditor(QDialog):
         # Machines a effet : aucune piste lumiere. Le test portait sur le seul
         # groupe « fumee » ; il porte maintenant sur le TYPE, sinon un
         # lance-flamme range dans le groupe « face » heritait d'une piste de
-        # couleur — et donc d'un fondu enchaine sur la flamme.
+        # couleur - et donc d'un fondu enchaine sur la flamme.
         from core import fixture_is_fx_machine
 
         # Gardés pour les pistes projecteur, créées à la demande bien après
@@ -593,7 +593,7 @@ class LightTimelineEditor(QDialog):
         self.track_map = {}
         self._tracks_layout = tracks_layout
 
-        # ── Piste Effet (tout en haut — priorité absolue sur les groupes) ─
+        # ── Piste Effet (tout en haut - priorité absolue sur les groupes) ─
         eff_track = LightTrack("Effet", self.media_duration, self, "#cc44ff")
         eff_track.is_effect_track = True
         eff_track.set_base_height(50)
@@ -648,7 +648,7 @@ class LightTimelineEditor(QDialog):
         # sauvegarde sérialise les clips piste par piste dans cet ordre, la
         # restitution les rejoue dans cet ordre, et la timeline est un writer
         # ABSOLU (chaque image repart d'une page blanche, cf.
-        # `apply_timeline_to_dmx`) — la dernière piste écrite gagne. Ce qui
+        # `apply_timeline_to_dmx`) - la dernière piste écrite gagne. Ce qui
         # compte, c'est que chaque projecteur passe après SON groupe ; ils ne se
         # marchent jamais dessus d'un groupe à l'autre, `get_track_to_indices`
         # ne faisant jamais viser à un groupe les fixtures d'un autre.
@@ -686,7 +686,7 @@ class LightTimelineEditor(QDialog):
     def _add_track_btn_style(accent):
         """
         Boutons « + Piste » : discrets. Gris neutre au repos, l'accent
-        n'apparaît qu'au survol — beaucoup moins fluo qu'une pastille colorée.
+        n'apparaît qu'au survol - beaucoup moins fluo qu'une pastille colorée.
         """
         return f"""
             QPushButton {{
@@ -1026,7 +1026,7 @@ class LightTimelineEditor(QDialog):
 
         Le ressort final (`addStretch`) n'existe qu'une fois la construction
         terminée : pendant celle-ci on ajoute à la suite, après on insère AVANT
-        lui — sans quoi la piste atterrirait sous l'espace vide.
+        lui - sans quoi la piste atterrirait sous l'espace vide.
         """
         lay = self._tracks_layout
         n = lay.count()
@@ -1040,7 +1040,7 @@ class LightTimelineEditor(QDialog):
 
         La CLÉ (`core.projector_track_key`) est ce qui part dans le .tui : elle
         ne tient qu'au groupe et au rang du projo DANS son groupe, jamais à son
-        nom — renommer « Face 2 » ne doit pas orpheliner les blocs déjà posés.
+        nom - renommer « Face 2 » ne doit pas orpheliner les blocs déjà posés.
         Le LIBELLÉ, lui, suit le nom du patch et n'est qu'affiché.
         """
         entries = []
@@ -1061,8 +1061,8 @@ class LightTimelineEditor(QDialog):
 
         Appelée pour CHAQUE fixture du patch à l'ouverture, et à nouveau depuis
         `load_existing_sequence` / l'undo pour une clé qui ne correspond à aucun
-        projecteur actuel. Ce cas-là — fixture supprimée du patch depuis
-        l'enregistrement — crée quand même la piste, en gris et marquée
+        projecteur actuel. Ce cas-là - fixture supprimée du patch depuis
+        l'enregistrement - crée quand même la piste, en gris et marquée
         « projecteur retiré du patch » : sans ça, ouvrir un vieux REC ferait
         disparaître ses blocs en silence, et ils ne reviendraient jamais.
         """
@@ -1090,7 +1090,7 @@ class LightTimelineEditor(QDialog):
         # `name` reste la clé (c'est elle qui est sérialisée) ; seul l'affichage
         # suit le nom de la fixture.
         new_track.display_label = label
-        new_track.setToolTip(tr("tle_proj_track_orphan") if orphelin else f"{key[1:]} — {label}")
+        new_track.setToolTip(tr("tle_proj_track_orphan") if orphelin else f"{key[1:]} - {label}")
 
         self._layout_append_track(new_track)
         # En FIN de self.tracks : cet ordre EST la règle de priorité (cf.
@@ -1124,7 +1124,7 @@ class LightTimelineEditor(QDialog):
         brouillard…) n'ont plus de piste depuis 3.1.92, alors que des shows
         programmés avant y ont posé leurs blocs. La restitution, elle, les
         rejoue toujours (`get_track_to_indices` connaît le groupe) : le client
-        voyait la fumée partir sur le plan 2D/3D sans AUCUN bloc à l'écran — et
+        voyait la fumée partir sur le plan 2D/3D sans AUCUN bloc à l'écran - et
         la moindre retouche réécrivait la séquence sans eux, les détruisant.
 
         La piste est insérée juste AVANT les pistes projecteur de ce groupe
@@ -1171,7 +1171,7 @@ class LightTimelineEditor(QDialog):
 
     def _ensure_track_for_saved_clip(self, tname):
         """Garantit qu'un bloc relu (ouverture, import .lrec) a une piste où
-        atterrir — jamais de bloc jeté en silence."""
+        atterrir - jamais de bloc jeté en silence."""
         if not tname or tname in self.track_map:
             return
         if tname.startswith('Effet'):
@@ -1209,7 +1209,7 @@ class LightTimelineEditor(QDialog):
     def set_projector_section_open(self, ouvert, save=True):
         """Déplie ou replie d'un coup toutes les pistes « un projecteur seul ».
 
-        Les pistes EXISTENT dans les deux cas — on ne joue que sur leur
+        Les pistes EXISTENT dans les deux cas - on ne joue que sur leur
         visibilité. C'est ce qui permet de replier le paquet sans perdre les
         blocs qu'on y a posés, et de rouvrir un show sur un poste où le paquet
         était replié sans que sa lumière change d'un iota.
@@ -1332,7 +1332,7 @@ class LightTimelineEditor(QDialog):
         lay.addWidget(remaining)
 
         # Info : le résultat est mis en cache → la prochaine ouverture sera instantanée.
-        # (Cette branche ne s'exécute qu'au 1er passage — cache miss — donc toujours vrai ici.)
+        # (Cette branche ne s'exécute qu'au 1er passage - cache miss - donc toujours vrai ici.)
         next_hint = QLabel(tr("te_next_instant"))
         next_hint.setAlignment(Qt.AlignCenter)
         next_hint.setWordWrap(True)
@@ -1729,13 +1729,13 @@ class LightTimelineEditor(QDialog):
         self.cut_btn.setStyleSheet(btn_style + _checked_accent)
         header_layout.addWidget(self.cut_btn)
 
-        self.paint_btn = QPushButton(header)  # parent obligatoire — sans parent = fenetre fantome top-level
+        self.paint_btn = QPushButton(header)  # parent obligatoire - sans parent = fenetre fantome top-level
         self.paint_btn.setCheckable(True)
         self.paint_btn.setVisible(False)
         self.paint_btn.clicked.connect(self.toggle_paint_mode)
         self.paint_btn.setToolTip(tr("te2_paint"))
 
-        # Info-bulle « <nom> bloqué » — visible seulement en mode peinture.
+        # Info-bulle « <nom> bloqué » - visible seulement en mode peinture.
         self._paint_hint = QLabel("")
         self._paint_hint.setStyleSheet(
             "color:#00d4ff; font-size:11px; font-weight:600; padding:3px 12px;"
@@ -1824,7 +1824,7 @@ class LightTimelineEditor(QDialog):
         self._rec_btn.setCursor(Qt.PointingHandCursor)
         self._rec_btn.setFocusPolicy(Qt.NoFocus)
         # Style discret : base neutre (comme CLEAR) avec un rouge atténué qui ne
-        # ressort qu'au survol — le bouton reste identifiable sans être criard.
+        # ressort qu'au survol - le bouton reste identifiable sans être criard.
         self._rec_btn.setStyleSheet(
             "QPushButton { background:#1e1e1e; color:#b85a5a; border:1px solid #3a3a3a;"
             " border-radius:6px; font-size:12px; font-weight:bold; padding:0 12px; }"
@@ -2046,7 +2046,7 @@ class LightTimelineEditor(QDialog):
         if not self.media_path or not os.path.exists(self.media_path):
             return 180000
 
-        # Cache en session (path + mtime) — evite de re-sonder le media a chaque
+        # Cache en session (path + mtime) - evite de re-sonder le media a chaque
         # ouverture de l'editeur (le sondage video peut bloquer plusieurs secondes).
         cache = getattr(self.main_window, '_media_duration_cache', None)
         if cache is None:
@@ -2075,7 +2075,7 @@ class LightTimelineEditor(QDialog):
         # 1+2. Decodeurs audio (miniaudio/mutagen): inutiles et parfois trompeurs
         #      sur un conteneur video (MKV/AVI/MOV) -> on les saute pour la video.
         if not is_video:
-            # 1. miniaudio (MP3, WAV, FLAC, OGG) — pas d'event loop, pas de fenetre WMF
+            # 1. miniaudio (MP3, WAV, FLAC, OGG) - pas d'event loop, pas de fenetre WMF
             try:
                 import miniaudio
                 info = miniaudio.get_file_info(self.media_path)
@@ -2093,7 +2093,7 @@ class LightTimelineEditor(QDialog):
             except Exception:
                 pass
 
-        # 3. ffprobe (video ou echec mutagen) — subprocess sans fenetre
+        # 3. ffprobe (video ou echec mutagen) - subprocess sans fenetre
         try:
             _kwargs = {}
             if _sys.platform == "win32":
@@ -2168,7 +2168,7 @@ class LightTimelineEditor(QDialog):
             self.preview_video_widget = QVideoWidget()
             self.preview_video_widget.setStyleSheet("background: #000;")
             self._video_preview_container.layout().addWidget(self.preview_video_widget)
-            # Vidéo désactivée par défaut — activer via le bouton 🎬 dans le header
+            # Vidéo désactivée par défaut - activer via le bouton 🎬 dans le header
             self._video_preview_container.hide()
             # Ne PAS connecter setVideoOutput tant que la preview est cachée
         # Le bouton 🎬 n'est disponible QUE pour un média vidéo : sur un fichier
@@ -2640,7 +2640,7 @@ class LightTimelineEditor(QDialog):
         track_to_indices = self.main_window.get_track_to_indices()
         projectors = self.main_window.projectors
 
-        # Éteindre tous les projecteurs — page blanche avant de réappliquer les
+        # Éteindre tous les projecteurs - page blanche avant de réappliquer les
         # clips actifs. MÊME fonction que la restitution (`sequencer.py`,
         # `apply_timeline_to_dmx`) : la liste était recopiée à la main des deux
         # côtés et oubliait tout le faisceau (gobo, zoom, focus, prisme, shutter,
@@ -2706,7 +2706,7 @@ class LightTimelineEditor(QDialog):
 
         # VIT du premier clip d'effet actif (cf. plus bas) : elle entre dans la
         # garde, sinon regler la vitesse pendant que l'apercu tourne ne change
-        # rien — le dict de clips, lui, n'a pas bouge. La restitution fait pareil
+        # rien - le dict de clips, lui, n'a pas bouge. La restitution fait pareil
         # (`same_speed` dans `sequencer._handle_timeline_effect`).
         _first_eff_clip = next(iter(new_eff_clips.values()), None)
         _speed_override = getattr(_first_eff_clip, 'effect_speed', 50)
@@ -2733,6 +2733,9 @@ class LightTimelineEditor(QDialog):
                 merged_target_groups = []
                 _has_all_groups = False
                 merged_no_color = False
+                # Couleur / gobo enregistrés avec un mouvement de pad (`start_look`) :
+                # posés au lancement, comme sur le pad (artifice81, 20/11/2026).
+                merged_look = {}
                 # Catalogue chargé une seule fois (ce bloc ne s'exécute qu'au
                 # changement de clips d'effet, pas à chaque frame).
                 try:
@@ -2754,6 +2757,8 @@ class LightTimelineEditor(QDialog):
                             eff_type   = _cat_def.get('type', '')
                         if _cat_def.get('no_color'):
                             merged_no_color = True
+                        if _cat_def.get('start_look'):
+                            merged_look.update(_cat_def['start_look'])
                     # Cloisonner les couches par groupe du clip (parité restitution) :
                     # évite qu'une couche couleur "Tous" d'un effet A/B déborde sur
                     # la lyre (D) quand 2 effets fusionnent (superposition).
@@ -2797,6 +2802,8 @@ class LightTimelineEditor(QDialog):
                     'speed_override': _speed_override,
                     'no_color': merged_no_color,
                 }
+                if merged_look:
+                    cfg['start_look'] = merged_look   # posé par start_effect
                 self.main_window.active_effect        = combined_name
                 self.main_window.active_effect_config = cfg
                 if hasattr(self.main_window, 'start_effect') and merged_layers:
@@ -2827,8 +2834,8 @@ class LightTimelineEditor(QDialog):
                     break
         # Publier le centre imposé par le clip Position pour le moteur d'effets.
         # Sans ça, une couche Pan/Tilt sans colonne POSITION se recentre sur
-        # l'état capturé au DÉMARRAGE de l'effet — périmé dès que la position
-        # change — voire sur le milieu de course : les lyres dérivaient de la
+        # l'état capturé au DÉMARRAGE de l'effet - périmé dès que la position
+        # change - voire sur le milieu de course : les lyres dérivaient de la
         # position choisie dès qu'un effet tournait. Recalculé à chaque image.
         self.main_window._timeline_pos_centers = self._position_centers(new_pos_clip)
 
@@ -2842,7 +2849,7 @@ class LightTimelineEditor(QDialog):
                 # Même appariement que le centre d'effet et que le rappel manuel
                 # (`position_preset_values`) : l'appariement par rang qui était
                 # codé ici donnait une visée différente sur la 2e lyre.
-                # Minutage du preset (trajet, décalage, ordre — clic droit du
+                # Minutage du preset (trajet, décalage, ordre - clic droit du
                 # pad POS) : MÊME calcul que le show (`sequencer`, cas 1) et
                 # même repli à 1,5 s quand rien n'est réglé. L'aperçu prenait
                 # 0,5 s quand le show prenait 1,5 s.
@@ -2868,7 +2875,7 @@ class LightTimelineEditor(QDialog):
         # balayage et aléatoire ne bougeaient qu'en restitution
         # (`sequencer.apply_timeline_to_dmx`, cas 2). Un bloc de mouvement
         # paraissait donc immobile en montage puis balayait en show. Même
-        # fonction de calcul des deux côtés — cf. light_timeline.movement_pan_tilt.
+        # fonction de calcul des deux côtés - cf. light_timeline.movement_pan_tilt.
         if (new_pos_clip is not None
                 and getattr(new_pos_clip, 'position_preset_idx', None) is None):
             from light_timeline import movement_pan_tilt, clip_has_movement
@@ -2916,7 +2923,7 @@ class LightTimelineEditor(QDialog):
         # règle (`sequencer.py`, tri par `is_projector_track` à la préparation de
         # la timeline) ; l'aperçu, lui, itérait `self.tracks` dans l'ordre
         # d'affichage. Les deux coïncidaient tant que les pistes projecteur
-        # étaient créées en dernier — et divergeaient dès qu'une piste de groupe
+        # étaient créées en dernier - et divergeaient dès qu'une piste de groupe
         # était ajoutée après elles : le projecteur seul se faisait alors écraser
         # par son groupe au montage, mais pas en lecture.
         for track in sorted(self.tracks,
@@ -3085,8 +3092,8 @@ class LightTimelineEditor(QDialog):
                 self.total_time_str = f"{dur_s // 60}:{dur_s % 60:02d}"
 
             # Créer les pistes Effet supplémentaires présentes dans la sauvegarde
-            # (pistes Effet/Séquence en plus, pistes projecteur — même quand la
-            # fixture a disparu du patch —, et pistes de groupe que le patch ne
+            # (pistes Effet/Séquence en plus, pistes projecteur - même quand la
+            # fixture a disparu du patch -, et pistes de groupe que le patch ne
             # génère plus, ex. groupe ne contenant que des machines à fumée :
             # sans ça leurs blocs seraient jetés en silence.)
             for clip_data in clips_data:
@@ -3123,7 +3130,7 @@ class LightTimelineEditor(QDialog):
 
     @staticmethod
     def _clip_to_dict(clip, track) -> dict:
-        """Sérialise UN clip en dict JSON — source unique pour la sauvegarde .tui,
+        """Sérialise UN clip en dict JSON - source unique pour la sauvegarde .tui,
         l'autosave .lrec ET l'export manuel .lrec.
 
         Avant, l'export manuel avait sa propre version appauvrie (sans memory_ref /
@@ -3143,7 +3150,7 @@ class LightTimelineEditor(QDialog):
             'effect': getattr(clip, 'effect', None),
             'effect_speed': getattr(clip, 'effect_speed', 50),
             # Copies détachées : le dict sert aussi d'historique undo et de
-            # presse-papier — partager la liste vivante ferait muter le passé
+            # presse-papier - partager la liste vivante ferait muter le passé
             # (et les clips collés) à chaque édition des couches.
             'effect_layers': copy.deepcopy(getattr(clip, 'effect_layers', [])),
             'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
@@ -3187,7 +3194,7 @@ class LightTimelineEditor(QDialog):
 
     @staticmethod
     def _apply_clip_dict(clip, d: dict) -> None:
-        """Recopie sur `clip` tout ce que `_clip_to_dict` a écrit — LECTEUR unique.
+        """Recopie sur `clip` tout ce que `_clip_to_dict` a écrit - LECTEUR unique.
 
         Symétrique du writer. Les chemins qui reconstruisent un clip (chargement
         .tui, import .lrec, undo/redo, copier-coller) avaient chacun leur copie
@@ -3206,7 +3213,7 @@ class LightTimelineEditor(QDialog):
         clip.effect            = d.get('effect')
         clip.effect_speed      = d.get('effect_speed', 50)
         # Copie profonde : sans elle, deux clips issus du même dict partagent la
-        # MÊME liste de couches — éditer l'un modifiait l'autre.
+        # MÊME liste de couches - éditer l'un modifiait l'autre.
         clip.effect_layers     = copy.deepcopy(d.get('effect_layers', []))
         clip.effect_play_mode  = d.get('effect_play_mode', 'loop')
         clip.effect_duration   = d.get('effect_duration', 0)
@@ -3267,7 +3274,7 @@ class LightTimelineEditor(QDialog):
             if combo.findText("Play Lumiere") == -1:
                 # CODE et non libellé traduit : le combo est un index de modes,
                 # le texte affiché vient du bouton. Avec tr(...) ici, le
-                # setCurrentText qui suit ne trouvait rien hors français — la
+                # setCurrentText qui suit ne trouvait rien hors français - la
                 # ligne restait sur « Manuel » et la séquence qu'on venait
                 # d'enregistrer ne jouait jamais.
                 combo.addItem("Play Lumiere")
@@ -3538,7 +3545,7 @@ class LightTimelineEditor(QDialog):
             f'M19 3l-6 6 2 2 7-7V3z"/>'
         )
 
-    # Loupe Material (base commune) — seul le dernier sous-tracé (+ ou −) diffère
+    # Loupe Material (base commune) - seul le dernier sous-tracé (+ ou −) diffère
     _ZOOM_BASE = ('M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3'
                   'S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99'
                   'L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5'
@@ -3649,13 +3656,13 @@ class LightTimelineEditor(QDialog):
         print(f"↔️ Décalage {_scope} de {delta_ms} ms ({len(target_clips)} clips)")
 
     def _ai_generable_tracks(self):
-        """Pistes que la génération IA peut remplir — elle n'écrit QUE des blocs
+        """Pistes que la génération IA peut remplir - elle n'écrit QUE des blocs
         de couleur, donc uniquement les pistes de groupe non verrouillées.
 
         Séquence / Position / Gobo / Effet portent des blocs d'une autre nature
         (mémoire, preset de position, gobo, effet) : un bloc de couleur posé là
         ne déclenche rien. La piste Effet était la seule à manquer à cette
-        liste — ses blocs générés s'affichaient « ✨ Effet », sans `effect_name`
+        liste - ses blocs générés s'affichaient « ✨ Effet », sans `effect_name`
         ni couches, alors que l'aperçu comme la restitution exigent un nom
         résolu dans le catalogue pour armer quoi que ce soit. Et comme la case
         était cochée d'office, générer commençait par EFFACER les vrais effets
@@ -3663,7 +3670,7 @@ class LightTimelineEditor(QDialog):
 
         Les pistes projecteur sont exclues pour une autre raison : la génération
         écrit un show par GROUPES, et un rig de 40 fixtures remplirait la boîte
-        de 40 cases inutiles. Elles priment de toute façon sur leur groupe — les
+        de 40 cases inutiles. Elles priment de toute façon sur leur groupe - les
         remplir d'office masquerait le show généré.
         """
         return [t for t in self.tracks
@@ -3702,7 +3709,7 @@ class LightTimelineEditor(QDialog):
                     colour = True
                 if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser'):
                     moving = True
-            fixtures = ", ".join(f"{n} × {k}" for k, n in counts.items()) or "—"
+            fixtures = ", ".join(f"{n} × {k}" for k, n in counts.items()) or "-"
             groups.append({
                 'key': t.name,
                 'label': t.display_name() if hasattr(t, 'display_name') else t.name,
@@ -4087,7 +4094,7 @@ class LightTimelineEditor(QDialog):
     def _handle_wheel(self, event):
         """Scroll adapté trackpad ET souris :
         - Shift            → zoom
-        - Ctrl             → scroll horizontal (temps) — secours molette souris
+        - Ctrl             → scroll horizontal (temps) - secours molette souris
         - geste vertical   → scroll vertical (pistes)   [angleDelta().y()]
         - geste horizontal → scroll horizontal (temps)  [angleDelta().x()]
         """
@@ -4203,7 +4210,7 @@ class LightTimelineEditor(QDialog):
 
         Ce sont des réglages de confort qu'on choisit une fois : les redemander
         à chaque ouverture du REC Lumière n'aurait aucun sens. Un échec d'écriture
-        ne doit surtout pas empêcher de travailler — on logge et on continue.
+        ne doit surtout pas empêcher de travailler - on logge et on continue.
         """
         mw = self.main_window
         mw.rec_view_pdf = bool(self._view_pdf_visible)
@@ -4232,7 +4239,7 @@ class LightTimelineEditor(QDialog):
         """Montre/masque le bandeau du haut selon ce qu'il lui reste à afficher.
 
         Il porte DEUX choses : le plan de feu 2D et l'aperçu vidéo. Masquer le
-        plan ne doit donc pas emporter la vidéo — on n'escamote la bande (au
+        plan ne doit donc pas emporter la vidéo - on n'escamote la bande (au
         profit de la timeline) que lorsqu'elle serait vide.
         """
         band = getattr(self, '_top_splitter', None)
@@ -4290,7 +4297,7 @@ class LightTimelineEditor(QDialog):
 
         Purement visuel : les blocs restent en place, partent dans la
         sauvegarde et sortent en show exactement pareil. C'est du rangement
-        d'écran, pas un mute — masquer une piste ne change aucune lumière.
+        d'écran, pas un mute - masquer une piste ne change aucune lumière.
         """
         track.row_hidden = not bool(visible)
         self._sync_track_visibility(track)
@@ -4366,14 +4373,14 @@ class LightTimelineEditor(QDialog):
 
         Le verrou est posé sur la PISTE (`LightTrack.set_locked`), qui garde
         déjà la souris et les dépôts. Mais l'éditeur écrit aussi par-dessus sa
-        tête — coller, supprimer la sélection, dupliquer une piste, générer un
+        tête - coller, supprimer la sélection, dupliquer une piste, générer un
         show, poser un bloc à la touche couleur. Chacun de ces chemins passe
         par ici, sinon le cadenas ne protégerait que la moitié des gestes.
         """
         return not getattr(track, 'locked', False)
 
     def _piste_couleur_survolee(self):
-        """(piste de groupe sous la souris, x local) — ou (None, 0).
+        """(piste de groupe sous la souris, x local) - ou (None, 0).
 
         « Piste de groupe » = une piste A-G, à l'exclusion d'Audio et des pistes
         spécialisées (Effet, Séquence, Position, Gobo) : y déposer un bloc de
@@ -4397,11 +4404,11 @@ class LightTimelineEditor(QDialog):
         return None, 0
 
     def _fin_de_suite(self, piste, debut):
-        """Fin de la file de blocs collés qu'on survole — None si on survole du vide.
+        """Fin de la file de blocs collés qu'on survole - None si on survole du vide.
 
         C'est ce qui permet d'enchaîner R, B, V sans lâcher la souris : après le
         premier bloc, le curseur est DANS ce bloc, et la touche suivante pose son
-        bloc AU BOUT de lui. Aucun état retenu entre deux touches — un undo, un
+        bloc AU BOUT de lui. Aucun état retenu entre deux touches - un undo, un
         déplacement de bloc ou une piste reconstruite n'ont donc rien à invalider,
         et pointer un bloc déjà là marche pareil.
 
@@ -4434,7 +4441,7 @@ class LightTimelineEditor(QDialog):
         Le mapping vient de `MainWindow.COLOR_SHORTCUTS` : c'est le même que
         dans la fenêtre principale, et le dupliquer ici les ferait diverger.
         La durée vient du champ « taille des blocs » de l'en-tête, via
-        `_default_block_dur_ms()` — le même que tous les autres chemins de dépôt.
+        `_default_block_dur_ms()` - le même que tous les autres chemins de dépôt.
 
         Les touches s'enchaînent : en survolant un bloc, la couleur se pose au
         bout de lui plutôt que de ne rien faire. C'est le geste « R puis B puis
@@ -4472,7 +4479,7 @@ class LightTimelineEditor(QDialog):
     def keyPressEvent(self, event):
         """Raccourcis clavier"""
         # Raccourcis couleur : uniquement en survolant une piste de groupe, et
-        # sans modificateur — Ctrl+C reste « copier », Ctrl+V « coller ».
+        # sans modificateur - Ctrl+C reste « copier », Ctrl+V « coller ».
         if not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier
                                      | Qt.ShiftModifier)):
             if self._poser_bloc_couleur(event.key()):
@@ -4665,7 +4672,7 @@ class LightTimelineEditor(QDialog):
             _tname = clip_data.get('track')
             # Annuler la suppression d'une piste projecteur doit la RECRÉER :
             # sans ça l'undo restaurait un état dont la piste manque et les blocs
-            # étaient jetés en silence — l'action apparaissait comme non annulable.
+            # étaient jetés en silence - l'action apparaissait comme non annulable.
             if is_projector_track(_tname) and _tname not in self.track_map:
                 self._add_projector_track_named(_tname)
             track = self.track_map.get(_tname)
@@ -5113,7 +5120,7 @@ class LightTimelineEditor(QDialog):
             with open(lrec_path, 'w', encoding='utf-8') as f:
                 _json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception:
-            pass  # silencieux — ne pas bloquer la sauvegarde principale
+            pass  # silencieux - ne pas bloquer la sauvegarde principale
 
     def _is_dirty(self):
         """Retourne True si des modifications n'ont pas été sauvegardées."""
@@ -5145,7 +5152,7 @@ class LightTimelineEditor(QDialog):
             seq.is_dirty = False
 
     def close_editor(self):
-        """Ferme l'éditeur — alerte si modifications non sauvegardées."""
+        """Ferme l'éditeur - alerte si modifications non sauvegardées."""
         if self._is_dirty():
             # Compter les clips pour donner du contexte
             total_clips = sum(len(t.clips) for t in self.tracks)

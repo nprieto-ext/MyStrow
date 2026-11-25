@@ -28,7 +28,7 @@ class Projector:
         # seulement par `load_dmx_patch_config` : au tout premier lancement il
         # n'y a aucun `.maestro_dmx_patch.json`, les fixtures par defaut
         # arrivaient donc sans l'attribut et le premier `paintEvent` du plan de
-        # feu levait un AttributeError a chaque rafraichissement — jusqu'au
+        # feu levait un AttributeError a chaque rafraichissement - jusqu'au
         # segfault, le QPainter du paint interrompu restant actif.
         self.canvas_x = None
         self.canvas_y = None
@@ -40,7 +40,7 @@ class Projector:
         self.shutter = 255            # Shutter/Iris (0-255)
         self.shutter_inverted = False  # True si convention inversée (0=ouvert, 255=fermé)
         # Plage DMX BRUTE du strobe quand c'est le canal `Shutter` qui le porte
-        # — cas de la quasi-totalite des lyres, qui n'ont pas de canal `Strobe`
+        # - cas de la quasi-totalite des lyres, qui n'ont pas de canal `Strobe`
         # separe. Convention la plus repandue : 0-31 ferme, 32-63 ouvert,
         # 64-95 strobe lent->rapide, au-dela pulse/macros. Reglable par fixture
         # (clic droit sur la pastille Shutter du patch) : la bande varie d'un
@@ -52,7 +52,7 @@ class Projector:
         self.prism = 0                # Prism (0=off, >0=actif)
         self.gobo_rotation = 0        # Rotation gobo (0-255)
         self.prism_rotation = 0       # Rotation prisme (0-255)
-        self.effects          = 0   # Effects/Macro channel (0-255) — programme interne fixture
+        self.effects          = 0   # Effects/Macro channel (0-255) - programme interne fixture
         # Canaux longtemps declares mais jamais pilotes : ils sortaient 0 en dur
         # et n'etaient atteignables qu'au curseur brut. Ils ont desormais un etat
         # propre, donc sauvegarde dans le show et rejouable dans un cue.
@@ -69,7 +69,7 @@ class Projector:
         self.channel_ranges   = {}
         # Contrôle brut prioritaire, à DEUX formes de clé :
         #   - str non numérique : un TYPE de canal ("Mode", "Reset"…). Tous les
-        #     canaux de ce type reçoivent la valeur — c'est la forme historique.
+        #     canaux de ce type reçoivent la valeur - c'est la forme historique.
         #   - int (ou son écriture décimale, après un aller-retour JSON) : le
         #     NUMÉRO du canal dans la fixture, 1 = son premier canal. Une seule
         #     sortie visée, donc des canaux réglables indépendamment même quand
@@ -79,16 +79,16 @@ class Projector:
         # Nom lisible de chaque canal, aligné sur `dmx_profile`. Vient du
         # fichier constructeur à l'import (« LaserGroupSelect », « Rotation Z »)
         # et se règle à la main dans l'éditeur de fixtures. C'est souvent la
-        # SEULE chose qui distingue deux canaux ramenés au même type — et sur un
+        # SEULE chose qui distingue deux canaux ramenés au même type - et sur un
         # laser, la seule information tout court, la moitié des canaux n'ayant
         # aucun type connu. Purement informatif : n'entre jamais dans le calcul
         # de la trame DMX.
         # Sortie des couches d'effet « Canal » : {n° de canal (1 = premier):
-        # 0-255}. Transitoire, jamais sauvegardée — vidée à chaque frame
+        # 0-255}. Transitoire, jamais sauvegardée - vidée à chaque frame
         # d'effet et à l'arrêt. Lue par artnet_dmx AVANT channel_extras.
         self.effect_channels  = {}
         self.channel_labels   = []    # [str] parallèle à dmx_profile
-        # Canaux spéciaux — contrôle manuel indépendant
+        # Canaux spéciaux - contrôle manuel indépendant
         self.uv           = 0   # UV (0-255, direct)
         self.white_boost  = 0   # Blanc extra au-dessus du RGB-dérivé (0-255)
         self.amber_boost  = 0   # Ambre extra (0-255)
@@ -133,7 +133,7 @@ class Projector:
         self.pan_front  = 32768
         self.tilt_range = core.TILT_RANGE_DEFAULT
         # ── Couronne LED (« ring ») ──────────────────────────────────────────
-        # True : la couronne suit le show — même couleur, même niveau et même
+        # True : la couronne suit le show - même couleur, même niveau et même
         # strobe que le faisceau (voir `artnet_dmx`, bloc « Couronne »). C'est
         # la deuxième source de l'appareil, et la laisser noire pendant que la
         # tête joue n'a de sens pour personne.
@@ -167,7 +167,7 @@ class Projector:
         # Taille du CORPS de l'appareil dans le plan 3D, en % (100 = modèle
         # d'origine). Les modèles 3D sont dessinés à une taille moyenne : sur
         # une scène étroite ils paraissent énormes, sur un grand plateau
-        # minuscules. Purement visuel — la position d'accroche, elle, ne bouge
+        # minuscules. Purement visuel - la position d'accroche, elle, ne bouge
         # pas : seule la lentille suit le corps, et le faisceau part d'elle.
         self.fixture_scale = 100.0
         self._dmx_profile = []
@@ -211,7 +211,7 @@ class Projector:
 
     # Canaux qu'un choix de couleur pilote. Le blanc en fait partie : sur une
     # fixture a LED blanche, le moteur le FABRIQUE en extrayant min(R,G,B) de
-    # la couleur — il n'est pas un canal a part.
+    # la couleur - il n'est pas un canal a part.
     COLOR_CHANNEL_TYPES = ("R", "G", "B", "W")
 
     def forced_channel_value(self, ctype):
@@ -235,13 +235,13 @@ class Projector:
     def display_color_override(self):
         """Couleur a AFFICHER quand les canaux couleur sont repris a la main.
 
-        La 2D et la 3D dessinent depuis `color`/`level` — c'est le modele, et
+        La 2D et la 3D dessinent depuis `color`/`level` - c'est le modele, et
         un canal repris ne passe justement plus par lui : la fixture sortait du
         rouge en restant noire a l'ecran. On recompose donc ici ce que la rampe
         emet vraiment : les canaux repris pour ceux qui le sont, la couleur du
         modele pour les autres, plus la LED blanche qui delave le tout.
 
-        Renvoie None si aucun canal couleur n'est repris — l'affichage suit
+        Renvoie None si aucun canal couleur n'est repris - l'affichage suit
         alors le modele, comme avant.
         """
         forces = {t: self.forced_channel_value(t) for t in self.COLOR_CHANNEL_TYPES}
@@ -262,7 +262,7 @@ class Projector:
         `channel_extras` sur les fixtures a LED blanche : le moteur y recompose
         ces canaux (extraction du blanc) et aucune couleur de base ne peut les
         demander un par un. Or `channel_extras` gagne TOUJOURS contre le
-        modele — sans cette purge, choisir une couleur ensuite n'aurait plus
+        modele - sans cette purge, choisir une couleur ensuite n'aurait plus
         aucun effet sur ces canaux et la fixture resterait sur la teinte reglee
         au curseur, sans que rien ne le dise.
 

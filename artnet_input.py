@@ -1,5 +1,5 @@
 """
-artnet_input.py — Reception de DMX ENTRANT (ArtDmx) venant d'un pupitre.
+artnet_input.py - Reception de DMX ENTRANT (ArtDmx) venant d'un pupitre.
 
 Symetrique de artnet_dmx.py, qui ENVOIE. Ici on ECOUTE : un pupitre lumiere
 branche sur un port du Node configure en entree (DMX -> Art-Net) diffuse ses
@@ -22,7 +22,7 @@ TROIS PIEGES QUI ONT DICTE LE CODE
    bind le temps d'une detection, et QLC+/Chataigne peuvent tourner a cote.
    Sans SO_REUSEADDR (+ SO_REUSEPORT sur macOS/BSD), l'un des deux meurt en
    silence. On ne retombe PAS sur un port ephemere ici : contrairement au scan,
-   une entree DMX sur un port au hasard ne recevrait jamais rien — mieux vaut
+   une entree DMX sur un port au hasard ne recevrait jamais rien - mieux vaut
    remonter l'erreur a l'utilisateur.
 
 3. **Les paquets arrivent dans le desordre.** L'UDP ne garantit rien, et un
@@ -36,7 +36,7 @@ import threading
 import time
 
 ART_HEADER = b"Art-Net\x00"
-OP_OUTPUT_DMX = 0x5000        # ArtDmx — les donnees DMX elles-memes
+OP_OUTPUT_DMX = 0x5000        # ArtDmx - les donnees DMX elles-memes
 DEFAULT_PORT = 6454
 DMX_SLOTS = 512
 
@@ -180,7 +180,7 @@ class ArtNetReceiver:
         Retourne l'univers accepte, ou None si la trame a ete ecartee.
         """
         if sender and sender in self.ignore_ips:
-            return None            # notre propre sortie — cf. piege n°1
+            return None            # notre propre sortie - cf. piege n°1
         parsed = parse_artdmx(data)
         if parsed is None:
             return None
@@ -189,7 +189,7 @@ class ArtNetReceiver:
 
         with self._lock:
             if not sequence_is_newer(seq, self._seq.get(universe, 0)):
-                return None        # trame en retard — cf. piege n°3
+                return None        # trame en retard - cf. piege n°3
             self._seq[universe] = seq
             # Un pupitre peut n'emettre que les N premiers canaux : on complete
             # a 512 pour que l'appelant indexe sans se poser de question.
@@ -218,7 +218,7 @@ class ArtNetReceiver:
             return self._counters.get(universe, 0), frame
 
     def universes_seen(self):
-        """Univers reellement recus — sert a dire « vous ecoutez le 0, votre
+        """Univers reellement recus - sert a dire « vous ecoutez le 0, votre
         pupitre emet sur le 1 », qui est LA erreur de reglage la plus courante."""
         with self._lock:
             return sorted(self._frames.keys())

@@ -5,7 +5,7 @@ service cloud.firestore {
     // Changements d'ordinateur limites : 4 ajouts de machine par fenetre de
     // 30 jours (firebase_client.MACHINE_ADDS_MAX). Sans ca, un compte faisait
     // tourner ses 2 places a l'infini : PC coupe d'Internet, retire depuis le
-    // site, place reprise par un autre — le PC retire tourne encore pendant la
+    // site, place reprise par un autre - le PC retire tourne encore pendant la
     // tolerance hors-ligne. Un RETRAIT seul reste libre ; toute ecriture qui
     // ajoute ou remplace une machine doit incrementer le compteur.
     function machineAddsOk() {
@@ -36,12 +36,12 @@ service cloud.firestore {
       // ⚠️ CE CHEMIN EST UTILISE PAR LES UTILISATEURS FINAUX :
       // license_manager.register_account() appelle create_license_doc() juste
       // apres sign_up(). Un commentaire precedent affirmait le contraire
-      // (« essai 100 % local, seul activate_dev.py passe par la ») — c'est faux,
+      // (« essai 100 % local, seul activate_dev.py passe par la ») - c'est faux,
       // et c'est ce qui avait dispense de tester la regle : toute creation de
       // compte depuis l'application traverse ces lignes.
       //
       // L'ancienne regle ne couvrait la creation que par `allow write`, dont
-      // les conditions lisent `resource.data` — or `resource` est null a la
+      // les conditions lisent `resource.data` - or `resource` est null a la
       // creation : la condition tombait en erreur, donc refus.
       //
       // Valeurs bornees : sans ca, autoriser la creation reviendrait a laisser
@@ -51,7 +51,7 @@ service cloud.firestore {
       // sur un timestamp, `seconds` n'est pas l'epoch mais un accesseur de champ
       // inexistant. L'evaluation levait « Type error. Received: [timestamp]
       // Expected: [map,path] », donc la condition entiere tombait en erreur et
-      // la creation etait TOUJOURS refusee — inscriptions cassees du 03/08 au
+      // la creation etait TOUJOURS refusee - inscriptions cassees du 03/08 au
       // 04/08/2026. Le deploiement, lui, passe sans broncher : l'erreur est
       // levee a l'execution, pas a la compilation des regles.
       allow create: if request.auth != null
@@ -98,7 +98,7 @@ service cloud.firestore {
       // ET le code appelant (fetch_all_gdtf_fixtures part sans jeton des que le
       // rafraichissement echoue). Consequence en clientele : un utilisateur
       // derriere un antivirus a scan HTTPS n'obtenait plus de jeton, la requete
-      // partait anonyme, Firestore repondait 403 — et l'application affichait
+      // partait anonyme, Firestore repondait 403 - et l'application affichait
       // « Erreur Firestore », sans aucun rapport apparent avec la vraie cause
       // (remontee du 12/08/2026).
       allow read: if true;
@@ -108,7 +108,7 @@ service cloud.firestore {
     }
 
     match /gdtf_library/{doc} {
-      // Meta de la bibliotheque (version, lastSync) — lecture authentifiee
+      // Meta de la bibliotheque (version, lastSync) - lecture authentifiee
       allow read: if request.auth != null;
       allow write: if request.auth != null
                    && request.auth.token.email == "nicop421@gmail.com";
@@ -116,7 +116,7 @@ service cloud.firestore {
 
     // ⚠️ Les deux blocs ci-dessous existaient en PRODUCTION mais PAS dans ce
     // fichier : deployer l'ancienne version du depot les aurait supprimes, et
-    // fixture_packs serait retombe en refus par defaut — packs de fixtures
+    // fixture_packs serait retombe en refus par defaut - packs de fixtures
     // casses pour tous les utilisateurs. Recopies ici a l'identique.
     match /downloads/{docId} {
       allow read: if request.auth != null
@@ -124,7 +124,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Packs de fixtures — lecture publique, ecriture admin uniquement
+    // Packs de fixtures - lecture publique, ecriture admin uniquement
     match /fixture_packs/{packId} {
       allow read: if true;
       allow write: if request.auth != null
@@ -161,7 +161,7 @@ service cloud.firestore {
     // File de moderation, alimentee UNIQUEMENT par la Cloud Function
     // controller_submit (SDK Admin, non soumis a ces regles) : c'est le seul
     // endroit ou la structure du profil et le quota journalier sont verifies.
-    // Meme raisonnement que fixture_submissions — laisser le client ecrire ici
+    // Meme raisonnement que fixture_submissions - laisser le client ecrire ici
     // contournerait les deux garde-fous d'un coup.
     //
     // Lecture admin seule : la file porte l'email du contributeur. L'admin

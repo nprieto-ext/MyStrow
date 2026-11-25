@@ -1,5 +1,5 @@
 """
-Génère fixtures_bundle.json.gz — bundle compressé de TOUTES les fixtures OFL.
+Génère fixtures_bundle.json.gz - bundle compressé de TOUTES les fixtures OFL.
 Usage : python generate_bundle.py
 Produit : fixtures_bundle.json.gz (à inclure dans l'installeur)
 """

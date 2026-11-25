@@ -437,7 +437,7 @@
       }
       // Pas de compte : la carte d'activation du pack se saisit sur le site
       // (mystrow.fr/activate crée le compte et envoie le mot de passe par
-      // email) — une seule logique d'activation, pas une copie dans l'app.
+      // email) - une seule logique d'activation, pas une copie dans l'app.
       // Pas sur iPad : Apple refuse le déblocage par code hors App Store (3.1.1).
       if (!isIos()) {
         const box = el("div", "act");

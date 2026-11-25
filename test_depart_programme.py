@@ -6,7 +6,7 @@ playlist, quand il doit s'abstenir, et ce que le show emporte dans son .tui.
 
 Deux regles voulues, et verifiees ici :
   - le depart vaut pour CHAQUE JOUR, il n'y a pas de mode « une seule fois » ;
-  - une occurrence manquee est PERDUE (pas de rattrapage) — un show ne part
+  - une occurrence manquee est PERDUE (pas de rattrapage) - un show ne part
     pas avec dix minutes de retard sur son horaire.
 
 L'heure n'est jamais figee : chaque cas pose `schedule_time` PAR RAPPORT a

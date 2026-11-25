@@ -1,6 +1,6 @@
 @echo off
 echo ============================================
-echo  MyStrow — Installation plugin Stream Deck
+echo  MyStrow - Installation plugin Stream Deck
 echo ============================================
 echo.
 

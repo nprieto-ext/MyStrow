@@ -1,5 +1,5 @@
 """
-Firebase Cloud Function — Webhook Stripe pour MyStrow.
+Firebase Cloud Function - Webhook Stripe pour MyStrow.
 
 Gère :
   - checkout.session.completed    → crée compte + active licence + facture Axonaut
@@ -52,7 +52,7 @@ from firebase_functions import https_fn, scheduler_fn
 # (_claim_stripe_event), pas une panne. On attrape `Conflict` et non
 # `AlreadyExists` : la doc de `DocumentReference.create()` promet
 # `google.cloud.exceptions.Conflict`, dont `AlreadyExists` n'est qu'une
-# sous-classe — attraper la fille seule laisserait passer l'autre cas.
+# sous-classe - attraper la fille seule laisserait passer l'autre cas.
 # google-api-core est une dépendance déclarée dans requirements.txt.
 from google.api_core.exceptions import Conflict
 
@@ -75,7 +75,7 @@ def _get_db():
     return _db
 
 # ---------------------------------------------------------------------------
-# Config — lue à la demande pour que Firebase ait injecté les secrets
+# Config - lue à la demande pour que Firebase ait injecté les secrets
 # ---------------------------------------------------------------------------
 def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
@@ -138,7 +138,7 @@ def _brevo_statut(plan_type: str, sub_id: str) -> str:
     renouvelle seul est le message qui declenche une resiliation.
 
     Meme regle que `license_manager._is_auto_renew` : recurrent ET identifiant
-    d'abonnement present. La condition sur l'identifiant compte — une activation
+    d'abonnement present. La condition sur l'identifiant compte - une activation
     manuelle (`admin_activate_user.py`) pose `plan_type="monthly"` sans
     abonnement Stripe et a, elle, une vraie echeance.
     """
@@ -160,16 +160,16 @@ def _brevo_sync_client(email: str, uid: str, plan_type: str, expiry_ts: float,
     """
     key, list_id = _brevo_key(), _brevo_list_clients()
     if not key or not list_id:
-        print("[Brevo] BREVO_LIST_CLIENTS non configure — synchro client ignoree")
+        print("[Brevo] BREVO_LIST_CLIENTS non configure - synchro client ignoree")
         return
 
     # Domaines qui n'entrent JAMAIS dans Brevo. tuifrance.com est un contrat
     # B2B : une soixantaine de boites d'hotels a la meme echeance, gerees par un
-    # interlocuteur unique. Les relancer une par une n'a aucun sens — au pire
+    # interlocuteur unique. Les relancer une par une n'a aucun sens - au pire
     # soixante messages arrivent le meme jour chez le meme groupe. Le
     # renouvellement se traite comme un marche, pas comme un cycle de vie client.
     if (email or "").strip().lower().rsplit("@", 1)[-1] in _BREVO_DOMAINES_EXCLUS:
-        print(f"[Brevo] {email} — domaine exclu, synchro ignoree")
+        print(f"[Brevo] {email} - domaine exclu, synchro ignoree")
         return
     payload = json.dumps({
         "email":      email,
@@ -208,8 +208,8 @@ AXONAUT_BASE = "https://axonaut.com/api/v2"
 
 # Taux de TVA de REPLI, en pourcentage.
 # Les montants Stripe sont des montants TTC (prix affiché au client) ; Axonaut
-# attend un prix unitaire HT et rajoute la TVA. Ce taux sert donc DEUX fois —
-# pour déduire le HT et pour le champ `tax_rate` — et les deux doivent rester
+# attend un prix unitaire HT et rajoute la TVA. Ce taux sert donc DEUX fois -
+# pour déduire le HT et pour le champ `tax_rate` - et les deux doivent rester
 # cohérents, d'où la constante unique.
 #
 # ⚠️ Ce taux n'est utilisé QUE lorsque Stripe ne calcule pas la TVA lui-même
@@ -238,7 +238,7 @@ INTERFACE_PRIX_TTC = 69.0
 _PACK_PRIX_TTC = {"pack_2m": 99.0, "pack_1a": 199.0, "pack_vie": 399.0}
 
 # Nom du champ « numéro de TVA intracommunautaire » sur une société Axonaut.
-# ⚠️ Axonaut ignore SILENCIEUSEMENT les champs qu'il ne connaît pas — c'est ce
+# ⚠️ Axonaut ignore SILENCIEUSEMENT les champs qu'il ne connaît pas - c'est ce
 # qui avait fait disparaître l'adresse client pendant des mois (cf.
 # _axonaut_get_or_create_company). Le nom exact n'étant pas documenté
 # publiquement, `_axonaut_verify_vat()` relit la fiche après écriture et log le
@@ -246,7 +246,7 @@ _PACK_PRIX_TTC = {"pack_2m": 99.0, "pack_1a": 199.0, "pack_vie": 399.0}
 #
 # Valeur vérifiée sur l'API le 26/08/2026 (GET /companies, 176 fiches) : le
 # champ s'appelle bien `intracommunity_number`. `vat_number`, la valeur posée
-# ici jusque-là, n'existe dans AUCUNE fiche — tout numéro de TVA envoyé sous ce
+# ici jusque-là, n'existe dans AUCUNE fiche - tout numéro de TVA envoyé sous ce
 # nom était accepté « 200 OK » puis jeté. Le garde-fou `_axonaut_verify_vat()`
 # ne l'a jamais signalé parce qu'aucun acheteur ne fournissait de numéro : la
 # collecte des identifiants fiscaux n'était pas activée sur les Payment Links.
@@ -272,7 +272,7 @@ def _stripe_call(req: urllib.request.Request) -> dict:
     """Exécute un appel Stripe en remontant le message d'erreur de l'API.
 
     urllib n'expose que « HTTP Error 403: Forbidden » et jette le corps de la
-    réponse — or c'est lui qui nomme la permission manquante sur la clé
+    réponse - or c'est lui qui nomme la permission manquante sur la clé
     restreinte ou l'objet introuvable. Sans ce corps, les logs des Cloud
     Functions ne permettent pas de diagnostiquer une panne côté Stripe.
     """
@@ -287,7 +287,7 @@ def _stripe_call(req: urllib.request.Request) -> dict:
         except Exception:
             pass
         path = req.full_url.split("/v1", 1)[-1]
-        raise RuntimeError(f"HTTP {e.code} sur {path}" + (f" — {detail}" if detail else "")) from None
+        raise RuntimeError(f"HTTP {e.code} sur {path}" + (f" - {detail}" if detail else "")) from None
 
 
 def _stripe_get(path: str) -> dict:
@@ -316,7 +316,7 @@ def _verify_stripe_signature(payload: bytes, sig_header: str) -> bool:
     """Vérifie la signature HMAC-SHA256 du webhook Stripe."""
     secret = _stripe_webhook_secret()
     if not secret:
-        print("[Webhook] STRIPE_WEBHOOK_SECRET non configuré — vérification ignorée (DANGER)")
+        print("[Webhook] STRIPE_WEBHOOK_SECRET non configuré - vérification ignorée (DANGER)")
         return True   # permet de déboguer sans bloquer ; à remettre à False en prod
     try:
         parts = dict(item.split("=", 1) for item in sig_header.split(","))
@@ -343,13 +343,13 @@ def _get_plan_type(price_id: str) -> str:
 
 
 def _get_plan_price_ttc(plan_type: str) -> float:
-    """Montant TTC depuis le price Stripe configuré — fallback quand le montant
+    """Montant TTC depuis le price Stripe configuré - fallback quand le montant
     encaissé est absent de l'événement.
 
     C'est bien du TTC : les prix Stripe sont les montants affichés au client
     (23,99 € = ce qu'il paie), aucune taxe n'est ajoutée au moment du paiement.
     L'ancien nom (`_get_plan_price_ht`) est à l'origine de la facturation
-    erronée corrigée le 28/07/2026 — cf. TVA_RATE."""
+    erronée corrigée le 28/07/2026 - cf. TVA_RATE."""
     _map = {
         "monthly":  _stripe_price_monthly,
         "annual":   _stripe_price_annual,
@@ -374,21 +374,21 @@ def _get_plan_price_ttc(plan_type: str) -> float:
 def _plan_label(plan_type: str, lang: str = "fr") -> str:
     labels = {
         "fr": {
-            "monthly":  "Licence MyStrow — Mensuel",
-            "annual":   "Licence MyStrow — Annuel",
-            "lifetime": "Licence MyStrow — À vie",
-            "pack_2m":  "Pack MyStrow — Interface USB-DMX + licence 2 mois",
-            "pack_1a":  "Pack MyStrow — Interface USB-DMX + licence 1 an",
-            "pack_vie": "Pack MyStrow — Interface USB-DMX + licence à vie",
+            "monthly":  "Licence MyStrow - Mensuel",
+            "annual":   "Licence MyStrow - Annuel",
+            "lifetime": "Licence MyStrow - À vie",
+            "pack_2m":  "Pack MyStrow - Interface USB-DMX + licence 2 mois",
+            "pack_1a":  "Pack MyStrow - Interface USB-DMX + licence 1 an",
+            "pack_vie": "Pack MyStrow - Interface USB-DMX + licence à vie",
             "boitier":  "Interface USB-DMX MyStrow (sans licence)",
         },
         "en": {
-            "monthly":  "MyStrow License — Monthly",
-            "annual":   "MyStrow License — Annual",
-            "lifetime": "MyStrow License — Lifetime",
-            "pack_2m":  "MyStrow Pack — USB-DMX interface + 2-month license",
-            "pack_1a":  "MyStrow Pack — USB-DMX interface + 1-year license",
-            "pack_vie": "MyStrow Pack — USB-DMX interface + lifetime license",
+            "monthly":  "MyStrow License - Monthly",
+            "annual":   "MyStrow License - Annual",
+            "lifetime": "MyStrow License - Lifetime",
+            "pack_2m":  "MyStrow Pack - USB-DMX interface + 2-month license",
+            "pack_1a":  "MyStrow Pack - USB-DMX interface + 1-year license",
+            "pack_vie": "MyStrow Pack - USB-DMX interface + lifetime license",
             "boitier":  "MyStrow USB-DMX interface (no license)",
         },
     }
@@ -409,7 +409,7 @@ def _fmt_date(ts: float, lang: str = "fr") -> str:
 
 
 def _fmt_date_iso(ts: float) -> str:
-    """AAAA-MM-JJ — format des attributs de type date chez Brevo.
+    """AAAA-MM-JJ - format des attributs de type date chez Brevo.
 
     Distinct de `_fmt_date`, qui est destine a l'oeil du client et depend de sa
     langue. Envoyer un « 20/08/2026 » francais dans un attribut date de Brevo le
@@ -418,7 +418,7 @@ def _fmt_date_iso(ts: float) -> str:
 
     Rend "" au-dela de 2099, borne haute de Brevo. C'est le cas des licences A
     VIE, dont `expiry_utc` tombe vers 2126 : Brevo ecrete la valeur a
-    2099-12-31 sur une mise a jour, mais l'ABANDONNE a la creation — deux
+    2099-12-31 sur une mise a jour, mais l'ABANDONNE a la creation - deux
     comportements pour la meme donnee, aucun message. Une licence a vie n'ayant
     pas d'echeance, l'attribut vide est la bonne reponse : la relance
     d'expiration ne doit jamais viser ces clients, et `PLAN=lifetime` reste la
@@ -440,7 +440,7 @@ def _detect_lang(locales: list[str] | None = None, country: str | None = None) -
 
     Priorité : locale du navigateur (Stripe Checkout `locale` / `preferred_locales`),
     puis pays de facturation. Défaut 'fr' (produit francophone) quand aucun
-    signal n'est disponible — pour ne pas surprendre les clients existants.
+    signal n'est disponible - pour ne pas surprendre les clients existants.
     """
     for loc in (locales or []):
         if loc:
@@ -513,12 +513,12 @@ def _set_license(
     if stripe_subscription_id:
         data["stripe_subscription_id"] = stripe_subscription_id
 
-    # Langue des emails (détectée au checkout) — conservée pour les events suivants.
+    # Langue des emails (détectée au checkout) - conservée pour les events suivants.
     if lang:
         data["lang"] = lang
 
     # Lifetime : licence permanente ET mises à jour à vie. On n'écrit donc plus
-    # de updates_until_utc — la limite d'un an a été supprimée de l'offre.
+    # de updates_until_utc - la limite d'un an a été supprimée de l'offre.
 
     if doc.exists:
         ref.update(data)
@@ -539,7 +539,7 @@ def _boitier_floor(uid: str) -> float:
     """Fin de l'année de licence livrée avec un boîtier USB-DMX (0 si aucune).
 
     Cette année-là n'est PAS un abonnement : elle est payée une fois, avec le
-    matériel. Elle doit donc survivre à tout ce que raconte Stripe ensuite —
+    matériel. Elle doit donc survivre à tout ce que raconte Stripe ensuite -
     un renouvellement mensuel qui recalculerait `expiry_utc` à J+31, une
     résiliation qui le ramènerait à maintenant. D'où ce plancher, appliqué
     partout où l'échéance est réécrite.
@@ -623,7 +623,7 @@ def _stripe_tax_details(obj: dict) -> tuple[float | None, bool]:
     Le booléen est la clé : il distingue « 0 % parce que c'est une
     autoliquidation B2B » de « 0 % parce que Stripe Tax n'est pas activé ».
     Sans lui, on ne saurait pas s'il faut croire le taux ou retomber sur
-    TVA_RATE — et on facturerait 0 % de TVA à toute la France.
+    TVA_RATE - et on facturerait 0 % de TVA à toute la France.
 
     On renvoie un TAUX et non un montant : c'est lui qui doit figurer sur la
     facture, et le HT s'en déduit exactement. L'inverse (HT = TTC − TVA, puis
@@ -703,7 +703,7 @@ def _siren_from_vat(vat_number: str) -> str:
     Utile pour la facturation électronique : l'annuaire du Portail Public route
     les factures par SIREN, et le SIREN du client devient une mention
     obligatoire. Le collecter séparément est donc inutile pour les clients
-    français — il est déjà dans le numéro de TVA.
+    français - il est déjà dans le numéro de TVA.
     """
     value = (vat_number or "").replace(" ", "").upper()
     if value.startswith("FR") and len(value) == 13 and value[4:].isdigit():
@@ -726,10 +726,10 @@ def _axonaut(method: str, path: str, payload: dict | None = None):
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        print(f"[Axonaut] HTTP {e.code} — {path}")
+        print(f"[Axonaut] HTTP {e.code} - {path}")
         return None
     except Exception as e:
-        print(f"[Axonaut] Erreur — {e}")
+        print(f"[Axonaut] Erreur - {e}")
         return None
 
 
@@ -750,7 +750,7 @@ def _axonaut_verify_vat(company_id: int, expected: str) -> None:
         if isinstance(value, str) and value.replace(" ", "").upper() == expected:
             if key != AXONAUT_VAT_FIELD:
                 print(f"[Axonaut] TVA enregistree dans le champ « {key} » et non "
-                      f"« {AXONAUT_VAT_FIELD} » — corriger AXONAUT_VAT_FIELD")
+                      f"« {AXONAUT_VAT_FIELD} » - corriger AXONAUT_VAT_FIELD")
             else:
                 print(f"[Axonaut] TVA client enregistree : {expected}")
             return
@@ -778,11 +778,11 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
         if address.get("postal_code"): addr["address_zip_code"] = address["postal_code"]
         if address.get("city"):        addr["address_city"]     = address["city"]
         if address.get("country"):     addr["address_country"]  = address["country"]
-    # Identifiants fiscaux — mentions obligatoires à l'émission des factures
+    # Identifiants fiscaux - mentions obligatoires à l'émission des factures
     # électroniques (01/09/2027). L'annuaire du Portail Public route par
     # SIREN/SIRET : sans lui, une facture à un pro français n'est pas routable.
     # Axonaut accepte indifféremment un SIREN (9 chiffres) ou un SIRET (14)
-    # dans `siret` — les deux formats coexistent déjà en base.
+    # dans `siret` - les deux formats coexistent déjà en base.
     if vat_number:
         addr[AXONAUT_VAT_FIELD] = vat_number
         siren = _siren_from_vat(vat_number)
@@ -792,7 +792,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
     # `GET /companies` mais l'API l'ignore en écriture, sous ce nom comme sous
     # `is_b2c`, `isb2c`, `b2c` ou `is_B2C` (testé le 26/08/2026 en POST et en
     # PATCH : la fiche revient toujours à `null`). C'est pourtant lui qui, en
-    # 2027, sépare la facture électronique de l'e-reporting — il devra donc
+    # 2027, sépare la facture électronique de l'e-reporting - il devra donc
     # être posé depuis l'interface Axonaut ou via un futur endpoint.
 
     # Le numéro de TVA (et le SIREN qu'il contient) est conservé côté licence :
@@ -808,7 +808,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
             print(f"[Firebase] Sauvegarde du numero de TVA ignoree : {e}")
 
     def _patch_addr(cid) -> None:
-        """Met à jour l'adresse (et la TVA) d'une société existante — backfill
+        """Met à jour l'adresse (et la TVA) d'une société existante - backfill
         des clients créés avant la collecte du numéro."""
         if addr and cid:
             _axonaut("PATCH", f"/companies/{cid}", addr)
@@ -822,7 +822,7 @@ def _axonaut_get_or_create_company(email: str, name: str, address: dict | None =
             snap = lic_ref.get()
             lic_data = (snap.to_dict() or {}) if snap.exists else {}
             # SIRET saisi dans l'espace compte (update_billing_info) : l'adresse
-            # vient alors de l'annuaire INSEE et fait foi — l'adresse de carte
+            # vient alors de l'annuaire INSEE et fait foi - l'adresse de carte
             # Stripe ne doit pas l'écraser à chaque renouvellement.
             if lic_data.get("billing_siret"):
                 for k in ("address_street", "address_zip_code",
@@ -901,7 +901,7 @@ def _axonaut_register_payment(invoice_id: int, amount_ttc: float, reference: str
         print(f"[Axonaut] Paiement non enregistré (invoice_id={invoice_id}, montant={amount_ttc})")
         return
     # Axonaut exige un ISO8601 complet (date + heure + fuseau) pour le champ
-    # `date` du schéma invoicePayment.post — une date seule "YYYY-MM-DD" est
+    # `date` du schéma invoicePayment.post - une date seule "YYYY-MM-DD" est
     # rejetée (HTTP 4xx) et la facture reste impayée.
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")  # 2026-06-02T12:34:56+00:00
     result = _axonaut("POST", "/payments", {
@@ -922,7 +922,7 @@ def _axonaut_invoice_exists(uid: str, stripe_ref: str) -> bool:
 
     On ne regarde que les factures (`type == "invoice"`) : un avoir porte la
     référence de la charge remboursée et ne doit pas empêcher une refacturation.
-    En cas d'erreur de lecture on répond False — bloquer une facture légitime
+    En cas d'erreur de lecture on répond False - bloquer une facture légitime
     coûte plus cher qu'un doublon, qui se voit et se corrige.
     """
     try:
@@ -932,7 +932,7 @@ def _axonaut_invoice_exists(uid: str, stripe_ref: str) -> bool:
         return any((d.to_dict() or {}).get("type", "invoice") == "invoice"
                    for d in docs)
     except Exception as e:
-        print(f"[Axonaut] Controle anti-doublon impossible ({e}) — on continue")
+        print(f"[Axonaut] Controle anti-doublon impossible ({e}) - on continue")
         return False
 
 
@@ -964,7 +964,7 @@ def _invoice_lines(plan_type: str, price_ht: float, tax_rate: float,
         return [
             {**interface, "name": "Interface USB-DMX MyStrow (Pack MyStrow)",
              "quantity": sign, "price": ht_interface},
-            {**licence, "name": f"Licence MyStrow — {duree} (Pack MyStrow)",
+            {**licence, "name": f"Licence MyStrow - {duree} (Pack MyStrow)",
              "quantity": sign, "price": ht_licence},
         ]
 
@@ -985,7 +985,7 @@ def _axonaut_check_lines(invoice_id: int, lines: list[dict]) -> None:
         want = [l["id"] for l in lines]
         if got != want:
             print(f"[Axonaut] ⚠️ Facture {invoice_id} : produits {got} au lieu de "
-                  f"{want} — ventilation marchandise/service à reprendre à la main")
+                  f"{want} - ventilation marchandise/service à reprendre à la main")
     except Exception as e:
         print(f"[Axonaut] Relecture facture {invoice_id} impossible : {e}")
 
@@ -1007,7 +1007,7 @@ def _axonaut_create_invoice(
     `amount_ttc` est le montant réellement encaissé par Stripe, donc du TTC :
     c'est le prix affiché au client (23,99 €). Axonaut, lui, attend un prix
     unitaire HORS TAXES et rajoute la TVA par-dessus. Passer le TTC tel quel
-    dans `price` produisait « 23,99 € HT / 28,79 € TTC » — le client payait
+    dans `price` produisait « 23,99 € HT / 28,79 € TTC » - le client payait
     23,99 € et la facture en annonçait 28,79 €."""
     # Deuxième ligne de défense derrière `_claim_stripe_event` : une même
     # référence Stripe ne doit jamais produire deux factures. Le verrou
@@ -1015,10 +1015,10 @@ def _axonaut_create_invoice(
     # (renvoi manuel depuis le Dashboard, deux événements distincts portant le
     # même encaissement) et protège directement l'argent.
     if uid and stripe_ref and _axonaut_invoice_exists(uid, stripe_ref):
-        print(f"[Axonaut] Facture deja emise pour {stripe_ref} — creation ignoree")
+        print(f"[Axonaut] Facture deja emise pour {stripe_ref} - creation ignoree")
         return
     if not company_id:
-        print("[Axonaut] company_id manquant — facture non creee")
+        print("[Axonaut] company_id manquant - facture non creee")
         return
     # `None` seulement, jamais `not amount_ttc` : avec un code promo à 100 %,
     # le montant encaissé vaut légitimement 0 € et le repli sur le tarif du
@@ -1031,7 +1031,7 @@ def _axonaut_create_invoice(
         print(f"[Axonaut] montant absent → fallback Stripe price : {amount_ttc} € TTC")
 
     if stripe_tax and tax_rate_stripe is not None:
-        # Stripe Tax actif : le taux est celui du pays du client — 0 % en
+        # Stripe Tax actif : le taux est celui du pays du client - 0 % en
         # autoliquidation B2B intra-UE ou hors UE.
         tax_rate = tax_rate_stripe
         tax_origin = "Stripe Tax"
@@ -1056,7 +1056,7 @@ def _axonaut_create_invoice(
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = _invoice_lines(plan_type, price_ht, tax_rate, quantity=quantity)
-    print(f"[Axonaut] Création facture — plan={plan_type} "
+    print(f"[Axonaut] Création facture - plan={plan_type} "
           f"{price_ht} € HT + {tax_rate} % TVA ({tax_origin}) "
           f"= {round(amount_ttc, 2)} € TTC company_id={company_id} "
           f"lignes={[(l['name'], l['price']) for l in lines]}")
@@ -1077,7 +1077,7 @@ def _axonaut_create_invoice(
     print(f"[Axonaut] Facture creee : id={invoice_id}")
 
     # Encaisse la facture avec le montant RÉELLEMENT prélevé par Stripe.
-    # Avant : amount * 1,20 — on enregistrait 28,79 € alors que la banque
+    # Avant : amount * 1,20 - on enregistrait 28,79 € alors que la banque
     # n'avait encaissé que 23,99 €, soit 4,80 € d'écart par facture.
     _axonaut_register_payment(invoice_id, round(amount_ttc, 2), stripe_ref)
 
@@ -1132,7 +1132,7 @@ def _find_invoice_to_credit(uid: str, refs: set) -> dict:
 
     On matche d'abord sur la reference Stripe (`stripe_ref`) : c'est le seul
     lien certain entre un encaissement et sa facture. Les factures emises avant
-    l'ajout de ce champ n'en ont pas — on retombe alors sur la plus recente, de
+    l'ajout de ce champ n'en ont pas - on retombe alors sur la plus recente, de
     loin le cas le plus frequent (on rembourse ce qu'on vient de prelever),
     mais on le DIT dans les logs : un avoir adosse a la mauvaise facture se
     rattrape a la main, encore faut-il savoir qu'il faut le rattraper.
@@ -1150,7 +1150,7 @@ def _find_invoice_to_credit(uid: str, refs: set) -> dict:
     if not rows:
         return {}
     rows.sort(key=lambda r: (r.get("date") or ""), reverse=True)
-    print(f"[Avoir] Aucune facture ne porte {sorted(refs)} — repli sur la plus "
+    print(f"[Avoir] Aucune facture ne porte {sorted(refs)} - repli sur la plus "
           f"recente ({rows[0].get('axonaut_number') or rows[0].get('axonaut_id')})")
     return rows[0]
 
@@ -1173,24 +1173,24 @@ def _axonaut_create_credit_note(
     (releve sur les avoirs deja au dossier). On reproduit ce schema a
     l'identique pour que l'export comptable reste homogene.
 
-    `amount_ttc` est le montant REMBOURSE — donc du TTC, remboursement partiel
+    `amount_ttc` est le montant REMBOURSE - donc du TTC, remboursement partiel
     compris. Le HT se deduit du taux, jamais l'inverse, pour que le TTC
     reconstitue retombe au centime sur ce que Stripe a rendu au client.
     """
     if not company_id:
-        print("[Avoir] company_id manquant — avoir non cree")
+        print("[Avoir] company_id manquant - avoir non cree")
         return {}
     if not amount_ttc:
-        print("[Avoir] montant nul — avoir non cree")
+        print("[Avoir] montant nul - avoir non cree")
         return {}
 
     tax_rate = float(TVA_RATE if tax_rate is None else tax_rate)
     price_ht = round(abs(amount_ttc) / (1 + tax_rate / 100.0), 2)
     today    = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     mention  = (f"Avoir sur facture : #{origin_number}" if origin_number
-                else "Avoir — remboursement Stripe")
+                else "Avoir - remboursement Stripe")
 
-    print(f"[Avoir] Creation — {price_ht} EUR HT + {tax_rate} % TVA "
+    print(f"[Avoir] Creation - {price_ht} EUR HT + {tax_rate} % TVA "
           f"= -{round(abs(amount_ttc), 2)} EUR TTC "
           f"company_id={company_id} origine={origin_number or '?'}")
 
@@ -1222,7 +1222,7 @@ def _axonaut_create_credit_note(
     _axonaut_register_payment(
         credit_id, -round(abs(amount_ttc), 2),
         (f"Annule #{origin_number}" if origin_number else "Remboursement Stripe"),
-        nature=6,                      # Autre — ce n'est pas un encaissement CB
+        nature=6,                      # Autre - ce n'est pas un encaissement CB
     )
 
     if uid:
@@ -1273,7 +1273,7 @@ def _already_credited(uid: str, charge_id: str) -> float:
 
 
 def _on_charge_refunded(charge: dict) -> None:
-    """Remboursement Stripe — emet l'avoir Axonaut correspondant.
+    """Remboursement Stripe - emet l'avoir Axonaut correspondant.
 
     Ne touche PAS a la licence : un remboursement suit presque toujours une
     annulation deja traitee par _on_subscription_deleted, et couper l'acces sur
@@ -1288,7 +1288,7 @@ def _on_charge_refunded(charge: dict) -> None:
     uid = _find_uid_by_customer(customer_id)
     if not uid:
         print(f"[charge.refunded] UID introuvable pour customer {customer_id} "
-              f"— AVOIR A CREER A LA MAIN")
+              f"- AVOIR A CREER A LA MAIN")
         return
 
     db = _get_db()
@@ -1298,14 +1298,14 @@ def _on_charge_refunded(charge: dict) -> None:
         # `refunds` est « expandable » : sur les versions recentes de l'API,
         # l'objet Charge du webhook ne la contient PLUS (c'est ce que dit la
         # doc quand elle renvoie vers refund.created « for information about
-        # the refund »). Il ne reste que le CUMUL rembourse — on credite donc
+        # the refund »). Il ne reste que le CUMUL rembourse - on credite donc
         # la difference avec ce qui est deja passe en avoir sur cette charge :
         # sans ca, un 2e remboursement partiel serait avale par la cle
         # d'idempotence, et un rejeu du meme evenement ferait un doublon.
         cumul = (charge.get("amount_refunded") or 0) / 100.0
         delta = round(cumul - _already_credited(uid, charge.get("id", "")), 2)
         if delta <= 0:
-            print(f"[charge.refunded] {charge.get('id','')} — {cumul} EUR deja "
+            print(f"[charge.refunded] {charge.get('id','')} - {cumul} EUR deja "
                   f"credites, rien a faire")
             return
         # La cle porte le cumul : deux remboursements partiels successifs sur
@@ -1329,14 +1329,14 @@ def _on_charge_refunded(charge: dict) -> None:
         if not rid or not amount:
             continue
         if (r.get("status") or "succeeded") != "succeeded":
-            print(f"[charge.refunded] {rid} statut={r.get('status')} — ignore")
+            print(f"[charge.refunded] {rid} statut={r.get('status')} - ignore")
             continue
 
         marker = (db.collection("licenses").document(uid)
                     .collection("refunds").document(rid))
         seen = marker.get()
         if seen.exists and (seen.to_dict() or {}).get("status") != "error":
-            print(f"[charge.refunded] {rid} deja traite — pas de second avoir")
+            print(f"[charge.refunded] {rid} deja traite - pas de second avoir")
             continue
         # Marqueur pose AVANT l'appel Axonaut : en cas de rejeu simultane,
         # mieux vaut un avoir manquant (hurlant dans les logs) qu'un doublon
@@ -1367,10 +1367,10 @@ def _on_charge_refunded(charge: dict) -> None:
             "origin_number":  origin_number or "",
         }, merge=True)
         if credit:
-            print(f"[charge.refunded] {rid} — avoir {credit.get('number')} "
+            print(f"[charge.refunded] {rid} - avoir {credit.get('number')} "
                   f"de -{round(amount, 2)} EUR sur #{origin_number or '?'}")
         else:
-            print(f"[charge.refunded] {rid} — AVOIR NON CREE, a faire a la main "
+            print(f"[charge.refunded] {rid} - AVOIR NON CREE, a faire a la main "
                   f"(client {lic.get('email', '')}, {round(amount, 2)} EUR)")
 
 
@@ -1413,13 +1413,13 @@ def _send_email_brevo_api(to: str, subject: str, html: str,
     """Envoi par l'API HTTP de Brevo (`POST /v3/smtp/email`).
 
     C'est la voie a privilegier depuis une Cloud Function. Le relais SMTP de
-    Brevo refuse l'authentification depuis une IP non declaree — `525 5.7.1
-    Unauthorized IP address` — et une Cloud Function n'a pas d'IP de sortie
+    Brevo refuse l'authentification depuis une IP non declaree - `525 5.7.1
+    Unauthorized IP address` - et une Cloud Function n'a pas d'IP de sortie
     fixe : la liste blanche est donc intenable. L'API, elle, n'authentifie que
     sur la cle.
 
     Elle rend en prime un `messageId`, tracable dans les journaux de Brevo. Sans
-    lui, un mail non recu ne laissait aucune trace exploitable — c'est ce qui a
+    lui, un mail non recu ne laissait aucune trace exploitable - c'est ce qui a
     rendu le cas gg@ouiensemble.eu indiagnosticable.
     """
     nom, adresse = parseaddr(_smtp_from())
@@ -1473,7 +1473,7 @@ def _send_email(to: str, subject: str, content: str,
 
     host = _smtp_host()
     if not host:
-        print(f"[Email] SMTP_HOST non configuré — email ignoré ({to})")
+        print(f"[Email] SMTP_HOST non configuré - email ignoré ({to})")
         return
     msg  = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -1521,7 +1521,7 @@ def _email_welcome(email: str, password: str, expiry_ts: float,
     plan = plan_label or _plan_label(plan_type, lang)
     date = _fmt_date(expiry_ts, lang)
     if lang == "en":
-        subject = "Welcome to MyStrow — Your login credentials"
+        subject = "Welcome to MyStrow - Your login credentials"
         content = f"""
 <h2>Welcome to MyStrow!</h2>
 <p>Your <b>{plan}</b> license has just been activated.
@@ -1546,7 +1546,7 @@ Here are your credentials:</p>
 <a class="btn" href="{_DOWNLOAD_URL}">Download MyStrow</a>
 """
     else:
-        subject = "Bienvenue sur MyStrow — Vos identifiants de connexion"
+        subject = "Bienvenue sur MyStrow - Vos identifiants de connexion"
         content = f"""
 <h2>Bienvenue sur MyStrow !</h2>
 <p>Votre licence <b>{plan}</b> vient d'être activée.
@@ -1576,7 +1576,7 @@ Voici vos identifiants :</p>
 def _email_renewal(email: str, expiry_ts: float, lang: str = "fr") -> None:
     date = _fmt_date(expiry_ts, lang)
     if lang == "en":
-        subject = "MyStrow — License renewed"
+        subject = "MyStrow - License renewed"
         content = f"""
 <h2>Your license has been renewed</h2>
 <p>Your payment was processed successfully. Your MyStrow license has been extended.</p>
@@ -1584,7 +1584,7 @@ def _email_renewal(email: str, expiry_ts: float, lang: str = "fr") -> None:
 <p>No action is required on your part. Keep using MyStrow as usual.</p>
 """
     else:
-        subject = "MyStrow — Licence renouvelée"
+        subject = "MyStrow - Licence renouvelée"
         content = f"""
 <h2>Votre licence a été renouvelée</h2>
 <p>Votre paiement a bien été traité. Votre licence MyStrow est prolongée.</p>
@@ -1596,7 +1596,7 @@ def _email_renewal(email: str, expiry_ts: float, lang: str = "fr") -> None:
 
 def _email_cancelled(email: str, lang: str = "fr") -> None:
     if lang == "en":
-        subject = "MyStrow — Subscription cancelled"
+        subject = "MyStrow - Subscription cancelled"
         content = """
 <h2>Your subscription has been cancelled</h2>
 <p>Your MyStrow subscription has been cancelled.</p>
@@ -1605,7 +1605,7 @@ after which access will be disabled automatically.</p>
 <p>If you would like to resume a subscription, please contact us.</p>
 """
     else:
-        subject = "MyStrow — Abonnement annulé"
+        subject = "MyStrow - Abonnement annulé"
         content = """
 <h2>Votre abonnement a été annulé</h2>
 <p>Votre abonnement MyStrow a bien été résilié.</p>
@@ -1618,7 +1618,7 @@ puis l'accès sera désactivé automatiquement.</p>
 
 def _email_payment_failed(email: str, lang: str = "fr") -> None:
     if lang == "en":
-        subject = "MyStrow — Payment failed"
+        subject = "MyStrow - Payment failed"
         content = """
 <h2>Payment problem</h2>
 <p>We were unable to collect your MyStrow payment.</p>
@@ -1626,7 +1626,7 @@ def _email_payment_failed(email: str, lang: str = "fr") -> None:
 <p>Stripe will automatically retry the payment over the coming days.</p>
 """
     else:
-        subject = "MyStrow — Échec du paiement"
+        subject = "MyStrow - Échec du paiement"
         content = """
 <h2>Problème de paiement</h2>
 <p>Nous n'avons pas pu encaisser votre paiement MyStrow.</p>
@@ -1642,7 +1642,7 @@ l'interruption de votre licence.</p>
 # ===========================================================================
 
 def _on_checkout_completed(session: dict) -> None:
-    """Premier paiement — crée le compte et active la licence."""
+    """Premier paiement - crée le compte et active la licence."""
     cust_details = session.get("customer_details") or {}
     email       = cust_details.get("email") or session.get("customer_email", "")
     customer_id = session.get("customer", "")
@@ -1719,7 +1719,7 @@ def _on_checkout_completed(session: dict) -> None:
     else:
         _email_renewal(email, expiry_ts, lang)
 
-    # Brevo — liste Clients (messages de service, jamais la newsletter)
+    # Brevo - liste Clients (messages de service, jamais la newsletter)
     _brevo_sync_client(email, uid, plan_type, expiry_ts, lang, sub_id or "")
 
     # Axonaut
@@ -1733,11 +1733,11 @@ def _on_checkout_completed(session: dict) -> None:
                                         or _id_of(session.get("invoice")) or ""),
                             uid=uid, tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
-    print(f"[checkout.completed] {email} — {plan_type} — expire {_fmt_date(expiry_ts)}")
+    print(f"[checkout.completed] {email} - {plan_type} - expire {_fmt_date(expiry_ts)}")
 
 
 # ===========================================================================
-# PACK BOÎTIER — expédition Amazon MCF depuis le stock FBA
+# PACK BOÎTIER - expédition Amazon MCF depuis le stock FBA
 # ===========================================================================
 
 # pack_vie : boîte 1 an expédiée + licence à vie posée au paiement (cf. _pack_lifetime).
@@ -1787,9 +1787,9 @@ def _pack_from_session(session: dict) -> dict | None:
 
     Les SKU sont ceux des fiches Amazon : le stock FBA est unique, partagé
     entre Amazon et le site. Reconnaissance, dans l'ordre :
-      1. le Payment Link (`STRIPE_PAYMENTLINK_PACK_2M/1A`, plink_…) — porté
+      1. le Payment Link (`STRIPE_PAYMENTLINK_PACK_2M/1A`, plink_…) - porté
          par la session elle-même, aucun appel Stripe ;
-      2. le prix des lignes (`STRIPE_PRICE_PACK_2M/1A`) — exige la
+      2. le prix des lignes (`STRIPE_PRICE_PACK_2M/1A`) - exige la
          permission « Checkout Sessions Read » sur la clé restreinte, qu'elle
          n'a PAS au 20/10/2026 (403) ;
       3. garde-fou : une adresse de livraison sans pack reconnu = pack
@@ -1817,7 +1817,7 @@ def _pack_from_session(session: dict) -> dict | None:
             print(f"[Pack] Lecture des lignes impossible : {e}")
 
     if _shipping_of(session).get("line1"):
-        print(f"[Pack] Adresse de livraison sans pack reconnu — session {session.get('id')}")
+        print(f"[Pack] Adresse de livraison sans pack reconnu - session {session.get('id')}")
         return {"plan": "", "sku": "", "quantity": 1}
     return None
 
@@ -1839,7 +1839,7 @@ def _shipping_of(session: dict) -> dict:
 
 
 def _alert_admin(subject: str, content: str) -> None:
-    # Destinataires des alertes (ventes, échecs d'expédition…) — distincts
+    # Destinataires des alertes (ventes, échecs d'expédition…) - distincts
     # d'ADMIN_EMAILS, qui sert à l'accès admin (compte Gmail).
     raw = os.environ.get("ALERT_EMAILS", "nicolas@mystrow.fr")
     for admin in sorted({e.strip().lower() for e in raw.split(",") if e.strip()}):
@@ -1850,15 +1850,15 @@ def _expedition_mcf(order_ref, order_id: str, ref_client: str, email: str,
                     address: dict, pack: dict) -> None:
     try:
         if not pack["sku"]:
-            raise Exception("pack non identifié (Payment Link inconnu) — "
+            raise Exception("pack non identifié (Payment Link inconnu) - "
                             "vérifier STRIPE_PAYMENTLINK_PACK_* dans functions/.env")
         if not amazon_mcf.configured():
             raise Exception("identifiants SP-API absents de functions/.env")
         amazon_mcf.create_order(order_id, pack["sku"], pack["quantity"], address,
                                 email, displayable_id=f"MYSTROW-{ref_client}")
         order_ref.update({"status": "mcf_created", "mcf_created_utc": time.time()})
-        print(f"[Pack] Commande MCF {order_id} créée — {pack['sku']} → {email}")
-        _alert_admin(f"MyStrow — Pack vendu sur le site ({pack['sku']}{' · À VIE' if pack['plan'] == 'pack_vie' else ''})", f"""
+        print(f"[Pack] Commande MCF {order_id} créée - {pack['sku']} → {email}")
+        _alert_admin(f"MyStrow - Pack vendu sur le site ({pack['sku']}{' · À VIE' if pack['plan'] == 'pack_vie' else ''})", f"""
 <h2>Nouvelle commande pack</h2>
 <div class="box">{email}<br>{pack['sku']} × {pack['quantity']}<br>
 MCF : <b>{order_id}</b><br>{address.get('postal_code', '')} {address.get('city', '')}</div>
@@ -1869,13 +1869,13 @@ MCF : <b>{order_id}</b><br>{address.get('postal_code', '')} {address.get('city',
         # réf. MCF) ou rembourse.
         print(f"[Pack] ÉCHEC création MCF {order_id} : {e}")
         order_ref.update({"status": "mcf_error", "mcf_error": str(e)[:500]})
-        _alert_admin("⚠️ MyStrow — Pack payé mais NON expédié", f"""
+        _alert_admin("⚠️ MyStrow - Pack payé mais NON expédié", f"""
 <h2>La commande Amazon MCF a échoué</h2>
 <div class="box">{email}<br>{pack['sku']} × {pack['quantity']}<br>
 Réf. MCF prévue : <b>{order_id}</b><br>Erreur : {str(e)[:400]}</div>
 <p>Adresse : {address.get('name', '')}, {address.get('line1', '')} {address.get('line2') or ''},
 {address.get('postal_code', '')} {address.get('city', '')} {address.get('country', '')}
-— tél. {address.get('phone', '')}</p>
+- tél. {address.get('phone', '')}</p>
 <p>À créer à la main dans Seller Central (MCF) avec la même réf., ou rembourser.
 Firestore : boitier_commandes/{order_id}</p>""")
 
@@ -1911,7 +1911,7 @@ Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
     for dest in sorted({x.strip().lower() for x in
                         _cfg("EXPEDITION_EMAILS", "fanny@jofagist.fr").split(",") if x.strip()}):
         try:
-            _send_email(dest, f"MyStrow — Interface à expédier ({ref_client})", contenu,
+            _send_email(dest, f"MyStrow - Interface à expédier ({ref_client})", contenu,
                         raise_on_error=True)
         except Exception as ex:
             erreurs.append(f"{dest} : {ex}")
@@ -1931,15 +1931,15 @@ Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
     alerte = ("<p>⚠️ Le mail à Fanny n'est PAS parti : " + html_escape("; ".join(erreurs))
               + "<br>Lui transmettre cette commande à la main.</p>") if erreurs else \
              "<p>Commande transmise à Fanny par mail.</p>"
-    _alert_admin(f"MyStrow — Interface seule vendue ({ref_client})"
-                 f"{' — ⚠️ MAIL FANNY KO' if erreurs else ''}", f"""
+    _alert_admin(f"MyStrow - Interface seule vendue ({ref_client})"
+                 f"{' - ⚠️ MAIL FANNY KO' if erreurs else ''}", f"""
 <h2>Interface seule vendue sur le site</h2>
-<div class="box">{html_escape(email)} — {quantity} × interface — {amount_ttc} € TTC<br>
+<div class="box">{html_escape(email)} - {quantity} × interface - {amount_ttc} € TTC<br>
 Réf. <b>{ref_client}</b> · Firestore boitier_commandes/{order_id}</div>
 <div class="box">{etiquette}</div>
 {alerte}
-<p>Stock restant chez Fanny : <b>{reste if reste is not None else '?'}</b>{' — ⚠️ à réapprovisionner' if reste is not None and reste <= 5 else ''}</p>""")
-    print(f"[Boîtier] {order_id} transmis à Fanny — {email} (stock {reste})")
+<p>Stock restant chez Fanny : <b>{reste if reste is not None else '?'}</b>{' - ⚠️ à réapprovisionner' if reste is not None and reste <= 5 else ''}</p>""")
+    print(f"[Boîtier] {order_id} transmis à Fanny - {email} (stock {reste})")
 
 
 def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
@@ -1965,7 +1965,7 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
         "created_utc":    time.time(),
     }, merge=True)
 
-    # 1. Expédition — c'est ce que le client a payé, on la tente en premier.
+    # 1. Expédition - c'est ce que le client a payé, on la tente en premier.
     if pack["plan"] == "boitier":
         _expedition_fanny(order_ref, order_id, ref_client, email, address,
                           pack["quantity"], amount_ttc)
@@ -1980,15 +1980,15 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
             order_ref.update({"lifetime_uid": uid})
         except Exception as e:
             print(f"[Pack] ÉCHEC licence à vie {email} : {e}")
-            _alert_admin("⚠️ MyStrow — Pack à vie payé, licence NON créée",
-                         f"<p>{email} — {order_id}<br>Erreur : {str(e)[:400]}</p>"
+            _alert_admin("⚠️ MyStrow - Pack à vie payé, licence NON créée",
+                         f"<p>{email} - {order_id}<br>Erreur : {str(e)[:400]}</p>"
                          "<p>Poser la licence lifetime à la main (admin_panel).</p>")
 
     # 3. Facture Axonaut, AVANT la confirmation : son lien PDF y figure (les
     #    acheteurs de packs ne recevaient jamais leur facture). Pack à vie : le
     #    compte existe déjà (2), la facture va aussi dans son espace client.
     #    Autres packs : pas encore de compte (il naît à l'activation du code de
-    #    la boîte), donc pas d'uid — le lien reste dans boitier_commandes.
+    #    la boîte), donc pas d'uid - le lien reste dans boitier_commandes.
     invoice_url = ""
     if not pack["plan"]:
         print("[Pack] Pack inconnu : facture Axonaut à émettre à la main")
@@ -2005,7 +2005,7 @@ def _on_pack_checkout(session: dict, pack: dict, email: str, lang: str,
         except Exception as e:
             print(f"[Pack] Facture Axonaut KO {email} : {e}")
 
-    # 4. Confirmation client — toujours envoyée, même si l'expédition ou la
+    # 4. Confirmation client - toujours envoyée, même si l'expédition ou la
     #    facture doivent être reprises à la main : son paiement est bien reçu.
     _email_pack_confirmation(email, pack["plan"], ref_client, lang,
                              invoice_url=invoice_url)
@@ -2030,7 +2030,7 @@ def _pack_lifetime(email: str, lang: str) -> str:
         _email_pack_lifetime_active(email, lang)
     sub_id = avant.get("stripe_subscription_id", "")
     if sub_id and avant.get("plan_type") != "lifetime":
-        _alert_admin("MyStrow — Pack à vie : abonnement à résilier",
+        _alert_admin("MyStrow - Pack à vie : abonnement à résilier",
                      f"<p>{email} vient d'acheter le Pack à vie mais a un abonnement Stripe "
                      f"actif (<b>{sub_id}</b>). À résilier (et rembourser au prorata si besoin).</p>")
     try:
@@ -2043,7 +2043,7 @@ def _pack_lifetime(email: str, lang: str) -> str:
 
 def _email_pack_lifetime_active(email: str, lang: str = "fr") -> None:
     if lang == "en":
-        subject = "MyStrow — Your lifetime license is active"
+        subject = "MyStrow - Your lifetime license is active"
         content = """
 <h2>Your lifetime license is active</h2>
 <p>Thank you for choosing the MyStrow Pack with lifetime license. It is already
@@ -2051,7 +2051,7 @@ active on your account: just sign in to MyStrow with your usual credentials.</p>
 <p>No subscription, updates included for life.</p>
 """
     else:
-        subject = "MyStrow — Votre licence à vie est active"
+        subject = "MyStrow - Votre licence à vie est active"
         content = """
 <h2>Votre licence à vie est active</h2>
 <p>Merci d'avoir choisi le Pack MyStrow avec licence à vie. Elle est déjà active
@@ -2089,7 +2089,7 @@ def _email_pack_confirmation(email: str, plan: str, ref: str, lang: str = "fr",
                    "<a href=\"https://mystrow.fr/activate\">mystrow.fr/activate</a>.</p>")
     objet = "interface" if plan == "boitier" else "pack"
     if lang == "en":
-        subject = f"MyStrow — Order confirmed ({ref})"
+        subject = f"MyStrow - Order confirmed ({ref})"
         content = f"""
 <h2>Thank you for your order!</h2>
 <div class="box">📦 &nbsp;<b>{label}</b><br>Order reference: <b>{ref}</b></div>
@@ -2099,7 +2099,7 @@ tracking number as soon as it ships (usually within 1 to 2 business days).</p>
 {facture}
 """
     else:
-        subject = f"MyStrow — Commande confirmée ({ref})"
+        subject = f"MyStrow - Commande confirmée ({ref})"
         content = f"""
 <h2>Merci pour votre commande !</h2>
 <div class="box">📦 &nbsp;<b>{label}</b><br>Référence de commande : <b>{ref}</b></div>
@@ -2122,24 +2122,24 @@ def _email_pack_expedie(email: str, packages: list, ref: str, lang: str = "fr",
         return f"{html_escape(p['carrier'])} : <b>{t}</b>"
     lignes = "<br>".join(ligne(p) for p in packages)
     if lang == "en":
-        subject = f"MyStrow — Your {objet} has shipped ({ref})"
+        subject = f"MyStrow - Your {objet} has shipped ({ref})"
         content = f"""
 <h2>Your {objet} is on its way</h2>
 <div class="box">🚚 &nbsp;{lignes}</div>
 <p>Enter this number on the carrier's website to follow your parcel.</p>
 """
         if correction:
-            subject = f"MyStrow — Corrected tracking number ({ref})"
+            subject = f"MyStrow - Corrected tracking number ({ref})"
             content += "<p>⚠ This number replaces the one sent previously.</p>"
     else:
-        subject = f"MyStrow — Votre {objet} est expédié{'e' if objet == 'interface' else ''} ({ref})"
+        subject = f"MyStrow - Votre {objet} est expédié{'e' if objet == 'interface' else ''} ({ref})"
         content = f"""
 <h2>Votre {objet} est en route</h2>
 <div class="box">🚚 &nbsp;{lignes}</div>
 <p>Saisissez ce numéro sur le site du transporteur pour suivre votre colis.</p>
 """
         if correction:
-            subject = f"MyStrow — N° de suivi corrigé ({ref})"
+            subject = f"MyStrow - N° de suivi corrigé ({ref})"
             content += "<p>⚠ Ce numéro remplace celui envoyé précédemment.</p>"
     _send_email(email, subject, content, lang=lang)
 
@@ -2166,8 +2166,8 @@ def _run_mcf_suivi() -> int:
             n += 1
         elif info["status"] in ("CANCELLED", "UNFULFILLABLE", "INVALID"):
             maj["status"] = "mcf_error"
-            _alert_admin(f"⚠️ MyStrow — Commande MCF {info['status']}",
-                         f"<p>{doc.id} — {cmd.get('email', '')} — {cmd.get('sku', '')}</p>")
+            _alert_admin(f"⚠️ MyStrow - Commande MCF {info['status']}",
+                         f"<p>{doc.id} - {cmd.get('email', '')} - {cmd.get('sku', '')}</p>")
         doc.reference.update(maj)
     return n
 
@@ -2294,7 +2294,7 @@ def _remu_fanny_etat(db, detail: bool = False) -> dict:
 @https_fn.on_request(max_instances=3)
 def admin_remu_fanny(req: https_fn.Request) -> https_fn.Response:
     """Rémunération de Fanny depuis l'admin panel.
-    POST — Authorization: Bearer <firebase_id_token> (ADMIN_EMAILS)
+    POST - Authorization: Bearer <firebase_id_token> (ADMIN_EMAILS)
     {"action": "etat"} → état détaillé
     {"action": "payer", "montant": 45} → ajoute un versement, renvoie l'état"""
     if req.method == "OPTIONS":
@@ -2331,7 +2331,7 @@ def admin_remu_fanny(req: https_fn.Request) -> https_fn.Response:
 
 _TRANSPORTEURS = {
     "colissimo":     ("Colissimo", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
-    "lettre_suivie": ("La Poste — Lettre suivie", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
+    "lettre_suivie": ("La Poste - Lettre suivie", "https://www.laposte.fr/outils/suivre-vos-envois?code={}"),
     "mondial_relay": ("Mondial Relay", "https://www.mondialrelay.fr/suivi-de-colis/"),
     "chronopost":    ("Chronopost", "https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT={}"),
 }
@@ -2379,9 +2379,9 @@ def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
     _email_pack_expedie(cmd.get("email", ""), [colis], ref_client,
                         cmd.get("lang") or "fr", objet="interface", correction=correction)
     a = cmd.get("address") or {}
-    dest = html_escape(f"{a.get('name', '')} — {a.get('postal_code', '')} {a.get('city', '')}")
+    dest = html_escape(f"{a.get('name', '')} - {a.get('postal_code', '')} {a.get('city', '')}")
     quoi = "Suivi corrigé" if correction else "Interface expédiée"
-    _alert_admin(f"MyStrow — {quoi} ({ref_client}, par {par})",
+    _alert_admin(f"MyStrow - {quoi} ({ref_client}, par {par})",
                  f"<p>{html_escape(cmd.get('email', ''))} → {dest}<br>{nom} : <b>{code}</b></p>")
     return colis
 
@@ -2389,7 +2389,7 @@ def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
 def _page_expedition(titre: str, corps: str, status: int = 200) -> https_fn.Response:
     page = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
-<title>MyStrow — {titre}</title><style>
+<title>MyStrow - {titre}</title><style>
 body{{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:24px 16px}}
 main{{max-width:460px;margin:auto}} h1{{font-size:22px}} .box{{background:#1c1c1c;border-radius:10px;padding:14px;margin:14px 0;line-height:1.5}}
 label{{display:block;margin:14px 0 6px;font-weight:600}} select,input{{width:100%;box-sizing:border-box;padding:12px;font-size:17px;border-radius:8px;border:1px solid #444;background:#222;color:#eee}}
@@ -2412,7 +2412,7 @@ def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
         return _page_expedition("Commande inconnue", "<h1 class='err'>Commande introuvable</h1>", 404)
     ref_client = order_id.replace("MS-", "")[:8]
     a = cmd.get("address") or {}
-    dest = html_escape(f"{a.get('name', '')} — {a.get('postal_code', '')} {a.get('city', '')}")
+    dest = html_escape(f"{a.get('name', '')} - {a.get('postal_code', '')} {a.get('city', '')}")
 
     if _suivi_enregistre(cmd):
         p = (cmd.get("packages") or [{}])[0]
@@ -2445,7 +2445,7 @@ def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
 @https_fn.on_request(max_instances=3)
 def admin_boitier_suivi(req: https_fn.Request) -> https_fn.Response:
     """Saisie / correction du suivi d'une interface seule depuis l'admin panel.
-    POST — Authorization: Bearer <firebase_id_token> (ADMIN_EMAILS)
+    POST - Authorization: Bearer <firebase_id_token> (ADMIN_EMAILS)
     Body : {"order_id": "MS-…", "transporteur": "colissimo", "suivi": "6A…"}"""
     if req.method == "OPTIONS":
         return _cors_preflight()
@@ -2525,15 +2525,15 @@ def _run_ventes_amazon() -> int:
                 stock = {}
         lignes = "<br>".join(
             f"{it.get('QuantityOrdered', 1)} × <b>{it.get('SellerSKU', '?')}</b>"
-            f" — {(it.get('ItemPrice') or {}).get('Amount', '?')} €"
+            f" - {(it.get('ItemPrice') or {}).get('Amount', '?')} €"
             for it in items) or "(détail indisponible, commande en attente)"
         reste = " · ".join(f"{sku} : {q}" for sku, q in sorted((stock or {}).items()))
         # Une commande déjà annulée au premier passage n'est pas une vente :
         # Amazon la renvoie avec 0 article et sans prix.
         if cmd.get("OrderStatus") == "Canceled":
-            sujet, titre = f"❌ MyStrow — Commande Amazon annulée ({oid})", "Commande annulée sur Amazon"
+            sujet, titre = f"❌ MyStrow - Commande Amazon annulée ({oid})", "Commande annulée sur Amazon"
         else:
-            sujet, titre = f"🛒 MyStrow — Vente Amazon ({oid})", "Nouvelle vente sur Amazon"
+            sujet, titre = f"🛒 MyStrow - Vente Amazon ({oid})", "Nouvelle vente sur Amazon"
         # Client Amazon Business : la politique Amazon exige une facture chargée
         # dans le jour ouvré qui suit l'expédition (taux de défaut ≤ 5 %, sinon
         # désactivation du compte). Le VCS est inaccessible (n° TVA rattaché à
@@ -2541,7 +2541,7 @@ def _run_ventes_amazon() -> int:
         # restreint : la facture se fait donc à la main, d'où l'alerte.
         business = ""
         if cmd.get("IsBusinessOrder") and cmd.get("OrderStatus") != "Canceled":
-            sujet = f"🧾 FACTURE À CHARGER — Commande Amazon Business ({oid})"
+            sujet = f"🧾 FACTURE À CHARGER - Commande Amazon Business ({oid})"
             titre = "Vente Amazon BUSINESS : facture obligatoire"
             business = f"""
 <div class="box">⚠️ <b>Client Amazon Business.</b> Charger la facture
@@ -2552,7 +2552,7 @@ ici : <a href="https://sellercentral.amazon.fr/orders-v3/order/{oid}">commande
 {oid}</a> → « Télécharger la facture ».</div>"""
         _alert_admin(sujet, f"""
 <h2>{titre}</h2>{business}
-<div class="box">{lignes}<br>Commande <b>{oid}</b> — {cmd.get('OrderStatus', '')}
+<div class="box">{lignes}<br>Commande <b>{oid}</b> - {cmd.get('OrderStatus', '')}
 ({cmd.get('FulfillmentChannel', '')})</div>
 <p>Stock FBA restant : {reste or '?'}</p>""")
         n += 1
@@ -2612,7 +2612,7 @@ def _subscription_id_from_invoice(invoice: dict) -> str:
     Stripe a sorti `subscription` de la racine de l'objet invoice : il vit
     maintenant sous `parent.subscription_details.subscription`. Comme
     `_stripe_get` n'épingle aucune version d'API, la forme reçue dépend de la
-    version configurée sur le endpoint webhook — on lit donc les deux, plus les
+    version configurée sur le endpoint webhook - on lit donc les deux, plus les
     lignes de facture en dernier recours.
     """
     sub = _id_of(invoice.get("subscription"))
@@ -2693,7 +2693,7 @@ def _on_invoice_paid(invoice: dict) -> None:
 
     # Plan facturé. On ne retombe JAMAIS en silence sur "monthly" : un annuel
     # renouvelé s'en trouverait rétrogradé, et _compute_expiry lui donnerait
-    # 31 jours d'accès au lieu de 366 — client payant coupé au bout d'un mois.
+    # 31 jours d'accès au lieu de 366 - client payant coupé au bout d'un mois.
     # (Dégât déjà constaté : cf. fix_annual_licenses.py.)
     plan_type = ""
     if sub_id:
@@ -2705,7 +2705,7 @@ def _on_invoice_paid(invoice: dict) -> None:
             print(f"[invoice.paid] abonnement {sub_id} illisible : {e}")
     else:
         print("[invoice.paid] aucun subscription_id dans la facture "
-              f"{invoice.get('id', '?')} — repli sur la ligne de facture")
+              f"{invoice.get('id', '?')} - repli sur la ligne de facture")
 
     if not plan_type:
         plan_type = _known_plan_from_price(_price_id_from_invoice(invoice))
@@ -2715,7 +2715,7 @@ def _on_invoice_paid(invoice: dict) -> None:
         plan_type = ((_doc.to_dict() or {}).get("plan_type") or "") if _doc.exists else ""
     if not plan_type:
         plan_type = "monthly"
-        print(f"[invoice.paid] plan indéterminable pour {email} — defaut 'monthly'")
+        print(f"[invoice.paid] plan indéterminable pour {email} - defaut 'monthly'")
 
     lang      = _lang_for_uid(uid)
     # Une facture payée ne doit jamais RACCOURCIR une licence : un client qui a
@@ -2729,7 +2729,7 @@ def _on_invoice_paid(invoice: dict) -> None:
 
     _email_renewal(email, expiry_ts, lang)
 
-    # Brevo — la nouvelle date d'expiration doit suivre, sinon la relance
+    # Brevo - la nouvelle date d'expiration doit suivre, sinon la relance
     # partirait sur une echeance deja repoussee.
     _brevo_sync_client(email, uid, plan_type, expiry_ts, lang, sub_id or "")
 
@@ -2738,11 +2738,11 @@ def _on_invoice_paid(invoice: dict) -> None:
     _axonaut_create_invoice(company_id, plan_type, amount_ttc, stripe_ref=stripe_ref,
                             uid=uid, tax_rate_stripe=tax_rate, stripe_tax=stripe_tax)
 
-    print(f"[invoice.paid] {email} — expire {_fmt_date(expiry_ts)}")
+    print(f"[invoice.paid] {email} - expire {_fmt_date(expiry_ts)}")
 
 
 def _on_subscription_deleted(subscription: dict) -> None:
-    """Abonnement annulé — révoque la licence."""
+    """Abonnement annulé - révoque la licence."""
     customer_id = subscription.get("customer", "")
     uid         = _find_uid_by_customer(customer_id)
     if not uid:
@@ -2761,11 +2761,11 @@ def _on_subscription_deleted(subscription: dict) -> None:
     if email:
         _email_cancelled(email, lang)
 
-    print(f"[subscription.deleted] uid={uid} — licence révoquée")
+    print(f"[subscription.deleted] uid={uid} - licence révoquée")
 
 
 def _on_payment_failed(invoice: dict) -> None:
-    """Échec de paiement — email + période de grâce.
+    """Échec de paiement - email + période de grâce.
 
     On ne coupe pas la licence tout de suite : Stripe va relancer le paiement
     et le client peut mettre sa carte à jour. La licence reste active encore
@@ -2773,11 +2773,11 @@ def _on_payment_failed(invoice: dict) -> None:
     elle sera révoquée par _on_subscription_deleted / _on_subscription_updated.
 
     On ignore l'échec de la 1ère facture (billing_reason == 'subscription_create') :
-    c'est une inscription qui n'a jamais abouti, donc aucune licence n'existe —
+    c'est une inscription qui n'a jamais abouti, donc aucune licence n'existe -
     inutile d'envoyer un email « paiement échoué » à un non-client.
     """
     if invoice.get("billing_reason") == "subscription_create":
-        print("[invoice.payment_failed] 1er paiement échoué (inscription non aboutie) — ignoré")
+        print("[invoice.payment_failed] 1er paiement échoué (inscription non aboutie) - ignoré")
         return
 
     customer_id = invoice.get("customer", "")
@@ -2795,11 +2795,11 @@ def _on_payment_failed(invoice: dict) -> None:
 
     if email:
         _email_payment_failed(email, lang)
-    print(f"[invoice.payment_failed] {email} — grâce {_GRACE_DAYS}j (uid={uid})")
+    print(f"[invoice.payment_failed] {email} - grâce {_GRACE_DAYS}j (uid={uid})")
 
 
 def _on_subscription_updated(subscription: dict) -> None:
-    """Abonnement modifié — révoque si Stripe l'a passé en 'unpaid' ou 'canceled'.
+    """Abonnement modifié - révoque si Stripe l'a passé en 'unpaid' ou 'canceled'.
 
     Filet de sécurité : selon les réglages de relance Stripe, un abonnement
     impayé peut être marqué 'unpaid' (ou 'canceled') SANS déclencher
@@ -2828,7 +2828,7 @@ def _on_subscription_updated(subscription: dict) -> None:
     if email:
         _email_cancelled(email, lang)
 
-    print(f"[subscription.updated] uid={uid} status={status} — licence révoquée")
+    print(f"[subscription.updated] uid={uid} status={status} - licence révoquée")
 
 
 # ===========================================================================
@@ -2845,7 +2845,7 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
     ⚠️ CORS obligatoire : l'espace client du site (compte.html) appelle cet
     endpoint depuis le navigateur. Sans les en-têtes, le préflight OPTIONS
     tombait sur le 405 « Method not allowed » et l'appel n'atteignait jamais la
-    fonction — c'est pour ça que le site est resté sur le lien Firebase natif.
+    fonction - c'est pour ça que le site est resté sur le lien Firebase natif.
     """
     _C = _cors_app(req)
     _H = {**_C, "Content-Type": "application/json"}
@@ -2924,7 +2924,7 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
       box-shadow:0 0 12px rgba(0,212,255,0.15);">{pwd_to_send}</span>
   </div>"""
         if lang == "en":
-            subject = "MyStrow — Your login credentials"
+            subject = "MyStrow - Your login credentials"
             content = f"""
 <h2 style="color:#fff;margin-top:0;">Your MyStrow credentials</h2>
 <p>Here are your credentials to access your MyStrow license:</p>
@@ -2938,7 +2938,7 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
 </p>
 """
         else:
-            subject = "MyStrow — Vos identifiants de connexion"
+            subject = "MyStrow - Vos identifiants de connexion"
             content = f"""
 <h2 style="color:#fff;margin-top:0;">Vos identifiants MyStrow</h2>
 <p>Voici vos identifiants pour accéder à votre licence MyStrow :</p>
@@ -2969,7 +2969,7 @@ def send_reset_email(req: https_fn.Request) -> https_fn.Response:
     except Exception as e:
         # `_send_email` est appelé avec raise_on_error=True : un rejet SMTP
         # (destinataire qui bloque, boîte pleine, expéditeur en liste noire)
-        # arrive ICI. On le remonte à l'appelant au lieu de le taire — c'est
+        # arrive ICI. On le remonte à l'appelant au lieu de le taire - c'est
         # exactement le cas qui laissait un client sans identifiants ET sans
         # aucun message d'erreur.
         print(f"[send_reset_email] Erreur : {e}")
@@ -3223,7 +3223,7 @@ def _make_fixture_uuid(name: str, manufacturer: str) -> str:
 
 
 # ===========================================================================
-# CLOUD FUNCTION: gdtf_upload (admin — import profils complets)
+# CLOUD FUNCTION: gdtf_upload (admin - import profils complets)
 # ===========================================================================
 
 @https_fn.on_request(max_instances=5, timeout_sec=300)
@@ -3241,7 +3241,7 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     auth_header = req.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return https_fn.Response(
-            json.dumps({"ok": False, "error": "Token manquant — reconnectez-vous à l'admin panel"}),
+            json.dumps({"ok": False, "error": "Token manquant - reconnectez-vous à l'admin panel"}),
             status=403,
             headers={"Content-Type": "application/json"},
         )
@@ -3252,7 +3252,7 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     except Exception as e:
         print(f"[gdtf_upload] Token invalide : {e}")
         return https_fn.Response(
-            json.dumps({"ok": False, "error": "Token invalide ou expiré — reconnectez-vous"}),
+            json.dumps({"ok": False, "error": "Token invalide ou expiré - reconnectez-vous"}),
             status=403,
             headers={"Content-Type": "application/json"},
         )
@@ -3377,8 +3377,8 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
 # GDTF Share ou origine inconnue restent en import local chez l'utilisateur.
 _SHAREABLE_SOURCES = {
     "perso":   {"license": "MyStrow-Community", "attribution": ""},
-    "ofl":     {"license": "CC0-1.0",     "attribution": "Open Fixture Library — CC0 1.0"},
-    "qlcplus": {"license": "Apache-2.0",  "attribution": "QLC+ Fixture Library — Apache 2.0"},
+    "ofl":     {"license": "CC0-1.0",     "attribution": "Open Fixture Library - CC0 1.0"},
+    "qlcplus": {"license": "Apache-2.0",  "attribution": "QLC+ Fixture Library - Apache 2.0"},
 }
 
 # Quota anti-dump : nombre maximum de fixtures proposees par compte et par jour.
@@ -3495,7 +3495,7 @@ def fixture_submit(req: https_fn.Request) -> https_fn.Response:
     except Exception as e:
         print(f"[fixture_submit] Token invalide : {e}")
         return https_fn.Response(
-            json.dumps({"ok": False, "error": "Session expiree — reconnectez-vous."}),
+            json.dumps({"ok": False, "error": "Session expiree - reconnectez-vous."}),
             status=403, headers={"Content-Type": "application/json"})
 
     try:
@@ -3672,7 +3672,7 @@ def _controller_fingerprint(profile: dict) -> str:
 
 def _validate_controller_profile(data) -> tuple:
     """
-    (ok, raison) — portage de controller_profile.validate_profile.
+    (ok, raison) - portage de controller_profile.validate_profile.
 
     Un profil accepte ici sera installe chez d'autres utilisateurs : un JSON
     malforme ne casserait pas l'installation mais la connexion du controleur,
@@ -4000,14 +4000,14 @@ def _claim_stripe_event(event_id: str, event_type: str) -> bool:
     et `_on_checkout_completed` enchaîne compte Firebase + email SMTP + Brevo +
     trois appels Axonaut (dont un `GET /companies` qui rapatrie toute la base) :
     dépasser le délai n'a rien d'exceptionnel. Sans verrou, le rejeu refait
-    TOUT — deux sociétés Axonaut et deux factures pour un seul encaissement.
+    TOUT - deux sociétés Axonaut et deux factures pour un seul encaissement.
     Constaté 4 fois entre mai et août 2026 : ANTHONY MACOINE (14/05), billoux
     (02/06), SCHMIT Amaury (20/06), martial bulard (24/08, rattrapé par un
     avoir).
 
     `create()` échoue si le document existe déjà, et cet échec est atomique
     côté Firestore : deux exécutions simultanées ne peuvent pas passer toutes
-    les deux. Si Firestore est indisponible on laisse passer — un doublon se
+    les deux. Si Firestore est indisponible on laisse passer - un doublon se
     rattrape avec un avoir, un paiement jamais traité laisse un client sans
     licence.
     """
@@ -4020,7 +4020,7 @@ def _claim_stripe_event(event_id: str, event_type: str) -> bool:
     except Conflict:
         return False
     except Exception as e:
-        print(f"[Webhook] Verrou anti-rejeu indisponible ({e}) — traitement poursuivi")
+        print(f"[Webhook] Verrou anti-rejeu indisponible ({e}) - traitement poursuivi")
         return True
 
 
@@ -4034,7 +4034,7 @@ def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
     sig_header = req.headers.get("Stripe-Signature", "")
 
     if not _verify_stripe_signature(payload, sig_header):
-        print("[Webhook] Signature invalide — requête rejetée")
+        print("[Webhook] Signature invalide - requête rejetée")
         return https_fn.Response("Signature invalide", status=400)
 
     try:
@@ -4051,7 +4051,7 @@ def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
         # rejouable (il crée société, facture et encaissement côté Axonaut).
         event_id = event.get("id", "")
         if event_id and not _claim_stripe_event(event_id, event_type):
-            print(f"[Webhook] Événement {event_id} déjà traité — rejeu ignoré")
+            print(f"[Webhook] Événement {event_id} déjà traité - rejeu ignoré")
             return https_fn.Response("OK (rejeu ignore)", status=200)
         try:
             handler(data_obj)
@@ -4068,7 +4068,7 @@ def stripe_webhook(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
-# COMPTE CLIENT — create_portal_session & revoke_machine_web
+# COMPTE CLIENT - create_portal_session & revoke_machine_web
 # ===========================================================================
 
 _CORS_HEADERS = {
@@ -4132,8 +4132,8 @@ def _verify_admin(req: https_fn.Request) -> str | None:
 
 @https_fn.on_request()
 def admin_cancel_subscription(req: https_fn.Request) -> https_fn.Response:
-    """Annule un abonnement Stripe — RÉSERVÉ aux admins (ADMIN_EMAILS).
-    POST — Authorization: Bearer <firebase_id_token> — Body: {"subscription_id": "sub_..."}
+    """Annule un abonnement Stripe - RÉSERVÉ aux admins (ADMIN_EMAILS).
+    POST - Authorization: Bearer <firebase_id_token> - Body: {"subscription_id": "sub_..."}
     Utilise la clé Stripe SERVEUR (compte MyStrow) : plus aucune clé Stripe dans l'app."""
     if req.method == "OPTIONS":
         return _cors_preflight()
@@ -4195,7 +4195,7 @@ def admin_boitier_retablir_abo(req: https_fn.Request) -> https_fn.Response:
 def create_portal_session(req: https_fn.Request) -> https_fn.Response:
     """
     Crée une session Stripe Customer Portal pour l'utilisateur connecté.
-    POST — Authorization: Bearer <firebase_id_token>
+    POST - Authorization: Bearer <firebase_id_token>
     Retourne : {"url": "https://billing.stripe.com/..."}
     """
     if req.method == "OPTIONS":
@@ -4241,7 +4241,7 @@ def create_portal_session(req: https_fn.Request) -> https_fn.Response:
 def revoke_machine_web(req: https_fn.Request) -> https_fn.Response:
     """
     Révoque une machine depuis l'espace client web.
-    POST — Authorization: Bearer <firebase_id_token>
+    POST - Authorization: Bearer <firebase_id_token>
     Body JSON : {"machine_id": "..."}
     """
     if req.method == "OPTIONS":
@@ -4291,12 +4291,12 @@ def revoke_machine_web(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
-# COMPTE CLIENT — update_billing_info (SIRET / TVA pour la facture électronique)
+# COMPTE CLIENT - update_billing_info (SIRET / TVA pour la facture électronique)
 # ===========================================================================
 #
 # Pourquoi un champ SIRET et pas seulement la collecte TVA de Stripe : les
 # micro-entrepreneurs en franchise (DJ, animateurs…) n'ont PAS de numéro de
-# TVA, seulement un SIRET — et Stripe ne sait demander qu'un numéro de TVA.
+# TVA, seulement un SIRET - et Stripe ne sait demander qu'un numéro de TVA.
 # Or au 01/09/2027 le SIREN du client pro devient une mention obligatoire et
 # c'est lui qui route la facture électronique.
 
@@ -4327,7 +4327,7 @@ def _siret_valid(siret: str) -> bool:
 
 def _lookup_entreprise(siret: str) -> dict | None:
     """Interroge l'annuaire public (sans clé) et renvoie la raison sociale et
-    l'adresse de l'ÉTABLISSEMENT demandé — pas forcément le siège.
+    l'adresse de l'ÉTABLISSEMENT demandé - pas forcément le siège.
     None si introuvable ou annuaire injoignable."""
     url = f"{_RECHERCHE_ENTREPRISES}?q={siret}&page=1&per_page=1"
     try:
@@ -4418,11 +4418,11 @@ def _axonaut_apply_billing(company_id: int, info: dict, vat: str) -> bool:
 def update_billing_info(req: https_fn.Request) -> https_fn.Response:
     """
     Enregistre le SIRET et/ou le n° de TVA d'un client pro (espace compte).
-    POST — Authorization: Bearer <firebase_id_token>
+    POST - Authorization: Bearer <firebase_id_token>
     Body JSON : {"siret": "...", "vat_number": "...", "dry_run": bool}
 
     `dry_run` : vérifie le SIRET dans l'annuaire et renvoie la raison sociale
-    SANS rien écrire — la page l'affiche pour que le client confirme avant.
+    SANS rien écrire - la page l'affiche pour que le client confirme avant.
     Sinon : Firestore (/licenses/{uid}) puis fiche Axonaut si elle existe déjà
     (axonaut_company_id). Sans fiche, la prochaine facture la créera avec le
     SIRET (_axonaut_get_or_create_company lit billing_siret).
@@ -4530,7 +4530,7 @@ def _garder_en_attente(email: str, lang: str, motif: str) -> bool:
     abonnés. Sans ce filet, chaque personne qui s'inscrit pendant ce temps est
     perdue pour de bon : elle voit une erreur, ne recommence pas, et son adresse
     n'existe nulle part. Ici elle est ecrite dans Firestore, et on lui repond
-    que tout va bien — ce qui est vrai de son point de vue, elle est inscrite.
+    que tout va bien - ce qui est vrai de son point de vue, elle est inscrite.
 
     Les adresses en attente se rejouent ensuite avec :
         collection « newsletter_pending », champ `synced` a False.
@@ -4579,7 +4579,7 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
         # La liste s'arretait a ("fr", "en") : les 30 pages espagnoles,
         # allemandes et portugaises envoyaient bien leur langue, et elle etait
         # silencieusement ecrasee en « fr » ici. Tous ces inscrits etaient donc
-        # enregistres comme francophones — invisible, puisque rien n'echoue.
+        # enregistres comme francophones - invisible, puisque rien n'echoue.
         if lang not in ("fr", "en", "es", "de", "pt"):
             lang = "fr"
     except Exception:
@@ -4600,7 +4600,7 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
     # on peut livrer cette fonction avant d'avoir créé la liste Brevo sans que
     # la moindre inscription tombe dans le filet Firestore. Le jour où
     # BREVO_LIST_NEWSLETTER est renseigné, la bascule se fait toute seule.
-    # À nettoyer — avec `_sender_token` et `SENDER_GROUP_NEWSLETTER` — une fois
+    # À nettoyer - avec `_sender_token` et `SENDER_GROUP_NEWSLETTER` - une fois
     # les contacts historiques repris dans Brevo.
     brevo_token = _brevo_key()
     list_id     = _brevo_list_newsletter()
@@ -4699,7 +4699,7 @@ def subscribe_newsletter(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
-# DOWNLOAD REDIRECT — compteur de téléchargements
+# DOWNLOAD REDIRECT - compteur de téléchargements
 # ===========================================================================
 
 _DOWNLOAD_URLS = {
@@ -4752,7 +4752,7 @@ def download_redirect(req: https_fn.Request) -> https_fn.Response:
 
 
 # ---------------------------------------------------------------------------
-# GA4 — visites du site par jour (réservé aux admins)
+# GA4 - visites du site par jour (réservé aux admins)
 # ---------------------------------------------------------------------------
 
 _GA4_PROPERTY_ID  = "530160506"
@@ -4998,7 +4998,7 @@ def ga4_insights(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
-# ACTIVATION BOÎTIER USB-DMX — mystrow.fr/activate
+# ACTIVATION BOÎTIER USB-DMX - mystrow.fr/activate
 # ===========================================================================
 #
 # Deux secrets, deux endroits, et il faut les deux :
@@ -5035,7 +5035,7 @@ def _act_normalize_code(raw: str) -> str:
 def _act_code_wellformed(code: str) -> bool:
     """Contrôle hors-ligne : longueur, alphabet, caractère de contrôle.
 
-    Écarte les fautes de frappe sans consulter la base — donc sans qu'une
+    Écarte les fautes de frappe sans consulter la base - donc sans qu'une
     erreur de saisie consomme une tentative de la limite de débit.
     """
     return (len(code) == _ACT_BODY_LEN + 1
@@ -5170,7 +5170,7 @@ def _boitier_suspendre_abo(lic_data: dict, until: float) -> dict:
 
 def _boitier_retablir_abo(lic: dict) -> None:
     """Boîtier repris (retour, revente) : l'abonnement retrouve l'échéance
-    qu'il avait avant l'activation — ou prélève tout de suite si elle est
+    qu'il avait avant l'activation - ou prélève tout de suite si elle est
     passée. Lève une exception si Stripe refuse : l'appelant décide."""
     sub_id = lic.get("boitier_stripe_sub") or ""
     if not sub_id or sub_id != (lic.get("stripe_subscription_id") or ""):
@@ -5259,7 +5259,7 @@ def _boitier_reprendre(uid: str, serial: str, new_email: str) -> bool:
     ref.update(update)
 
     print(f"[boitier] {serial} repris à {email or uid} "
-          f"(nouveau détenteur {new_email}) — {new_plan}, {_fmt_date(new_exp)}")
+          f"(nouveau détenteur {new_email}) - {new_plan}, {_fmt_date(new_exp)}")
 
     try:
         _brevo_sync_client(email, uid, plan_type, new_exp, lang, sub_id)
@@ -5277,7 +5277,7 @@ def _email_boitier_transfere(email: str, serial: str, expiry_ts: float,
                              plan: str, lang: str = "fr") -> None:
     date = _fmt_date(expiry_ts, lang)
     if lang == "en":
-        subject = "MyStrow — Your interface license has been transferred"
+        subject = "MyStrow - Your interface license has been transferred"
         reste = (f"Your license remains active until <b>{date}</b>."
                  if plan != "expired" else
                  "Your account no longer has an active license.")
@@ -5293,7 +5293,7 @@ follows the interface, so it has been removed from your account.</p>
 email: we will sort it out.</p>
 """
     else:
-        subject = "MyStrow — La licence de votre boîtier a été transférée"
+        subject = "MyStrow - La licence de votre boîtier a été transférée"
         reste = (f"Votre licence reste active jusqu'au <b>{date}</b>."
                  if plan != "expired" else
                  "Votre compte n'a plus de licence active.")
@@ -5320,7 +5320,7 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
     l'offre Amazon à 99 €) ou, pour un MS-DMY, par le document du boîtier
     (posé par tools/push_boitier_serials.py --months) ; jamais supposée ici.
 
-    MS-DMY : une seule activation par boîtier, PAS de transfert automatique —
+    MS-DMY : une seule activation par boîtier, PAS de transfert automatique -
     le numéro est lisible sur le boîtier, le premier venu ne doit pas pouvoir
     reprendre la licence à son détenteur. Après un « Retour boîtier » à
     l'admin (activated_uid vidé), le boîtier revendu s'active de nouveau."""
@@ -5445,7 +5445,7 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
             if lic.exists and (lic.to_dict() or {}).get("plan_type") == "lifetime":
                 return _ko("already_lifetime",
                            "Ce compte dispose déjà d'une licence à vie. "
-                           "Votre code n'a pas été consommé — gardez-le.", 409)
+                           "Votre code n'a pas été consommé - gardez-le.", 409)
 
         # Interface vendue seule (MyStrowFan, offre « sans licence ») : le
         # boîtier est connu mais n'apporte aucun mois. Sans ce garde, le
@@ -5577,7 +5577,7 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         except Exception:
             # Le code (ou le boîtier maison) est déjà marqué consommé : on le
             # rend, sinon un incident côté Firebase brûle définitivement la
-            # carte — ou le boîtier — d'un client.
+            # carte - ou le boîtier - d'un client.
             try:
                 (ser_ref if is_dmy else code_ref).update(rollback)
             except Exception:
@@ -5624,9 +5624,9 @@ def activate_code(req: https_fn.Request) -> https_fn.Response:
         except Exception as e:
             print(f"[activate] Brevo : {e}")
 
-        print(f"[activate] {email} — {serial} — code {code or '(boîtier maison)'} — "
+        print(f"[activate] {email} - {serial} - code {code or '(boîtier maison)'} - "
               f"expire {_fmt_date(expiry)}"
-              + (f" — TRANSFERT depuis {code_data.get('used_email', '?')}"
+              + (f" - TRANSFERT depuis {code_data.get('used_email', '?')}"
                  if transfer_from else ""))
 
         return https_fn.Response(json.dumps({
@@ -5656,7 +5656,7 @@ _USB_ID_RE = re.compile(r"^[0-9A-F]{12}$")
 def boitier_detect(req: https_fn.Request) -> https_fn.Response:
     """L'app a vu un boîtier MyStrow branché : à qui est-il, que contient-il ?
 
-    POST — Body : {"usb_id": "E3FC85C0BDF0"}
+    POST - Body : {"usb_id": "E3FC85C0BDF0"}
            Authorization: Bearer <id_token> FACULTATIF (sans lui, le statut
            ne peut pas distinguer « à vous » de « à un autre »).
 
@@ -5664,9 +5664,9 @@ def boitier_detect(req: https_fn.Request) -> https_fn.Response:
     WCH d'un autre fabricant, boîtier pas encore appairé), sinon
     {"ok": true, "known": true, "status": ..., "months": N[, "serial": ...]}
     avec status :
-      - "free"     : jamais activé — l'app propose l'activation ;
+      - "free"     : jamais activé - l'app propose l'activation ;
       - "yours"    : déjà activé sur le compte du jeton ;
-      - "other"    : activé ailleurs — le numéro n'est PAS renvoyé ;
+      - "other"    : activé ailleurs - le numéro n'est PAS renvoyé ;
       - "lifetime" : libre, mais le compte du jeton est à vie : rien à offrir.
 
     Seule l'IDENTITÉ vient du boîtier ; l'offre (durée) est lue ici, dans
@@ -5757,7 +5757,7 @@ def boitier_detect(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
-# MYSTROWFAN — enregistrement des boîtiers depuis le poste de conditionnement
+# MYSTROWFAN - enregistrement des boîtiers depuis le poste de conditionnement
 # ===========================================================================
 #
 # MyStrowFan.exe tourne chez la personne qui prépare les colis : il ne doit
@@ -6096,12 +6096,12 @@ def boitier_expeditions(req: https_fn.Request) -> https_fn.Response:
 
 
 # ===========================================================================
-# RELANCE DE FIN DE LICENCE BOÎTIER — tâche planifiée quotidienne
+# RELANCE DE FIN DE LICENCE BOÎTIER - tâche planifiée quotidienne
 # ===========================================================================
 #
 # La licence livrée avec un boîtier (12 mois, ou 2 mois pour l'offre Amazon à
 # 99 €) a une VRAIE fin : aucun prélèvement ne la prolonge. Sans relance, le
-# client la découvre le soir où l'app se bloque — souvent en pleine presta.
+# client la découvre le soir où l'app se bloque - souvent en pleine presta.
 #
 # Ne sont relancés que les clients dont c'est encore l'échéance réelle :
 #   - pas d'abonnement Stripe actif ni de licence à vie (même règle que
@@ -6124,8 +6124,8 @@ _TARIFS_URL = {
 
 def _boitier_label(months: int, lang: str = "fr") -> str:
     if lang == "en":
-        return f"MyStrow License — {months} months (USB-DMX interface)"
-    return f"Licence MyStrow — {months} mois (boîtier USB-DMX)"
+        return f"MyStrow License - {months} months (USB-DMX interface)"
+    return f"Licence MyStrow - {months} mois (boîtier USB-DMX)"
 
 
 def _boitier_paliers(months: int) -> tuple:
@@ -6184,8 +6184,8 @@ def _email_boitier_relance(email: str, expiry_ts: float, days_left: int,
             f"&utm_campaign=relance_boitier_{months}m")
     if lang == "en":
         quand = "tomorrow" if days_left <= 1 else f"in {days_left} days"
-        subject = (f"MyStrow — Your license ends {quand}" if dernier
-                   else f"MyStrow — Your license ends on {date}")
+        subject = (f"MyStrow - Your license ends {quand}" if dernier
+                   else f"MyStrow - Your license ends on {date}")
         if dernier:
             titre = f"Last reminder: your license ends {quand}"
         elif months > 3:
@@ -6209,8 +6209,8 @@ is lost when the license ends.</p>
 """
     else:
         quand = "demain" if days_left <= 1 else f"dans {days_left} jours"
-        subject = (f"MyStrow — Votre licence se termine {quand}" if dernier
-                   else f"MyStrow — Votre licence se termine le {date}")
+        subject = (f"MyStrow - Votre licence se termine {quand}" if dernier
+                   else f"MyStrow - Votre licence se termine le {date}")
         if dernier:
             titre = f"Dernier rappel : votre licence se termine {quand}"
         elif months > 3:
@@ -6277,13 +6277,13 @@ def _run_boitier_relances(now: float | None = None, dry_run: bool = False) -> li
                 envoyes.setdefault(str(p), now)
         doc.reference.update({"boitier_relances": envoyes,
                               "boitier_relances_until": until})
-        print(f"[relance] {email} — {months} mois — J-{palier} "
+        print(f"[relance] {email} - {months} mois - J-{palier} "
               f"({days_left} j restants)")
     return faits
 
 
 # Tous les jours à 8 h UTC (9 h ou 10 h à Paris). Pas de `timezone=` : il
-# exige la base tzdata, absente de Python sous Windows — là où tourne
+# exige la base tzdata, absente de Python sous Windows - là où tourne
 # `firebase deploy`, qui charge ce module pour lire la liste des fonctions.
 @scheduler_fn.on_schedule(schedule="0 8 * * *", max_instances=1)
 def boitier_relances(event: scheduler_fn.ScheduledEvent) -> None:
@@ -6413,20 +6413,20 @@ def _run_declaration(now: datetime | None = None, force: bool = False) -> dict:
                                 [fresh.get(k, known[k]) for k in sorted(known)])
     except Exception as e:
         print(f"[Déclaration] ⚠️ Écriture du Sheet impossible : {e}")
-        _alert_admin("⚠️ Déclaration URSSAF — tableau non mis à jour",
+        _alert_admin("⚠️ Déclaration URSSAF - tableau non mis à jour",
                      f"<p>Le Google Sheet n'a pas pu être écrit :</p><pre>{html_escape(str(e)[:800])}</pre>"
                      "<p>Les montants du mail restent justes (Firestore).</p>")
 
     key = f"{y:04d}-{m:02d}"
     cur = known.get(key, {})
     if cur.get("mail_envoye") and not force:
-        print(f"[Déclaration] {key} déjà envoyée — pas de second mail")
+        print(f"[Déclaration] {key} déjà envoyée - pas de second mail")
         return cur
     year_docs = [v for k, v in known.items() if k.startswith(f"{y:04d}-")]
     cumul_s = round(sum(float(v.get("service_ht") or 0) for v in year_docs), 2)
     cumul_r = round(sum(float(v.get("revente_ht") or 0) for v in year_docs), 2)
     _alert_admin(
-        f"📋 URSSAF {declaration.mois_label(y, m)} — service "
+        f"📋 URSSAF {declaration.mois_label(y, m)} - service "
         f"{declaration._eur(cur.get('service_ht', 0))} · achat-revente "
         f"{declaration._eur(cur.get('revente_ht', 0))}",
         declaration.mail_html(cur, cumul_s, cumul_r, sheet_url))
@@ -6445,6 +6445,61 @@ def declaration_mensuelle(event: scheduler_fn.ScheduledEvent) -> None:
 def purge_journaux(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[Purge] {_run_purge_downloads()} téléchargement(s) de plus de 13 mois effacé(s)")
     print(f"[Purge] {_run_purge_assistant()} remontée(s) de l'assistant de plus de 12 mois effacée(s)")
+
+
+# ── MyStrow Up : surveillance du relais live.mystrow.fr ──────────────────────
+# Toutes les 5 min : /health du relais (Hetzner). Mail à l'admin après 2 échecs
+# DE SUITE (≈ 10 min : un redémarrage du service ou un raté réseau ne réveille
+# personne), puis un mail « rétabli » quand il répond de nouveau. État gardé
+# dans monitoring/mystrow_up pour ne pas renvoyer l'alerte toutes les 5 min.
+UP_HEALTH_URL = "https://live.mystrow.fr/health"
+UP_ECHECS_AVANT_ALERTE = 2
+
+
+def _up_sonder() -> tuple[bool, str]:
+    import urllib.request
+    dernier = ""
+    for _ in range(2):                       # 2 essais rapprochés par passage
+        try:
+            with urllib.request.urlopen(UP_HEALTH_URL, timeout=10) as r:
+                info = json.loads(r.read().decode() or "{}")
+            if r.status == 200 and info.get("ok"):
+                return True, f"{info.get('sessions', 0)} session(s), {info.get('telephones', 0)} téléphone(s)"
+            dernier = f"réponse inattendue : HTTP {r.status} {info}"
+        except Exception as e:
+            dernier = f"{type(e).__name__} : {e}"
+        time.sleep(3)
+    return False, dernier[:300]
+
+
+def _run_up_surveillance() -> str:
+    ok, detail = _up_sonder()
+    ref = _get_db().collection("monitoring").document("mystrow_up")
+    etat = (ref.get().to_dict() or {})
+    echecs = 0 if ok else int(etat.get("echecs", 0)) + 1
+    alerte = bool(etat.get("alerte"))
+    maj = {"echecs": echecs, "dernier": detail, "verifie_le": time.time()}
+    if not ok and echecs >= UP_ECHECS_AVANT_ALERTE and not alerte:
+        _alert_admin(
+            "⚠ MyStrow Up : serveur live.mystrow.fr injoignable",
+            f"<p>Le relais MyStrow Up ne répond plus depuis environ {echecs * 5} min.</p>"
+            f"<p>Dernière erreur : {html_escape(detail)}</p>"
+            "<p>Vérifier : <code>ssh -i ~/.ssh/mystrow_live root@37.27.153.144</code> puis "
+            "<code>systemctl status mystrow-live caddy</code>. Console Hetzner si la machine elle-même ne répond pas.</p>")
+        maj["alerte"], maj["depuis"] = True, time.time() - echecs * 300
+    elif ok and alerte:
+        duree = int((time.time() - float(etat.get("depuis") or time.time())) / 60)
+        _alert_admin("✅ MyStrow Up : serveur rétabli",
+                     f"<p>live.mystrow.fr répond de nouveau ({html_escape(detail)}). "
+                     f"Panne d'environ {duree} min.</p>")
+        maj["alerte"] = False
+    ref.set(maj, merge=True)
+    return ("OK " if ok else f"ÉCHEC n°{echecs} ") + detail
+
+
+@scheduler_fn.on_schedule(schedule="*/5 * * * *", max_instances=1)
+def up_surveillance(event: scheduler_fn.ScheduledEvent) -> None:
+    print(f"[Up surveillance] {_run_up_surveillance()}")
 
 
 # ── App Store : notifications serveur (V2) ───────────────────────────────────
@@ -6552,13 +6607,100 @@ def appstore_notifications(req: https_fn.Request) -> https_fn.Response:
     if tx.get("purchaseDate"):
         quand = datetime.fromtimestamp(tx["purchaseDate"] / 1000, timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     _alert_admin(
-        f"{emoji} MyStrow — {titre}{bac}" + (f" ({prix}, {tx.get('storefront', '')})" if prix else ""),
+        f"{emoji} MyStrow - {titre}{bac}" + (f" ({prix}, {tx.get('storefront', '')})" if prix else ""),
         f"""
 <h2>{titre}{bac}</h2>
-<div class="box">Produit : <b>{html_escape(tx.get('productId', '—'))}</b><br>
-Prix payé : <b>{html_escape(prix or '—')}</b> (TTC, avant commission Apple)<br>
-Pays : {html_escape(tx.get('storefront', '—'))}<br>
-Date : {html_escape(quand or '—')}<br>
-Transaction : {html_escape(str(tx.get('transactionId', '—')))}</div>
+<div class="box">Produit : <b>{html_escape(tx.get('productId', '-'))}</b><br>
+Prix payé : <b>{html_escape(prix or '-')}</b> (TTC, avant commission Apple)<br>
+Pays : {html_escape(tx.get('storefront', '-'))}<br>
+Date : {html_escape(quand or '-')}<br>
+Transaction : {html_escape(str(tx.get('transactionId', '-')))}</div>
 <p>Type Apple : {html_escape(ntype)}{(' / ' + html_escape(sous_type)) if sous_type else ''}</p>""")
     return https_fn.Response("ok")
+
+
+# ── MyStrow Up : ticket de session (téléphones du public) ────────────────────
+# Le relais live.mystrow.fr ne connaît pas Firestore : MyStrow vient chercher ici
+# un ticket signé (HMAC, secret partagé UP_TICKET_SECRET) qui dit combien de
+# téléphones la session a le droit d'accueillir. Licence payée active → 50 ;
+# compte en essai actif → 1 (aperçu, pas de show possible) ; sinon refus. Le relais REFUSE toute session
+# sans ticket : pas de compte = pas de MyStrow Up.
+_UP_CAP_LICENCE = 50
+_UP_CAP_ESSAI = 1        # essai = aperçu sur 1 téléphone (25/11/2026 : réservé aux licences)
+_UP_TICKET_S = 8 * 3600
+
+
+def _up_ticket_signe(data: dict) -> str:
+    import base64
+    corps = base64.urlsafe_b64encode(
+        json.dumps(data, separators=(",", ":")).encode()).decode().rstrip("=")
+    sig = hmac.new(_cfg("UP_TICKET_SECRET").encode(), corps.encode(),
+                   hashlib.sha256).hexdigest()
+    return f"{corps}.{sig}"
+
+
+@https_fn.on_request(max_instances=5, timeout_sec=15)
+def up_ticket(req: https_fn.Request) -> https_fn.Response:
+    if req.method != "POST":
+        return https_fn.Response("POST only", status=405)
+    if not _cfg("UP_TICKET_SECRET"):
+        return https_fn.Response(json.dumps({"error": "not_configured"}), status=503,
+                                 content_type="application/json")
+    # Jeton dans le CORPS (comme create_portal_session) : l'en-tête Authorization
+    # n'arrive pas intact derrière Cloud Run (401 alors que le jeton est valide).
+    _ensure_init()
+    body = req.get_json(silent=True) or {}
+    jeton = str(body.get("id_token") or "")
+    if not jeton and req.headers.get("Authorization", "").startswith("Bearer "):
+        jeton = req.headers["Authorization"][7:]
+    try:
+        uid = auth.verify_id_token(jeton)["uid"]
+    except Exception as e:
+        print(f"[Up] jeton refusé : {type(e).__name__} {str(e)[:150]}")
+        return https_fn.Response(json.dumps({"error": "unauthorized"}), status=401,
+                                 content_type="application/json")
+    # Licence payée active → 50 ; essai en cours → 1 (aperçu) ; sinon (essai ou licence
+    # expirés, pas de document) → refusé : pas de session MyStrow Up.
+    cap, plan = 0, ""
+    try:
+        snap = _get_db().collection("licenses").document(uid).get()
+        lic = snap.to_dict() if snap.exists else {}
+        actif = float(lic.get("expiry_utc") or 0) > time.time()
+        if lic.get("plan") == "license" and actif:
+            cap, plan = _UP_CAP_LICENCE, "license"
+        elif lic.get("plan") == "trial" and actif:
+            cap, plan = _UP_CAP_ESSAI, "trial"
+    except Exception as e:
+        print(f"[Up] lecture licence {uid} : {e}")
+        return https_fn.Response(json.dumps({"error": "unavailable"}), status=503,
+                                 content_type="application/json")
+    if not cap:
+        print(f"[Up] refus {uid} : ni licence ni essai actifs")
+        return https_fn.Response(json.dumps({"error": "no_licence"}), status=403,
+                                 content_type="application/json")
+    exp = int(time.time()) + _UP_TICKET_S
+    data = {"uid": uid, "cap": cap, "exp": exp}
+    # Licence payée : QR PERMANENT (imprimable à l'avance). Le code est dérivé
+    # du uid par HMAC : stable, impossible à deviner, et c'est le ticket signé
+    # qui autorise ce compte - et lui seul - à ouvrir la session de ce code.
+    sid_fixe = _up_sid_fixe(uid) if plan == "license" else ""
+    if sid_fixe:
+        data["sid"] = sid_fixe
+    ticket = _up_ticket_signe(data)
+    print(f"[Up] ticket {uid} plan={plan} cap={cap} fixe={bool(sid_fixe)}")
+    return https_fn.Response(json.dumps({"ticket": ticket, "cap": cap, "plan": plan, "exp": exp,
+                                         "sid": sid_fixe}),
+                             content_type="application/json")
+
+
+def _up_sid_fixe(uid: str) -> str:
+    """10 caractères sans ambiguïté (pas de 0/O/1/l). Les sessions d'essai ont
+    8 caractères : les deux familles ne peuvent pas se télescoper."""
+    alpha = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    h = int.from_bytes(hmac.new(_cfg("UP_TICKET_SECRET").encode(), f"sid:{uid}".encode(),
+                                hashlib.sha256).digest(), "big")
+    out = ""
+    for _ in range(10):
+        h, r = divmod(h, len(alpha))
+        out += alpha[r]
+    return out

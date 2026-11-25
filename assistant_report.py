@@ -1,5 +1,5 @@
 """
-assistant_report.py — Remontée des demandes et erreurs de l'assistant.
+assistant_report.py - Remontée des demandes et erreurs de l'assistant.
 
 Seulement si l'utilisateur a dit oui (clé `share` du store ~/.mystrow_assistant.json).
 Les éléments attendent dans `outbox` (gardé sur le disque) et partent par lots

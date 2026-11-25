@@ -44,7 +44,7 @@ def load_gz(name):
 
 
 def modes_of(fx):
-    """[(nom du mode, profil canonique)] — même repli que le PC : `modes`, sinon `profile`."""
+    """[(nom du mode, profil canonique)] - même repli que le PC : `modes`, sinon `profile`."""
     out = []
     for m in fx.get("modes") or []:
         if isinstance(m, dict) and m.get("profile"):

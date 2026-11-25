@@ -1,5 +1,5 @@
 """
-test_channel_ranges.py — Plage utile par canal (« brider » un canal).
+test_channel_ranges.py - Plage utile par canal (« brider » un canal).
 
 Beaucoup d'appareils d'entree de gamme rangent un programme AUTO dans le haut de
 la course d'un canal : sur le laser generique 10 canaux, Pan/Tilt valent
@@ -12,7 +12,7 @@ Ce qui est verrouille ici :
     la plage, toute la course reste utile ;
   * Pan/Tilt sont etires d'un bloc en 16 bits (canal fin compris) et APRES
     l'inversion : la plage decrit le canal physique ;
-  * une valeur EXACTE (slot de roue, preset) n'est que BORNEE, jamais etiree —
+  * une valeur EXACTE (slot de roue, preset) n'est que BORNEE, jamais etiree -
     sinon le slot « Rouge » tomberait sur le jaune ;
   * les valeurs brutes (curseur par numero, couche d'effet, channel_defaults)
     sont bornees, pas etirees ;

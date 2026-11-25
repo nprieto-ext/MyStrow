@@ -1,5 +1,5 @@
 """
-Système de packs de fixtures distants — MyStrow.
+Système de packs de fixtures distants - MyStrow.
 
 Vérifie, télécharge et intègre des packs de fixtures publiés depuis l'admin
 panel vers Firestore, puis fusionnés dans la bibliothèque locale de l'utilisateur.
@@ -89,8 +89,8 @@ def vient_de_la_bibliotheque(fx: dict) -> bool:
     """La fixture a-t-elle été TÉLÉCHARGÉE, par opposition à créée par l'utilisateur ?
 
     C'est ce qui décide si une mise à jour a le droit de l'écraser. Une fixture
-    corrigée puis republiée ne redescendait jamais : partout — packs, bouton
-    Actualiser — un doublon (même nom + fabricant) était simplement ignoré. Le
+    corrigée puis republiée ne redescendait jamais : partout - packs, bouton
+    Actualiser - un doublon (même nom + fabricant) était simplement ignoré. Le
     client « actualisait » sans rien recevoir, et gardait indéfiniment le profil
     fautif.
 
@@ -103,10 +103,20 @@ def vient_de_la_bibliotheque(fx: dict) -> bool:
     (`fixture_editor._get_form_data`) : les retouches locales sont donc
     protégées, y compris sur une fixture d'origine distante.
     """
+    # Troisième indice (23/11/2026) : `addedAtVersion`, que seuls portent les
+    # documents de la bibliothèque Firebase (`gdtf_fixtures`). Sans lui, une
+    # fixture distante de source « ma3 », « ma2 », « Niko »… reçue avant le
+    # marquage passait pour une création locale : jamais remplacée, jamais
+    # corrigée (Eurolite LED Bar-8 Swing restée « Moving Head »), et recopiée
+    # jusqu'à 5 fois - 366 copies en trop chez l'utilisateur. Une retouche dans
+    # l'éditeur (`source: "user"`) reste protégée.
     if not isinstance(fx, dict):
         return False
+    if fx.get("source") == "user":
+        return False
     return bool(fx.get("_from_library") or fx.get("_pack_id")) \
-        or fx.get("source") in ("firestore", "ofl", "community")
+        or fx.get("source") in ("firestore", "ofl", "community") \
+        or fx.get("addedAtVersion") is not None
 
 
 def merge_pack_fixtures(pack_fixtures: list, pack_id: str) -> int:
@@ -316,12 +326,12 @@ class FixturePackBanner(QWidget):
         if n == 1:
             txt = (
                 f"Nouveau pack disponible : <b>{packs[0].get('name', '?')}</b>"
-                f" — {total_fx} fixture(s)"
+                f" - {total_fx} fixture(s)"
             )
         else:
             txt = (
                 f"{n} packs de fixtures disponibles"
-                f" — {total_fx} fixture(s) au total"
+                f" - {total_fx} fixture(s) au total"
             )
         self._lbl.setText(txt)
         self.show()

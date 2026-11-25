@@ -2,7 +2,7 @@
 
 Plusieurs appareils sur le MÊME point du plateau, à des hauteurs différentes :
 un pied, un totem, deux ponts superposés. Le plan de feu est vu de dessus,
-donc ils se superposent — d'où la pastille qui annonce le compte et donne
+donc ils se superposent - d'où la pastille qui annonce le compte et donne
 accès aux appareils du dessous.
 
 Une pile n'est PAS un objet stocké : c'est une position partagée. Aucun champ
@@ -196,7 +196,7 @@ def test_menu_permet_de_reprendre_tout_le_totem():
 
 def test_extraire_un_membre_deplace_le_BON_appareil():
     """Après avoir choisi un appareil dans la liste, le glisser ne doit sortir
-    que lui — et pas celui qui porte l'icône."""
+    que lui - et pas celui qui porte l'icône."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtCore import QPointF
@@ -225,7 +225,7 @@ def _glisser(c, idx, vers_px, pas=25):
     ⚠️ Beaucoup de pas, et c'est essentiel : une souris réelle produit une nuée
     de petits déplacements. En sautant de loin à la cible en 6 pas, le test
     atterrissait d'un coup dans le rayon d'aimantation et ne traversait jamais
-    la zone où l'anti-chevauchement repousse la cible — il validait donc un
+    la zone où l'anti-chevauchement repousse la cible - il validait donc un
     geste que l'utilisateur, lui, n'arrivait pas à faire.
     """
     from PySide6.QtCore import Qt, QPointF
@@ -402,7 +402,7 @@ def test_clic_droit_hors_pile_ouvre_directement_les_reglages():
 
 def test_clic_droit_sur_une_selection_plus_large_garde_le_menu_de_groupe():
     """Rectangle de sélection sur le totem ET d'autres projecteurs : le clic
-    droit vise ce lot — interposer la liste le réduirait au seul totem."""
+    droit vise ce lot - interposer la liste le réduirait au seul totem."""
     projs = [_Proj("haut", .5, .35, 3.0), _Proj("bas", .5, .35, 1.0),
              _Proj("ailleurs", .8, .6, 2.0)]
     c = _canvas(projs)

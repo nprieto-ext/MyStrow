@@ -8,7 +8,7 @@ Deux ecritures de noir etaient en cause, toutes deux automatiques (aucune action
 de l'utilisateur) :
 
   * `play_row()` en mode Manuel (sequencer.py) : remettait TOUT le rig a
-    level=0 / noir — « Manuel = pas de lumiere » — y compris le look que les
+    level=0 / noir - « Manuel = pas de lumiere » - y compris le look que les
     pads couleur + faders tenaient a la main ;
   * `dmx_blackout()` (lignes PAUSE de la playlist) : descendait les 9 faders a 0
     alors que sa propre docstring promettait de « conserver l'eclairage AKAI ».
@@ -16,7 +16,7 @@ de l'utilisateur) :
     la seule chose capable de rallumer l'ambiance apres coup.
 
 Le correctif est `MainWindow.restore_manual_look()` : apres chaque extinction
-AUTOMATIQUE, on repose sur les projecteurs ce que l'APC tient reellement — pad
+AUTOMATIQUE, on repose sur les projecteurs ce que l'APC tient reellement - pad
 actif + fader leve, colonne non mutee. Ce qui n'est tenu par personne reste noir.
 """
 import os, sys

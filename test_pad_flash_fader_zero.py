@@ -1,5 +1,5 @@
 """
-test_pad_flash_fader_zero.py — Option « pad couleur sur fader baissé = flash ».
+test_pad_flash_fader_zero.py - Option « pad couleur sur fader baissé = flash ».
 
 Demandé le 22/09/2026 : quand le fader d'un groupe n'est pas levé, appuyer sur
 un de ses pads couleur doit faire un flash. C'est une OPTION, désactivée par
@@ -7,9 +7,9 @@ défaut, parce qu'elle interdit de préparer une couleur à l'aveugle (fader en
 bas, on choisit la couleur, puis on monte le fader).
 
 Option active, fader < 5 % :
-  * à l'appui   — le groupe monte à 100 % dans la couleur du pad (modèle ET
+  * à l'appui   - le groupe monte à 100 % dans la couleur du pad (modèle ET
                   fil DMX), le fader n'est jamais déplacé ;
-  * au relâché  — la colonne rend son état d'avant : niveau, couleurs, roue,
+  * au relâché  - la colonne rend son état d'avant : niveau, couleurs, roue,
                   pad latché.
 Fader levé pendant l'appui → le fader reprend la main et la couleur reste.
 Fader muté → rien ne sort. Fader levé à l'appui → latch normal.

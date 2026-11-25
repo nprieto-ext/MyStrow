@@ -49,7 +49,7 @@ import java.util.List;
 
 /**
  * Sortie DMX de la tablette en mode autonome, sans PC. Deux transports :
- *   - « artnet » : ArtDMX (OpCode 0x5000) envoyé au node en UDP — y compris
+ *   - « artnet » : ArtDMX (OpCode 0x5000) envoyé au node en UDP - y compris
  *                  le « USB NODE » ElectroConcept, qui se présente à la
  *                  tablette comme une carte réseau USB (2.0.0.x). Node hors du
  *                  réseau de la tablette (node en 2.0.0.15 sur la box, tablette
@@ -561,7 +561,7 @@ public class MystrowDmxPlugin extends Plugin {
         }
         // Vue noyau : toutes les interfaces, y compris celles qu'Android ne gère
         // pas (ex. un node USB nommé « usb0 », ignoré par le service Ethernet
-        // qui ne prend que « eth* ») — c'est ce qui dit POURQUOI un node n'a pas d'IP.
+        // qui ne prend que « eth* ») - c'est ce qui dit POURQUOI un node n'a pas d'IP.
         JSArray ifaces = new JSArray();
         try {
             for (java.net.NetworkInterface ni : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())) {

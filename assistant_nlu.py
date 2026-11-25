@@ -1,5 +1,5 @@
 """
-assistant_nlu.py — Compréhension des demandes de l'assistant MyStrow.
+assistant_nlu.py - Compréhension des demandes de l'assistant MyStrow.
 
 100 % local, sans modèle de langue : un vocabulaire par langue (fr, en, es,
 de, pt, ja) et quelques règles. Une phrase devient une liste d'actions :
@@ -1046,7 +1046,7 @@ def _parse_clause(raw: str, t: str, effects, votes, question=False) -> list:
     if speed_word and (_hit("brighter", t, votes) or _hit("dimmer", t, votes)):
         return [{"do": "speed_rel", "delta": 20 if _W["brighter"].find(t) else -20}]
 
-    # Arrêt des effets (« stop », « arrête l'effet ») — « stop » seul ne fait pas le noir.
+    # Arrêt des effets (« stop », « arrête l'effet ») - « stop » seul ne fait pas le noir.
     if _hit("stop", t, votes) and not color_hit:
         return [{"do": "stop_effects"}]
 

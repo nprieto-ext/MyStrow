@@ -47,7 +47,7 @@ def main() -> None:
         inv_id = x.get("axonaut_id") or (re.search(r"/invoice/(\d+)", url) or [None, None])[1]
         if inv_id:
             a_faire.append((d.reference, int(inv_id), url))
-    print(f"{len(a_faire)} lien(s) privé(s) à corriger — {'ÉCRITURE' if ecrire else 'simulation'}")
+    print(f"{len(a_faire)} lien(s) privé(s) à corriger - {'ÉCRITURE' if ecrire else 'simulation'}")
 
     ok = ko = 0
     for ref, inv_id, ancien in a_faire:

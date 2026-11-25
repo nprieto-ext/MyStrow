@@ -1,18 +1,18 @@
 """
-test_pad_memoire_comportement.py — Clic droit sur un pad memoire > Comportement.
+test_pad_memoire_comportement.py - Clic droit sur un pad memoire > Comportement.
 
 Un pad memoire etait un INTERRUPTEUR et rien d'autre : on le pose, il reste, et
 les autres colonnes continuent leur vie. Il se regle maintenant pad par pad :
 
-  * normal      — inchange ;
-  * flash       — momentane : la memoire n'est la que tant qu'on appuie ;
-  * flash_solo  — momentane ET seule en scene.
+  * normal      - inchange ;
+  * flash       - momentane : la memoire n'est la que tant qu'on appuie ;
+  * flash_solo  - momentane ET seule en scene.
 
 Un mode « solo » latche (couper les autres, et rester) a existe une demi-journee
 le 20/09/2026, puis a ete retire : le geste utile, c'est le momentane.
 
 Ce que ce test surveille avant tout, c'est le RETOUR des deux momentanes :
-un flash ne doit rien laisser derriere lui — ni look manuel perdu, ni pad
+un flash ne doit rien laisser derriere lui - ni look manuel perdu, ni pad
 eteint au passage, ni cue rembobine. C'est le piege qu'avait deja le bouton
 bas-droite (`_recompute_memory_mix` compose la scene a partir des SEULES
 memoires : tout ce qui n'est porte par aucune tombe au noir).
@@ -611,7 +611,7 @@ class MenuContextuel(unittest.TestCase):
 
     ⚠️ Un QMenu s'ouvre en boucle modale : reassigner `QMenu.exec` ne prend
     pas (type Shiboken). Ce qui marche, c'est un QTimer arme AVANT l'appel, qui
-    retrouve le menu visible et le ferme — en relevant son contenu d'abord, Qt
+    retrouve le menu visible et le ferme - en relevant son contenu d'abord, Qt
     detruisant les sous-menus juste apres.
     """
 

@@ -1,9 +1,9 @@
 """
-test_moniteur_dmx.py — Moniteur DMX (dmx_monitor.py).
+test_moniteur_dmx.py - Moniteur DMX (dmx_monitor.py).
 
 Le moniteur n'a qu'un contrat, mais il est strict : montrer le tampon
 `ArtNetDMX.dmx_data` tel quel, et NE JAMAIS y toucher. Une fenêtre de lecture
-qui écrirait un seul octet serait pire qu'inutile — on l'ouvrirait en plein
+qui écrirait un seul octet serait pire qu'inutile - on l'ouvrirait en plein
 spectacle pour comprendre un problème, et on en créerait un autre.
 """
 

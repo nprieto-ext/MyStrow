@@ -589,7 +589,7 @@
 
   const option = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; };
   TYPES.forEach(([v, l]) => $("ed-type").appendChild(option(v, l)));
-  $("ed-start").appendChild(option("", "— Choisir —"));
+  $("ed-start").appendChild(option("", "- Choisir -"));
   Engine.PROFILE_LABELS.forEach(([id, label]) => $("ed-start").appendChild(option(id, label)));
 
   let ed = null;   // { id, chans: [...], cw: [{dmx, color, name}] }
@@ -681,7 +681,7 @@
   // au curseur en regardant la VRAIE lyre, et on note où chaque couleur
   // apparaît. La lyre testée est un projecteur déjà patché : on lui applique
   // les canaux en cours d'édition (sans rien enregistrer), allumée en blanc,
-  // et seule allumée — les autres sont éteintes pendant le test.
+  // et seule allumée - les autres sont éteintes pendant le test.
   const cwTest = { fix: -1, used: false };
   const hasCwChan = (f) => { const p = Array.isArray(f.profile) ? f.profile : Engine.PROFILES[f.profile] || [];
     return p.includes("ColorWheel"); };
@@ -885,7 +885,7 @@
   var IOS = !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === "ios");
   // ── Achat d'une interface (encart de la Sortie DMX) ─────────────────────────
   // Android : page /shop (packs). iPhone / iPad : paiement direct de l'interface
-  // SEULE (matériel physique, autorisé hors App Store — règle 3.1.3(e)) ; jamais
+  // SEULE (matériel physique, autorisé hors App Store - règle 3.1.3(e)) ; jamais
   // de pack avec licence sur iOS (contenu numérique ⇒ achat intégré obligatoire,
   // 3.1.1 ; cf. PACK_OK de standalone.js).
   const BUY_URL = IOS ? "https://buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d" : "https://mystrow.fr/shop?utm_source=app_tablette#pack-mystrow";

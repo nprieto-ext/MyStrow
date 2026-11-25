@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test de sortie DMX macOS — trouve QUEL chemin allume vraiment les projecteurs.
+"""Test de sortie DMX macOS - trouve QUEL chemin allume vraiment les projecteurs.
 
 À lancer MyStrow FERMÉ (l'app garde le port série ouvert).
     python3 diag_mac_sortie.py [IP_DU_NODE]
@@ -116,11 +116,11 @@ def t_pro(port):
 
 
 print("=" * 60)
-print("TEST DE SORTIE DMX — macOS   (MyStrow doit être FERMÉ)")
+print("TEST DE SORTIE DMX - macOS   (MyStrow doit être FERMÉ)")
 print("=" * 60)
 print("La trame allume les 2 MiniCube en BLANC PLEIN (adresses 1 et 6).")
 
-pause(f"TEST 1/4 — Art-Net vers {IP}")
+pause(f"TEST 1/4 - Art-Net vers {IP}")
 t_artnet(IP)
 print("  ?? Les projecteurs se sont-ils allumés ?")
 
@@ -133,7 +133,7 @@ except ImportError:
     sys.exit(1)
 
 if not dispo:
-    print("\nAucune interface USB détectée — tests série sautés.")
+    print("\nAucune interface USB détectée - tests série sautés.")
     sys.exit(0)
 
 print("\nInterfaces USB :")
@@ -141,15 +141,15 @@ for i, p in enumerate(dispo):
     print(f"  [{i}] {p}")
 port = dispo[int(input("Laquelle ? [0] : ").strip() or 0)]
 
-pause(f"TEST 2/4 — Open DMX, break « baud-rate trick » (méthode macOS de MyStrow)")
+pause(f"TEST 2/4 - Open DMX, break « baud-rate trick » (méthode macOS de MyStrow)")
 t_serie(port, 'baud')
 print("  ?? Allumés ?")
 
-pause(f"TEST 3/4 — Open DMX, break « send_break » (méthode Windows de MyStrow)")
+pause(f"TEST 3/4 - Open DMX, break « send_break » (méthode Windows de MyStrow)")
 t_serie(port, 'break')
 print("  ?? Allumés ?")
 
-pause(f"TEST 4/4 — protocole ENTTEC Pro")
+pause(f"TEST 4/4 - protocole ENTTEC Pro")
 t_pro(port)
 print("  ?? Allumés ?")
 

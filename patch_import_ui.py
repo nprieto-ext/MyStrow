@@ -1,5 +1,5 @@
 """
-Relecture d'un patch importe — MyStrow
+Relecture d'un patch importe - MyStrow
 
 `patch_import` lit le fichier et propose une correspondance ; ce module la fait
 RELIRE avant d'y toucher. C'est tout l'enjeu : un patch venu d'ailleurs contient
@@ -336,7 +336,7 @@ def review_file(parent, path: str, current_count: int = 0):
 
     Le fichier est deja choisi par « Importer le patch » : c'est l'extension
     qui decide du lecteur, l'utilisateur n'a jamais a nommer un format. Rend
-    (lignes, remplacer) ou None si l'utilisateur a renonce — a ce stade, RIEN
+    (lignes, remplacer) ou None si l'utilisateur a renonce - a ce stade, RIEN
     n'a encore ete patche.
     """
     est_tableau = not path.lower().endswith(".qxw")

@@ -1,6 +1,6 @@
 # Mac Intel : 6.7.3 = dernière version compatible macOS 11 Big Sur (6.8+ exige 12, 6.10+ exige 13).
 # Ne pas monter sans relever LSMinimumSystemVersion (MyStrow.spec) et « macOS 11+ » sur le site.
-# Mac ARM : dernière version (exige macOS 13, testée sur Tahoe) — Qt 6.7 n'est plus maintenu.
+# Mac ARM : dernière version (exige macOS 13, testée sur Tahoe) - Qt 6.7 n'est plus maintenu.
 PySide6==6.7.3; sys_platform == "darwin" and platform_machine == "x86_64"
 # Windows + Mac ARM : version FIGÉE. Non figée, la CI prenait la dernière à
 # chaque release : 3.2.3 a embarqué la 6.12.0 sans qu'on le voie, et la 3D est
@@ -24,14 +24,6 @@ numpy
 sounddevice
 PyAudioWPatch; sys_platform == "win32"
 pygame
-# Moteur du modèle de l'assistant (assistant_llm.py ; le modèle se télécharge à part
-# depuis l'onglet Assistant). Roue précompilée de l'auteur (CPU), Windows seulement :
-# ses roues Mac ARM sont CORROMPUES (0.3.30 → 0.3.36, zlib « invalid block type » à
-# l'installation : build Mac de la 3.2.9 cassé) et il n'y en a pas pour Mac Intel.
-# Sur Mac, le bandeau de téléchargement reste masqué (assistant par règles seules).
-# --only-binary : jamais de compilation silencieuse en CI si la roue disparaît.
---extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
---only-binary llama-cpp-python
-llama-cpp-python==0.3.36; sys_platform == "win32"
-# Dictée vocale de l'assistant : Windows seulement (Mac non vérifié), cf. MyStrow.spec
-faster-whisper>=1.2.1; sys_platform == "win32"
+# Assistant (modèle llama-cpp + dictée faster-whisper) retiré de l'installeur le 25/11/2026
+# (assistant masqué). Pour le rétablir : llama-cpp-python==0.3.36 (index abetlen CPU,
+# --only-binary) et faster-whisper>=1.2.1, Windows seulement, + MyStrow.spec / release.py / release.yml.

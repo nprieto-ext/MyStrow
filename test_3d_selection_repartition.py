@@ -2,7 +2,7 @@
 
 Deux demandes du 27/08/2026 :
   * cliquer une ligne, puis Maj+clic plus bas, doit retenir toute la plage ;
-  * répartir régulièrement les appareils entre deux valeurs sur un axe — le
+  * répartir régulièrement les appareils entre deux valeurs sur un axe - le
     « -15 thru 15 » des pupitres.
 
 ⚠️ La répartition met en jeu la limite de l'emprise du plan 2D : celui-ci ne
@@ -189,7 +189,7 @@ def test_la_barre_napparait_qua_partir_de_deux():
 # ── Encombrement ─────────────────────────────────────────────────────────────
 # Le panneau de droite s'ouvre à 240 px (`_splitter.setSizes([850, 240])`). En
 # un seul rang la bande en réclamait plus de 300 : le bouton, seul élément
-# élastique, encaissait tout le manque et sortait rogné — remontée du
+# élastique, encaissait tout le manque et sortait rogné - remontée du
 # 28/08/2026. C'est la partie qu'on ne peut PAS deviner, contrairement aux
 # bornes qui portent leur chiffre.
 
@@ -217,7 +217,7 @@ def test_les_bornes_sont_a_laplomb_des_colonnes():
     """Les cellules gardent la largeur des colonnes X / Z / H du tableau.
 
     Elle était lue sur le tableau DÉJÀ construit : la bande dépendait alors de
-    l'ordre des appels, et prenait 100 px — la largeur par défaut — partout où
+    l'ordre des appels, et prenait 100 px - la largeur par défaut - partout où
     les colonnes n'avaient pas encore été dimensionnées.
     """
     win = _Faux([_proj(f"P{i}") for i in range(3)])

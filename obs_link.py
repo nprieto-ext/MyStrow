@@ -1,5 +1,5 @@
 """
-obs_link.py — Ce que MyStrow FAIT des evenements OBS, et son reglage.
+obs_link.py - Ce que MyStrow FAIT des evenements OBS, et son reglage.
 
 obs_client.py parle le protocole ; ce module decide de l'effet. Comme pour
 vMix, tout le commun vit dans video_link.py : il ne reste ici que ce qui est
@@ -10,7 +10,7 @@ UNE CLEF QUI EST UN NOM, ET NON UN NUMERO
 -----------------------------------------
 C'est la seule vraie difference avec vMix, et elle a une consequence pratique :
 renommer une scene dans OBS casse la correspondance, alors que reordonner les
-scenes ne casse rien — exactement l'inverse d'un patch par numero. C'est le bon
+scenes ne casse rien - exactement l'inverse d'un patch par numero. C'est le bon
 compromis ici : on deplace ses scenes bien plus souvent qu'on ne les renomme, et
 un nom reste lisible dans le fichier de configuration.
 """

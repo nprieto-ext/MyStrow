@@ -1,12 +1,12 @@
 """
-Moniteur DMX — fenêtre de LECTURE SEULE des valeurs réellement émises.
+Moniteur DMX - fenêtre de LECTURE SEULE des valeurs réellement émises.
 
 Le DMX Tester (dmx_tester.py) écrit dans l'univers : il coupe le rendu du show
 le temps de son ouverture. Ce moniteur-ci ne fait que regarder. On peut donc le
 laisser ouvert pendant tout le spectacle, sur un second écran, sans rien
 perturber : aucun réglage, aucun bouton qui envoie quoi que ce soit.
 
-Ce qui est affiché, c'est `ArtNetDMX.dmx_data` — exactement le tampon que les
+Ce qui est affiché, c'est `ArtNetDMX.dmx_data` - exactement le tampon que les
 transports (Art-Net, ENTTEC) recopient dans leurs trames. Pas une re-simulation
 à partir des projecteurs : si l'écran et le parc divergent, c'est que le
 problème est APRÈS le tampon (câble, boîtier, patch du Node), et cette
@@ -15,7 +15,7 @@ distinction est toute la valeur de la fenêtre.
 SAUF quand la sortie est coupée. `send_dmx_update()` ne remplit le tampon que si
 la sortie est connectée ET le bouton DMX du plan de feu enclenché ; sinon
 dmx_data reste à zéro pour toujours. Un moniteur tout noir laisserait alors
-croire que MyStrow ne calcule rien — alors qu'il calcule très bien, il n'émet
+croire que MyStrow ne calcule rien - alors qu'il calcule très bien, il n'émet
 simplement pas. Dans ce cas seulement, la fenêtre refait le calcul elle-même,
 dans un tampon FANTÔME (jamais le vrai : la trame de maintien ENTTEC le lit, et
 enverrait des valeurs que l'utilisateur a justement coupées), et le dit en
@@ -54,7 +54,7 @@ class _UniverseGrid(QWidget):
     Le fond (cadres + numéros de canal) est peint une fois pour toutes dans un
     QPixmap : à 40 images/seconde, redessiner 512 numéros de canal à chaque
     trame coûterait plus cher que tout le reste de l'application réunie. Seule
-    la valeur, elle, est repeinte — et uniquement sur les cellules qui bougent.
+    la valeur, elle, est repeinte - et uniquement sur les cellules qui bougent.
     """
 
     def __init__(self, patch_lookup):
@@ -84,7 +84,7 @@ class _UniverseGrid(QWidget):
                 self.update(self._cell_rect(i))
 
     def set_patched(self, channels):
-        """Canaux occupés par un projecteur — leur numéro s'affiche en cyan."""
+        """Canaux occupés par un projecteur - leur numéro s'affiche en cyan."""
         channels = set(channels)
         if channels != self._patched:
             self._patched = channels
@@ -197,9 +197,9 @@ class _UniverseGrid(QWidget):
             info = self._lookup(i + 1)
             if info:
                 nom, typ = info
-                self.setToolTip(f"{tr('dmxmon_channel')} {i + 1} — {nom} · {typ}")
+                self.setToolTip(f"{tr('dmxmon_channel')} {i + 1} - {nom} · {typ}")
             else:
-                self.setToolTip(f"{tr('dmxmon_channel')} {i + 1} — {tr('dmxmon_free')}")
+                self.setToolTip(f"{tr('dmxmon_channel')} {i + 1} - {tr('dmxmon_free')}")
         else:
             self.setToolTip("")
 
@@ -347,7 +347,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
     def _read_frame(self):
         """Les 4 univers à afficher, plus le fait qu'ils soient émis ou non.
 
-        Sortie active : on recopie le tampon réel — c'est la raison d'être de la
+        Sortie active : on recopie le tampon réel - c'est la raison d'être de la
         fenêtre. Sortie coupée : le tampon est figé à zéro, on refait donc le
         calcul dans un tampon fantôme, en gardant le vrai intact.
         """
@@ -483,7 +483,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
                 else getattr(self._dmx, 'com_port', None)
             self._lbl_etat.setText(tr("dmxmon_state_on").format(
                 produit=self._dmx.product_name,
-                cible=cible or "—"))
+                cible=cible or "-"))
 
         self._lbl_stats.setText(tr("dmxmon_stats").format(
             actifs=actifs, fps=max(1, round(1000 / max(1, DMX_FRAME_MS)))))

@@ -1,11 +1,11 @@
 """
-vmix_link.py — Ce que MyStrow FAIT des evenements vMix, et son reglage.
+vmix_link.py - Ce que MyStrow FAIT des evenements vMix, et son reglage.
 
 vmix_client.py parle le protocole ; ce module decide de l'effet. La separation
 n'est pas cosmetique : le client ne connait ni MainWindow ni les memoires, on
 peut donc le tester (et le rejouer) sans lancer l'application.
 
-Le gros du travail — vocabulaire d'actions, execution, persistance, dialogue —
+Le gros du travail - vocabulaire d'actions, execution, persistance, dialogue -
 vit dans video_link.py, partage avec OBS. Il ne reste ici que ce qui est propre
 a vMix : le declencheur est une ENTREE (numero entier) qui passe au PROGRAMME.
 """
@@ -17,7 +17,7 @@ from i18n import tr
 
 def _normaliser(entrees) -> list:
     """[{'number', 'title'}] du client → [{'key', 'label'}] du dialogue."""
-    return [{"key": int(e["number"]), "label": f"{e['number']} — {e['title']}"}
+    return [{"key": int(e["number"]), "label": f"{e['number']} - {e['title']}"}
             for e in (entrees or [])]
 
 

@@ -1,5 +1,5 @@
 """
-brad_diagnostic.py — Assistant de diagnostic DMX/Réseau pour MyStrow.
+brad_diagnostic.py - Assistant de diagnostic DMX/Réseau pour MyStrow.
 Accessible via : Connexion > Node > Assistant BRAD
 
 Collecte toutes les infos utiles et génère un rapport copier-coller.
@@ -59,7 +59,7 @@ class _DiagWorker(QThread):
         try:
             lic = w._license
             add("Licence", "ok" if lic.dmx_allowed else "err",
-                f"DMX autorisé : {'OUI' if lic.dmx_allowed else 'NON'} — état : {lic.state.name}")
+                f"DMX autorisé : {'OUI' if lic.dmx_allowed else 'NON'} - état : {lic.state.name}")
         except Exception as e:
             add("Licence", "err", f"Impossible de lire la licence : {e}")
 
@@ -104,12 +104,12 @@ class _DiagWorker(QThread):
             dmx = w.dmx
             # Décrire le transport RÉELLEMENT actif. Afficher « IP cible / port
             # 6454 / socket fermé » sur une sortie USB faisait chercher un
-            # problème réseau là où il n'y en a pas — et masquait le vrai sujet.
+            # problème réseau là où il n'y en a pas - et masquait le vrai sujet.
             _serie = dmx.transport in ("enttec", "enttec_pro", "enttec_d2xx")
             add("DMX live", "info", f"Transport   : {dmx.transport}"
                                     f"  ({'USB / série' if _serie else 'réseau Art-Net'})")
             if _serie:
-                add("DMX live", "info", f"Port série  : {dmx.com_port or '— non configuré —'}")
+                add("DMX live", "info", f"Port série  : {dmx.com_port or '- non configuré -'}")
                 add("DMX live", "info",
                     f"Port ouvert : {'oui' if getattr(dmx, '_serial', None) else 'non'}")
                 # Les deux causes racines connues d'une sortie Open DMX muette
@@ -125,7 +125,7 @@ class _DiagWorker(QThread):
                 if dmx.transport == "enttec":
                     add("DMX live", "warn" if FTD2XX_AVAILABLE else "err",
                         f"Driver D2XX : {'disponible' if FTD2XX_AVAILABLE else 'ABSENT'}"
-                        f" — transport en série VCP"
+                        f" - transport en série VCP"
                         + ("  ← un Open DMX USB devrait tourner en « enttec_d2xx »"
                            if FTD2XX_AVAILABLE else
                            "  ← repli silencieux : break DMX cassé par le Latency Timer FTDI"))
@@ -178,11 +178,11 @@ class _DiagWorker(QThread):
                 # Montrer quand même tous les adaptateurs trouvés pour diagnostic
                 visible = [(n, ip) for n, ip in all_adapters if not ip.startswith("127.")]
                 if visible:
-                    add("Réseau", "warn", "Aucun adaptateur sur réseau 2.x.x.x — adaptateurs trouvés :")
+                    add("Réseau", "warn", "Aucun adaptateur sur réseau 2.x.x.x - adaptateurs trouvés :")
                     for name, ip in visible:
                         add("Réseau", "info", f"  {name[:35]:<35} IP={ip}")
                 else:
-                    add("Réseau", "err", "Aucun adaptateur Ethernet détecté — branchez le câble RJ45 !")
+                    add("Réseau", "err", "Aucun adaptateur Ethernet détecté - branchez le câble RJ45 !")
         except Exception as e:
             add("Réseau", "warn", f"Liste des interfaces indisponible : {e}")
 
@@ -200,7 +200,7 @@ class _DiagWorker(QThread):
         except Exception as e:
             add("ArtPoll broadcast", "err", f"Erreur : {e}")
 
-        # ── 9. Scan ARP — détection boîtiers sur 2.x.x.x ────────────────
+        # ── 9. Scan ARP - détection boîtiers sur 2.x.x.x ────────────────
         self.progress.emit(62, "Scan réseau 2.0.0.x...")
         try:
             # Balayage 2.0.0.1 → 2.0.0.30 pour peupler la table ARP. Un simple
@@ -271,7 +271,7 @@ class _DiagWorker(QThread):
                 # unicast juste après qui tranche.
                 add("Ping", "warn",
                     f"Boîtier {target} ne répond pas au ping "
-                    f"(normal sur beaucoup de nodes — voir l'ArtPoll ci-dessous)")
+                    f"(normal sur beaucoup de nodes - voir l'ArtPoll ci-dessous)")
         except Exception as e:
             add("Ping", "err", f"Ping échoué : {e}")
 
@@ -320,11 +320,11 @@ class _DiagWorker(QThread):
             # Ce test ouvre SON PROPRE socket : il ne prouve rien sur la sortie
             # reelle de l'application. Un « ✓ » ici sur une sortie USB laissait
             # croire que le reseau fonctionnait alors que rien ne passe par ce
-            # chemin — cf. le meme piege que les tests ArtPoll.
+            # chemin - cf. le meme piege que les tests ArtPoll.
             if w.dmx.transport in ("enttec", "enttec_pro", "enttec_d2xx"):
                 add("Envoi test", "info",
                     f"Paquet ArtDMX envoyé → {target_ip}:{target_port} "
-                    f"(socket de test isolé — la sortie réelle est en USB, "
+                    f"(socket de test isolé - la sortie réelle est en USB, "
                     f"ce résultat ne dit rien du parc)")
             else:
                 add("Envoi test", "ok",
@@ -407,7 +407,7 @@ def _lire_adaptateurs(filter_irrelevant: bool = True):
     """Liste [(nom, IPv4)] des interfaces réseau, quel que soit le système.
 
     Sur macOS/Linux, `ipconfig` n'existe pas : le diagnostic annonçait alors
-    « Aucun adaptateur Ethernet détecté — branchez le câble RJ45 » alors que le
+    « Aucun adaptateur Ethernet détecté - branchez le câble RJ45 » alors que le
     câble était branché et que le boîtier répondait à l'ArtPoll juste en
     dessous. Un diagnostic qui ment sur ce point envoie chercher la panne au
     mauvais endroit.
@@ -503,7 +503,7 @@ def _ajuster_largeur(btn, marge=48):
 
 
 class BradDiagnosticDialog(QDialog):
-    """Assistant BRAD — diagnostic complet DMX/Réseau."""
+    """Assistant BRAD - diagnostic complet DMX/Réseau."""
 
     def __init__(self, window):
         super().__init__(window)
@@ -618,7 +618,7 @@ class BradDiagnosticDialog(QDialog):
         self._raw_lines = []   # lignes texte brut pour le copier-coller
         self._worker = None
         # Problèmes réseau détectés {clé: valeur}. Servent à formuler un
-        # diagnostic clair ; la correction, elle, reste manuelle — l'ancien
+        # diagnostic clair ; la correction, elle, reste manuelle - l'ancien
         # bouton « Corriger automatiquement » reconnectait le DMX dans le dos
         # de l'utilisateur, ce qui n'a pas sa place dans un outil de constat.
         self._fixable = {}
@@ -634,12 +634,12 @@ class BradDiagnosticDialog(QDialog):
         self._output.clear()
         self._raw_lines = []
         self._append_html(
-            '<span style="color:#00d4ff;font-weight:bold;">BRAD — Rapport de diagnostic</span><br>'
+            '<span style="color:#00d4ff;font-weight:bold;">BRAD - Rapport de diagnostic</span><br>'
             f'<span style="color:#444;">{time.strftime("%Y-%m-%d %H:%M:%S")}'
-            f'  —  {APP_NAME} {VERSION}</span><br>'
+            f'  -  {APP_NAME} {VERSION}</span><br>'
         )
         self._raw_lines.append("=" * 60)
-        self._raw_lines.append(f"BRAD — Rapport de diagnostic MyStrow {VERSION}")
+        self._raw_lines.append(f"BRAD - Rapport de diagnostic MyStrow {VERSION}")
         self._raw_lines.append(time.strftime("%Y-%m-%d %H:%M:%S"))
         self._raw_lines.append("=" * 60)
 
@@ -680,7 +680,7 @@ class BradDiagnosticDialog(QDialog):
             pass
 
         if dmx.target_ip in local_ips:
-            # L'IP cible est le PC lui-même — chercher l'IP du boîtier dans les réponses ArtPoll
+            # L'IP cible est le PC lui-même - chercher l'IP du boîtier dans les réponses ArtPoll
             external_found = None
             for cat, status, detail in results:
                 if cat == "ArtPoll broadcast" and status == "ok" and "réponse de" in detail:
@@ -691,7 +691,7 @@ class BradDiagnosticDialog(QDialog):
             if external_found:
                 self._fixable["target_ip"] = external_found
             else:
-                # Pas de boîtier détecté (câble débranché ?) — signaler sans proposer d'IP
+                # Pas de boîtier détecté (câble débranché ?) - signaler sans proposer d'IP
                 self._fixable["target_ip_local"] = dmx.target_ip
         else:
             # Si ArtPoll a trouvé un boîtier à une IP différente de la cible
@@ -745,13 +745,13 @@ class BradDiagnosticDialog(QDialog):
         self._raw_lines.append("")
         self._raw_lines.append("=" * 60)
         self._raw_lines.append(
-            f"{'PROBLÈMES: ' + str(len(errors)) if errors else 'OK — Aucun problème détecté'}"
+            f"{'PROBLÈMES: ' + str(len(errors)) if errors else 'OK - Aucun problème détecté'}"
         )
         self._raw_lines.append("=" * 60)
 
         # ── Le piège n°1 : un node répond, mais la sortie est réglée sur USB ──
         # `send_dmx()` aiguille sur le transport ACTIF : avec `enttec`, l'envoi
-        # Art-Net n'est jamais appelé et le node ne reçoit rien — alors que tous
+        # Art-Net n'est jamais appelé et le node ne reçoit rien - alors que tous
         # les tests réseau ci-dessus sont au vert, puisqu'ils ouvrent leur PROPRE
         # socket et ne passent pas par la sortie de l'application. C'est
         # exactement ce qui fait chercher des heures du côté du réseau.
@@ -773,7 +773,7 @@ class BradDiagnosticDialog(QDialog):
                     f'⚠ Un node Art-Net répond sur {_node}, mais la sortie est réglée '
                     f'sur « {_tr} » (USB).</span>'
                     f'<br><span style="color:#ccc;">Rien ne part sur le réseau tant que '
-                    f'le transport est sur USB — les tests réseau ci-dessus passent par '
+                    f'le transport est sur USB - les tests réseau ci-dessus passent par '
                     f'leur propre socket, pas par la sortie de MyStrow.<br>'
                     f'→ Connexions ▸ 🌐 Sortie DMX ▸ ⚙️ Paramétrer la sortie, '
                     f'choisir le node Art-Net, puis <b>Connecter</b>.</span>'
@@ -781,20 +781,20 @@ class BradDiagnosticDialog(QDialog):
                 self._raw_lines.append("")
                 self._raw_lines.append(
                     f"  ⚠ Node Art-Net détecté sur {_node} mais transport = {_tr} (USB)"
-                    f" — rien ne part sur le réseau.")
+                    f" - rien ne part sur le réseau.")
 
         # Avertissement câble débranché
         if "no_ethernet" in self._fixable:
             self._append_html(
                 '<br><span style="color:#f44336;font-size:13px;font-weight:bold;">'
-                '🔌 Aucun câble RJ45 détecté — branchez le câble Ethernet entre le PC et le boîtier !</span>'
+                '🔌 Aucun câble RJ45 détecté - branchez le câble Ethernet entre le PC et le boîtier !</span>'
             )
 
         # Forcer une erreur visible si target_ip == IP locale (PC lui-même)
         if "target_ip_local" in self._fixable:
             self._append_html(
                 f'<br><span style="color:#f44336;font-weight:bold;">'
-                f'✗ IP cible ({self._fixable["target_ip_local"]}) est l\'IP du PC lui-même —'
+                f'✗ IP cible ({self._fixable["target_ip_local"]}) est l\'IP du PC lui-même -'
                 f' les paquets DMX ne partent pas vers le boîtier !</span>'
             )
         elif "target_ip" in self._fixable and self._fixable["target_ip"] != self._window.dmx.target_ip:

@@ -521,7 +521,7 @@ class CodemagicPanel(QWidget):
             self._det_title.setText("Sélectionnez un build")
             self._det.clear()
             return
-        self._det_title.setText(f"Build n°{b.get('index', '?')} — {WORKFLOWS.get(wf(b), ('?',))[0]}")
+        self._det_title.setText(f"Build n°{b.get('index', '?')} - {WORKFLOWS.get(wf(b), ('?',))[0]}")
         self._det.setPlainText(self._detail_text(b))
 
     def _copy_detail(self):

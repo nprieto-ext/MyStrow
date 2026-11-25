@@ -1,5 +1,5 @@
 """
-ext_window.py — Fenêtre EXT : surface d'exécuteurs configurable (façon grandMA).
+ext_window.py - Fenêtre EXT : surface d'exécuteurs configurable (façon grandMA).
 
 MVP étape 2 :
   - Coquille (étape 1) : fenêtre externe + banques à gauche + grille magnétique
@@ -568,11 +568,11 @@ class GridCanvas(QWidget):
         if not self._loading and self.on_changed:
             self.on_changed()
 
-    # — grille —
+    # - grille -
     def set_edit_mode(self, on: bool):
         self.edit_mode = bool(on)
         # Filet : passer en Édition pendant un appui tenu laissait le flash
-        # collé (le relâché n'arrive jamais sur le bloc) — on le termine ici.
+        # collé (le relâché n'arrive jamais sur le bloc) - on le termine ici.
         for b in self.blocks:
             if getattr(b, "_flashing", False):
                 b._flashing = False
@@ -633,7 +633,7 @@ class GridCanvas(QWidget):
                     return False
         return True
 
-    # — blocs —
+    # - blocs -
     def new_block(self, spec: dict) -> ExtBlock:
         """Instancie le bon type de bloc selon l'action ; applique les spans du spec."""
         atype = spec.get("action", {}).get("type")
@@ -667,7 +667,7 @@ class GridCanvas(QWidget):
         self._changed()
         return blk
 
-    # — drag & drop depuis la palette de gauche —
+    # - drag & drop depuis la palette de gauche -
     def dragEnterEvent(self, ev):
         if ev.mimeData().hasFormat(_MIME):
             ev.acceptProposedAction()
@@ -749,7 +749,7 @@ class _PaletteItem(QPushButton):
 
 # ──────────────────────────────────────────────────────────────────────
 class ExtWindow(QMainWindow):
-    """Fenêtre EXT — surface d'exécuteurs configurable façon grandMA."""
+    """Fenêtre EXT - surface d'exécuteurs configurable façon grandMA."""
 
     # Layout perso, indépendant du show (.tui), rechargé à chaque démarrage.
     LAYOUT_FILE = os.path.expanduser("~/.mystrow_ext.json")
@@ -1139,7 +1139,7 @@ class ExtWindow(QMainWindow):
             if pdf is not None and members and hasattr(pdf, "_select_custom_group"):
                 pdf._select_custom_group(members)
             n = len(getattr(pdf, "selected_lamps", None) or [])
-            self._flash_status(f"★ {action.get('name')} — {n} proj.")
+            self._flash_status(f"★ {action.get('name')} - {n} proj.")
         elif t == "clear":
             owner._ext_clear()
             self._flash_status("Clear")
@@ -1443,7 +1443,7 @@ class ExtWindow(QMainWindow):
         """Allume le bloc couleur cliqué et éteint ceux qui visent les MÊMES groupes.
 
         Avant, tout autre bloc couleur s'éteignait : impossible de garder A, B et
-        C en blanc en posant du rouge sur D — les trois autres pads s'éteignaient
+        C en blanc en posant du rouge sur D - les trois autres pads s'éteignaient
         alors que leurs projecteurs, eux, restaient bel et bien blancs.
         """
         if block is None:

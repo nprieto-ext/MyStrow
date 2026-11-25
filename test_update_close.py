@@ -1,5 +1,5 @@
 """
-test_update_close.py — La fermeture pour mise a jour sort-elle VRAIMENT ?
+test_update_close.py - La fermeture pour mise a jour sort-elle VRAIMENT ?
 
     python test_update_close.py
 
@@ -9,7 +9,7 @@ Setup s'arrete sur sa page « applications ouvertes » et la mise a jour reste
 bloquee. Le symptome est cote installeur, la cause est ici.
 
 `QApplication.quit()` seul ne suffisait pas : il sort de la boucle
-d'evenements sans jamais declencher le moindre `closeEvent` — donc sans sauver
+d'evenements sans jamais declencher le moindre `closeEvent` - donc sans sauver
 la config ni arreter les serveurs. Le scenario est rejoue dans un VRAI
 sous-processus, seule facon de verifier qu'il se termine.
 """

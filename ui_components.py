@@ -99,9 +99,9 @@ class EffectButton(QPushButton):
     effect_config_selected  = Signal(int, dict)      # (btn_index, config_dict)
     trigger_mode_changed    = Signal(int, str, int)  # (btn_index, mode, duration_ms)
     layer_overrides_changed = Signal(int, list, int) # (btn_index, target_groups, speed)
-    press_signal            = Signal(int)            # (btn_index)  — press physique
-    released_signal         = Signal(int)            # (btn_index)  — release physique
-    open_editor_requested   = Signal(int)            # (btn_index)  — ouvre l'éditeur d'effets
+    press_signal            = Signal(int)            # (btn_index)  - press physique
+    released_signal         = Signal(int)            # (btn_index)  - release physique
+    open_editor_requested   = Signal(int)            # (btn_index)  - ouvre l'éditeur d'effets
 
     def __init__(self, index):
         super().__init__()
@@ -409,7 +409,7 @@ class EffectButton(QPushButton):
 
         # « Éditeur d'effets » : un BOUTON pleine largeur en tête du menu, pas
         # une ligne de menu de plus. Remonté en première position ne suffisait
-        # pas — au-dessus de 92 effets intégrés plus les effets perso, une
+        # pas - au-dessus de 92 effets intégrés plus les effets perso, une
         # entrée de menu de plus se lit comme un effet parmi les autres.
         # Construit ici, après la liste, puis déplacé en tête : rien ne dépend
         # de sa place, l'action est branchée sur le clic du bouton.
@@ -434,7 +434,7 @@ class EffectButton(QPushButton):
         def _open_editor():
             # Un QWidgetAction avale le clic : le menu ne se ferme pas tout
             # seul. Et on n'ouvre pas l'éditeur DEPUIS la boucle d'événements
-            # du menu — d'où le report au tour suivant.
+            # du menu - d'où le report au tour suivant.
             menu.close()
             QTimer.singleShot(0, lambda: self.open_editor_requested.emit(self.index))
 
@@ -524,7 +524,7 @@ class EffectButton(QPushButton):
 
 
 class PositionPadButton(QPushButton):
-    """Pad de position lyre — bleu, grille 4×5 (20 pads)"""
+    """Pad de position lyre - bleu, grille 4×5 (20 pads)"""
 
     def __init__(self, pad_idx, parent=None):
         super().__init__(parent)

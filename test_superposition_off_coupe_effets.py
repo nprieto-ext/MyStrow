@@ -1,11 +1,11 @@
 """
-test_superposition_off_coupe_effets.py — Decocher « Superposition d'effets »
+test_superposition_off_coupe_effets.py - Decocher « Superposition d'effets »
 laissait les effets enclenches.
 
 La case ne faisait que basculer le drapeau `effect_superposition`. Or
 `update_effect` ne lit la pile `_stacked_effects` QUE si ce drapeau est vrai :
 en le baissant, les effets empiles n'etaient plus animes par personne, mais
-restaient armes — pads allumes sur l'APC, boutons actifs dans l'UI, projecteurs
+restaient armes - pads allumes sur l'APC, boutons actifs dans l'UI, projecteurs
 figes sur la derniere image de l'effet.
 
 Changer de mode doit donc couper les effets lances depuis les boutons d'effet :

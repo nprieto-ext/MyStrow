@@ -1,5 +1,5 @@
 """
-test_machines_effet.py — Etincelles, flamme, brouillard : les machines a effet.
+test_machines_effet.py - Etincelles, flamme, brouillard : les machines a effet.
 
 MyStrow ne connaissait qu'UNE machine, la machine a fumee, et son exclusion des
 effets etait ecrite SEIZE fois en dur sous la forme `p.group != "fumee"`. Trois
@@ -11,7 +11,7 @@ Ce qui est verrouille ici :
 
   * le canal de sortie (`Smoke`, `Spark`, `Flame`) est pilote par le NIVEAU, pas
     par un dimmer, et tombe a 0 en mute ;
-  * les canaux voisins (duree, mode) sortent enfin leur valeur — la branche
+  * les canaux voisins (duree, mode) sortent enfin leur valeur - la branche
     s'arretait au debit et au ventilateur, la duree d'une machine a etincelles
     2 canaux etait donc morte ;
   * ces canaux-la GARDENT leur valeur en mute : sur beaucoup de machines,
@@ -20,14 +20,14 @@ Ce qui est verrouille ici :
   * `fixture_is_fx_machine` tranche sur le TYPE et non sur le groupe : une
     machine rangee dans « face » reste hors des effets et de l'IA ;
   * `fixture_is_pyro` distingue l'ATMOSPHERE (fumee, brume) du DECLENCHEMENT
-    (etincelles, flamme) — le noir general epargne la premiere, coupe la
+    (etincelles, flamme) - le noir general epargne la premiere, coupe la
     seconde ;
   * le genre envoye a la 3D ('fog', 'haze', 'spark', 'flame') ;
   * la detection de type a l'import d'un patch ;
   * les hazers de la bibliotheque ont quitte « Machine a fumee » ;
   * les machines QLC+ ont un canal de sortie : QLC+ n'a pas de groupe
     « fumee », le debit arrivait en Effect/Intensity et AUCUNE des 57 machines
-    n'avait de canal Smoke — debit mort (Stairville AFH-600, Discord
+    n'avait de canal Smoke - debit mort (Stairville AFH-600, Discord
     16/10/2026). Un show deja patche est repris au patch ; une memoire pilote
     le debit d'une machine meme notee noire.
 

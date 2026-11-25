@@ -53,7 +53,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 # CHROMIUM (plan 3D) : ne jamais tuer MyStrow quand le GPU flanche
 # Quand son processus GPU plante plusieurs fois (pilote graphique instable),
 # Chromium décide que « le GPU n'est plus utilisable » et arrête VOLONTAIREMENT
-# le processus principal (int3 = 0x80000003 dans Qt6WebEngineCore.dll) — donc
+# le processus principal (int3 = 0x80000003 dans Qt6WebEngineCore.dll) - donc
 # tout MyStrow, sans la moindre trace dans faulthandler. Vu chez un client
 # Windows le 13/11/2026 (3.2.16, plan 3D chargé). Sans limite, le processus GPU
 # est simplement relancé ; au pire la page 3D se recharge
@@ -70,7 +70,7 @@ def _chromium_flags():
 _chromium_flags()
 
 # ------------------------------------------------------------------
-# BACKEND VIDÉO — diagnostic uniquement (on NE force PAS le backend).
+# BACKEND VIDÉO - diagnostic uniquement (on NE force PAS le backend).
 # But : savoir quels plugins multimedia sont réellement embarqués. Forcer FFmpeg
 # via QT_MEDIA_BACKEND blanchissait la vidéo dans le visualisateur sur certaines
 # config (rendu QVideoWidget). On laisse donc Qt choisir son backend par défaut ;
@@ -176,7 +176,7 @@ if sys.platform == "darwin":
 
 
 # ------------------------------------------------------------------
-# CAPTURE DES CRASHS — Windows / Linux (macOS frozen a son propre bloc ci-dessus)
+# CAPTURE DES CRASHS - Windows / Linux (macOS frozen a son propre bloc ci-dessus)
 # But : un crash NATIF (segfault Qt, plugin multimedia ffmpeg/WMF, driver audio,
 # décodage d'un .wav/.mp4 exotique…) ne laisse AUCUNE trace sur Windows sans
 # faulthandler. On écrit dans un log dédié, gardé ouvert toute la vie du process,
@@ -313,7 +313,7 @@ def _install_tooltip_style(app):
     app._tooltip_timer.start()
 
     # Fondu d'apparition (Windows) : Qt anime une CAPTURE de la bulle prise
-    # avant le style ci-dessus — elle apparaissait jaune (palette Fusion) puis
+    # avant le style ci-dessus - elle apparaissait jaune (palette Fusion) puis
     # virait au noir, ou restait jaune selon le moment.
     app.setEffectEnabled(Qt.UI_FadeTooltip, False)
     app.setEffectEnabled(Qt.UI_AnimateTooltip, False)
@@ -351,12 +351,12 @@ from PySide6.QtGui import QIcon
 import webbrowser
 import platform
 
-# Imports légers uniquement — tout ce qui est lourd est différé après le splash
+# Imports légers uniquement - tout ce qui est lourd est différé après le splash
 from core import APP_NAME, VERSION, MIDI_AVAILABLE, resource_path
 from updater import SplashScreen, UpdateChecker, AkaiSplashEffect
 from i18n import tr
 
-# Bloc jamais exécuté — uniquement pour que PyInstaller détecte ces modules
+# Bloc jamais exécuté - uniquement pour que PyInstaller détecte ces modules
 # lors de l'analyse statique et les inclue dans le bundle Mac/Windows.
 if False:  # noqa
     import main_window      # noqa: F401
@@ -369,7 +369,7 @@ if False:  # noqa
 # ------------------------------------------------------------------
 def _show_integrity_error():
     # URL centralisee dans core : ce dialogue pointait sur un nom d'asset
-    # GitHub disparu (MyStrow_Installer.dmg) — bouton en 404 cote Mac, au pire
+    # GitHub disparu (MyStrow_Installer.dmg) - bouton en 404 cote Mac, au pire
     # moment possible puisque l'application refuse alors de demarrer.
     from core import download_url as _download_url
     download_url = _download_url()
@@ -518,7 +518,7 @@ def main():
     start_time = time.time()
 
     # ------------------------------------------------------------------
-    # IMPORTS LOURDS — différés pour que le splash soit visible immédiatement
+    # IMPORTS LOURDS - différés pour que le splash soit visible immédiatement
     # ------------------------------------------------------------------
     splash.set_status(tr("loading"))
     app.processEvents()
@@ -590,7 +590,7 @@ def main():
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # LICENCE + AKAI + DMX — tous en parallele
+    # LICENCE + AKAI + DMX - tous en parallele
     # ------------------------------------------------------------------
     splash.set_status(tr("initializing"))
     app.processEvents()
@@ -602,7 +602,7 @@ def main():
 
     # La ligne garde son libellé neutre « Sortie DMX ». Elle affichait
     # « Sortie DMX USB » ou « Sortie Node » selon le transport enregistré, ce qui
-    # exposait un détail de câblage sans utilité au démarrage — et induisait en
+    # exposait un détail de câblage sans utilité au démarrage - et induisait en
     # erreur quand la config gardait un transport obsolète. Même choix que le
     # menu Connexion : c'est la même sortie, quel que soit le câble derrière.
 
@@ -656,8 +656,8 @@ def main():
             transport    = cfg.get("transport", "enttec")
             product_name = cfg.get("product_name", "")
             # Le splash a une largeur fixe : la ligne « Sortie DMX » tient en
-            # une petite trentaine de caractères. On y met donc un nom COURT —
-            # le type de sortie et son point de raccordement — et rien d'autre.
+            # une petite trentaine de caractères. On y met donc un nom COURT -
+            # le type de sortie et son point de raccordement - et rien d'autre.
             # Le nom commercial du produit est trompeur en plus d'être long :
             # il reste celui du dernier matériel configuré, si bien qu'un
             # « Art-Net (réseau) » s'affichait encore sur une sortie USB.
@@ -676,7 +676,7 @@ def main():
                 _dmx_box[0] = bool(_devs)
                 _dmx_box[1] = (f"USB DMX · {sn or 'FTDI'}" if _devs
                                else f"USB DMX · {tr('offline')}")
-                _dmx_box[2] = f"{product_name or 'USB DMX'} — FTDI {sn or '?'} (D2XX)"
+                _dmx_box[2] = f"{product_name or 'USB DMX'} - FTDI {sn or '?'} (D2XX)"
             elif transport in ("enttec", "enttec_pro"):
                 com = cfg.get("com_port")
                 if com:
@@ -689,7 +689,7 @@ def main():
                     except Exception:
                         _dmx_box[0] = False
                         _dmx_box[1] = f"USB DMX · {tr('offline')}"
-                    _dmx_box[2] = f"{product_name or 'USB DMX'} — {com}"
+                    _dmx_box[2] = f"{product_name or 'USB DMX'} - {com}"
                 else:
                     _dmx_box[1] = f"USB DMX · {tr('not_configured')}"
                     _dmx_box[2] = product_name or "USB DMX"
@@ -711,7 +711,7 @@ def main():
                 else:
                     _dmx_box[0] = False
                     _dmx_box[1] = f"Art-Net · {tr('not_configured')}"
-                _dmx_box[2] = f"{product_name or 'Art-Net'} — {ip or tr('not_configured')}"
+                _dmx_box[2] = f"{product_name or 'Art-Net'} - {ip or tr('not_configured')}"
         except Exception:
             pass
 
@@ -730,10 +730,10 @@ def main():
         print(f"[CloudSync] démarrage ignoré : {e}")
         _cloud = None
 
-    # Effet visuel AKAI — démarré dès que la connexion est confirmée
+    # Effet visuel AKAI - démarré dès que la connexion est confirmée
     akai_effect = AkaiSplashEffect()
 
-    # Attendre les threads sans bloquer Qt — on process les events pendant l'attente
+    # Attendre les threads sans bloquer Qt - on process les events pendant l'attente
     deadline = time.time() + 8
     akai_shown = dmx_shown = False
     while time.time() < deadline:

@@ -1,5 +1,5 @@
 """
-test_flash_kill_reel.py — FLASH / FLASH KILL vus depuis la SORTIE DMX.
+test_flash_kill_reel.py - FLASH / FLASH KILL vus depuis la SORTIE DMX.
 
 `test_flash_bouton.py` verifie le modele : `_recompute_memory_mix` posait bien
 0 % (KILL) ou 100 % (FLASH) sur les projecteurs. Ca passait, et pourtant rien
@@ -8,13 +8,13 @@ ne se voyait sur les lampes.
 La raison : `_recompute_memory_mix` n'est appele qu'aux evenements, alors que
 `send_dmx_update` tourne a chaque frame (40 fps) et REPOSE par-dessus, en HTP,
 les memoires (`_compute_htp_overrides`) et les pads manuels
-(`_apply_pad_overrides_htp`) — a partir du fader BRUT. Une frame apres le
+(`_apply_pad_overrides_htp`) - a partir du fader BRUT. Une frame apres le
 debut du KILL, tout etait donc rallume au niveau d'avant.
 
 Ce test regarde donc ce qui part vraiment sur le fil :
 
   * les deux couches HTP lisent le fader a travers `_flash_level` ;
-  * un KILL passe par une derniere porte avant l'envoi — le noir doit couper
+  * un KILL passe par une derniere porte avant l'envoi - le noir doit couper
     « le reste » sans exception (effet en cours, IA, timeline compris), puis
     se defaire aussitot : aucun etat du show ne bouge ;
   * un momentane ne touche pas au moteur d'effets (sinon un KILL tuait
@@ -173,7 +173,7 @@ class CoucheHtpMemoires(unittest.TestCase):
         self.assertEqual(next(iter(ov.values()))[0], 80)   # 100 % x fader 80
 
     def test_kill_ne_touche_plus_au_niveau_lu(self):
-        """KILL tenu seul ne coupe RIEN — la coupure est le solo, par projecteur.
+        """KILL tenu seul ne coupe RIEN - la coupure est le solo, par projecteur.
 
         Avant, `_flash_level` ramenait toute colonne memoire a 0 sous KILL :
         c'etait un blackout des l'appui sur le bouton. La coupure passe
@@ -243,7 +243,7 @@ class PorteDuSolo(unittest.TestCase):
     """FLASH KILL = SOLO momentane, arme par l'appui d'un pad couleur.
 
     Tenu SEUL, le bouton ne coupe rien : il faut un pad couleur presse. Le
-    groupe de ce pad sort normalement, tout le reste part au noir — et
+    groupe de ce pad sort normalement, tout le reste part au noir - et
     seulement le temps de la frame, aucun etat du show n'est touche.
 
     Ici projectors[0] est du groupe « face », projectors[1] du groupe « lat ».

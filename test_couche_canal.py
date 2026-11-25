@@ -1,5 +1,5 @@
 """
-test_couche_canal.py — Editeur d'effets : la couche « Canal ».
+test_couche_canal.py - Editeur d'effets : la couche « Canal ».
 
 Une couche d'effet ne savait piloter que des NOTIONS (Dimmer, R/V/B, Pan/Tilt,
 Zoom, Gobo) : impossible de faire tourner le prisme d'une lyre, d'animer un
@@ -10,11 +10,11 @@ Ce qui est verrouille ici :
   * la liste des canaux vient du PATCH (par type, et par numero pour ce qu'un
     type ne suffit pas a designer : Unused d'un laser, types repetes, reglages
     d'une machine) ;
-  * une machine n'est atteinte que par son canal de SORTIE — une couche
+  * une machine n'est atteinte que par son canal de SORTIE - une couche
     « Speed » reglee pour des lyres ne touche pas la duree des etincelles ;
   * un canal designe par numero ne vise que CE modele (signature de profil) ;
   * la sortie DMX lit `effect_channels` avant les canaux forces, mais le mute
-    passe devant — y compris sur une machine ;
+    passe devant - y compris sur une machine ;
   * le moteur du show remplit la table, meme sans aucun projecteur « lumiere » ;
   * la sortie live de l'editeur pose ses canaux le temps d'une frame puis rend
     l'etat d'avant ;

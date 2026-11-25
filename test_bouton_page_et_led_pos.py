@@ -1,15 +1,15 @@
 """
-test_bouton_page_et_led_pos.py — Deux gestes du controleur.
+test_bouton_page_et_led_pos.py - Deux gestes du controleur.
 
 1. Le bouton bas-droite gagne une 5e fonction : PAGE +1. Un seul appui passe a
-   la page de layout suivante, et revient a la premiere apres la derniere — un
+   la page de layout suivante, et revient a la premiere apres la derniere - un
    bouton suffit donc a faire le tour des pages sans lacher le controleur.
    C'est le MEME chemin que la fleche a l'ecran (`_next_bank_page`) : pads,
    faders et LED suivent exactement pareil.
 
 2. Une position fraichement enregistree allume tout de suite sa LED sur le
    controleur. Avant, `_record_position_akai` ne repeignait que le pad a
-   l'ECRAN : sur l'AKAI le pad restait noir jusqu'au premier rappel — on ne
+   l'ECRAN : sur l'AKAI le pad restait noir jusqu'au premier rappel - on ne
    voyait pas ce qu'on venait d'enregistrer. Meme oubli a l'assignation d'un
    preset existant.
 
@@ -175,7 +175,7 @@ class LedDuPadPosition(unittest.TestCase):
     def test_l_enregistrement_appelle_la_led(self):
         """Lecture du source : `_record_position_akai` doit poser la LED.
 
-        Le corps ouvre une QInputDialog — on verifie donc que l'appel est bien
+        Le corps ouvre une QInputDialog - on verifie donc que l'appel est bien
         la, a cote du repeint a l'ecran, plutot que de piloter un dialogue.
         """
         import inspect

@@ -1,5 +1,5 @@
 """
-test_memoire_parametres_seuls.py — une memoire n'impose que ce qu'elle porte.
+test_memoire_parametres_seuls.py - une memoire n'impose que ce qu'elle porte.
 
 Remontee 18/09/2026 : « je fais un clear, mes projos sont en noir, je monte
 juste le strob, je l'enregistre et la il me dit qu'il y a rien dedans », puis
@@ -116,7 +116,7 @@ class Live(unittest.TestCase):
         """Le pad allume, le fader dose (13/10/2026, façon grandMA).
 
         Fader baissé, la surcouche reste en scène : son gobo tient, mais son
-        strobe — de la lumière — s'arrête. Avant, le fader à 0 la retirait
+        strobe - de la lumière - s'arrête. Avant, le fader à 0 la retirait
         entièrement et le look reprenait son gobo.
         """
         w = Fenetre(strobe_speed=60, gobo=128)

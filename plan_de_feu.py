@@ -10,6 +10,7 @@ from collections import Counter
 from i18n import tr, tr_name
 from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
                   pan_from_front, pan_to_front, rest_pantilt, mount_is_hung,
+                  fixture_motor_only,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
                   GOBO_SLOT_NAMES, GOBO_SLOT_ICONS, GOBO_SLOT_COUNT,
@@ -59,7 +60,7 @@ def _draw_gobo_pattern(painter, slot, ox, oy, iw, ih, col):
     Tout se trace en coordonnees normalisees -1..1 via `_pt()`, mises a
     l'echelle par `iw` en x et `ih` en y : un motif dessine rond sortirait de
     l'ellipse. C'est aussi pourquoi les epaisseurs de trait se calculent sur
-    `iw` — a quinze pixels de large, un trait de plus d'`iw//5` boucherait tout.
+    `iw` - a quinze pixels de large, un trait de plus d'`iw//5` boucherait tout.
 
     `ox`/`oy` sont le centre de la tache dans le repere DEJA translate et pivote
     par l'appelant (l'axe y descend le long du faisceau).
@@ -87,7 +88,7 @@ def _draw_gobo_pattern(painter, slot, ox, oy, iw, ih, col):
 
     center = QPoint(int(ox), int(oy))
 
-    # ⚠️ Decoupe a l'ellipse d'impact — l'equivalent du `destination-in` qui
+    # ⚠️ Decoupe a l'ellipse d'impact - l'equivalent du `destination-in` qui
     # termine `_createGoboTexture` en 3D. Sans elle, la barre, l'etoile, le
     # vitrail et les triangles (traces jusqu'au rayon 1,0) debordaient de la
     # tache et bavaient sur le plateau : un gobo eclaire l'interieur du
@@ -98,7 +99,7 @@ def _draw_gobo_pattern(painter, slot, ox, oy, iw, ih, col):
     painter.setClipPath(_clip, Qt.IntersectClip)
     _set_pen()
 
-    if slot == 1:        # Barre — une seule fente en travers du faisceau
+    if slot == 1:        # Barre - une seule fente en travers du faisceau
         # Le trait EST le motif : son epaisseur vaut 40 % de la hauteur de la
         # tache, comme la fente du gobo 3D.
         bar = QPen(col, max(2, int(ih * 0.8)))
@@ -140,7 +141,7 @@ def _draw_gobo_pattern(painter, slot, ox, oy, iw, ih, col):
     elif slot == 7:      # Feuillage
         # ⚠️ Polarite INVERSEE par rapport a la 3D, qui perce des ombres dans un
         # disque plein. Ici la tache est deja peinte : on ne peut qu'ajouter du
-        # clair par-dessus. Meme compromis assume que le breakup (slot 10) —
+        # clair par-dessus. Meme compromis assume que le breakup (slot 10) -
         # illisible de toute facon a quinze pixels de large.
         for ux, uy, ang in _GOBO_LEAVES:
             rad = math.radians(ang)
@@ -248,6 +249,44 @@ _GOBO_CLOUDS = (
 # EFFETS AUTOMATIQUES MOVING HEAD
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _bar_angle_2d(proj) -> float:
+    """Angle (degrés) d'une barre LED SIMPLE sur le plan 2D = son RY de la 3D
+    (`body_rotation`). Les barres à pixels ont leur propre rotation
+    (`_rotate_matrix`, positions des pixels) : 0 ici.
+
+    Sens : le plan 2D voit la scène d'en haut, X et Z tous deux inversés par
+    rapport à la 3D (`plan_3d_webwindow._pos3d_from_canvas`). Un RY de +θ
+    (x' = x·cos θ + z·sin θ) fait donc tourner la barre de θ dans le sens
+    INVERSE des aiguilles d'une montre à l'écran → `painter.rotate(-θ)`.
+    """
+    if getattr(proj, 'matrix_id', None) is not None:
+        return 0.0
+    try:
+        return float(getattr(proj, 'body_rotation', 0.0) or 0.0) % 360.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def rotate_simple_bars(projs, step):
+    """Pivote de `step` degrés les barres LED SIMPLES de `projs` (RY =
+    body_rotation, partagé avec la 3D). Les barres à pixels sont ignorées :
+    elles ont `_rotate_matrix`."""
+    for p in projs:
+        if (getattr(p, 'fixture_type', '') == 'Barre LED'
+                and getattr(p, 'matrix_id', None) is None):
+            p.body_rotation = (float(getattr(p, 'body_rotation', 0.0) or 0.0) + step) % 360.0
+
+
+def _bar_local(dx, dy, angle_deg):
+    """Vecteur écran (dx, dy) ramené dans le repère d'une barre dessinée avec
+    `painter.rotate(-angle_deg)` (inverse de cette rotation)."""
+    if not angle_deg:
+        return dx, dy
+    a = math.radians(angle_deg)
+    c, s = math.cos(a), math.sin(a)
+    return dx * c - dy * s, dx * s + dy * c
+
+
 class _EffectState:
     """État d'un effet automatique Pan/Tilt sur une fixture."""
 
@@ -256,9 +295,9 @@ class _EffectState:
     def __init__(self, effect, speed, amplitude, center_pan, center_tilt):
         self.effect       = effect        # "cercle","figure8","balayage_h","balayage_v","aleatoire"
         self.speed        = speed         # Hz (0.1 – 3.0)
-        self.base_speed   = speed         # vitesse "naturelle" — sert de référence au slider VITESSE
+        self.base_speed   = speed         # vitesse "naturelle" - sert de référence au slider VITESSE
         self.amplitude    = amplitude     # 0-120
-        self.base_amplitude = amplitude   # amplitude "naturelle" — référence du slider AMPLITUDE
+        self.base_amplitude = amplitude   # amplitude "naturelle" - référence du slider AMPLITUDE
         self.center_pan   = center_pan
         self.center_tilt  = center_tilt
         self.phase        = 0.0           # radians
@@ -342,7 +381,7 @@ class _InlineNameEdit(QLineEdit):
     QLineEdit émet returnPressed puis **laisse remonter** l'événement Return :
     c'est ce qui permet à Entrée de valider un QDialog. Ici le parent est un
     QMenu, qui interprète Return comme « activer l'action courante » et se
-    ferme — le renommage était donc impossible à valider sans perdre le menu.
+    ferme - le renommage était donc impossible à valider sans perdre le menu.
     On consomme Return/Échap pour qu'ils n'atteignent jamais le menu.
     """
 
@@ -367,8 +406,8 @@ def _grab_move(projs):
     """Marque un pan/tilt comme pris en main depuis le plan 2D.
 
     Sans ça, les mémoires réécrivent la position : au prochain mouvement de
-    fader (_recompute_memory_mix) ou au prochain changement de cue — y compris
-    automatique (_apply_memory_to_projectors) — la lyre repart toute seule.
+    fader (_recompute_memory_mix) ou au prochain changement de cue - y compris
+    automatique (_apply_memory_to_projectors) - la lyre repart toute seule.
     Libéré par CLEAR.
     """
     for p in projs:
@@ -409,7 +448,7 @@ def _save_presets(presets):
 
 
 class PresetBar(QWidget):
-    """Colonne presets Pan/Tilt — scrollable, style sombre."""
+    """Colonne presets Pan/Tilt - scrollable, style sombre."""
 
     preset_selected = Signal(object)   # preset dict
 
@@ -1093,7 +1132,7 @@ class _HSVSlider(QWidget):
 class ColorPickerBlock(QFrame):
     """Color picker HSV avec sliders Teinte/Luminosité."""
 
-    color_changed = Signal(object)   # QColor — émis à chaque changement de couleur
+    color_changed = Signal(object)   # QColor - émis à chaque changement de couleur
 
     def __init__(self, plan_de_feu, parent=None):
         super().__init__(parent)
@@ -1211,7 +1250,7 @@ class ColorPickerBlock(QFrame):
     @staticmethod
     def _is_cw_only(proj) -> bool:
         # « Lyre » : ancien libellé produit par l'import QLC+. Les fixtures déjà
-        # patchées le portent encore — les rejeter obligerait à tout réimporter.
+        # patchées le portent encore - les rejeter obligerait à tout réimporter.
         if getattr(proj, 'fixture_type', '') not in ('Moving Head', 'Lyre', 'Laser'):
             return False
         profile = getattr(proj, 'dmx_profile', None) or []
@@ -1238,7 +1277,7 @@ class ColorPickerBlock(QFrame):
         # Grisé seulement si 100% Color Wheel (aucun RGB dans la sélection)
         is_cw = has_cw_only and not has_rgb
         self._cw_locked = is_cw
-        # Tous les sliders actifs — pour la roue couleur, la teinte est mappée au slot le plus proche
+        # Tous les sliders actifs - pour la roue couleur, la teinte est mappée au slot le plus proche
         for w in (self._hue_slider, self._sat_slider, self._bri_slider):
             w.setEnabled(True)
             w.setGraphicsEffect(None)
@@ -1263,7 +1302,7 @@ class ColorPickerBlock(QFrame):
             # Prise en main manuelle, comme le fait déjà le clic droit
             # « appliquer une couleur » (_apply_color_to_targets). Sans ce
             # drapeau, la restitution HTP des mémoires réécrit la fixture
-            # ~40 fois par seconde et efface aussitôt la couleur choisie —
+            # ~40 fois par seconde et efface aussitôt la couleur choisie -
             # le curseur semblait alors sans effet. Libéré par CLEAR.
             proj._manual_color = True
             proj.release_color_overrides()   # la couleur reprend la main sur R/G/B/W
@@ -1281,7 +1320,7 @@ class ColorPickerBlock(QFrame):
                 # Métrique unique de l'app (`core.cw_slot_for_color`), et on lui
                 # donne la TEINTE PURE du sélecteur, pas `color` : `color` est
                 # déjà atténuée par le curseur de luminosité, et la distance RVB
-                # brute qui servait ici était dominée par cette luminosité — la
+                # brute qui servait ici était dominée par cette luminosité - la
                 # roue sautait sur le slot le plus SOMBRE (le vert de la table)
                 # quelle que soit la teinte choisie, jusqu'au vert plein à
                 # luminosité 0. La position d'une roue ne dépend que de la teinte.
@@ -1302,7 +1341,7 @@ class ColorPickerBlock(QFrame):
                     # Roue non renseignée : on ignore quelle valeur DMX donne
                     # quelle couleur. On délègue à _update_color_wheel, qui
                     # porte la table générique teinte → DMX et sert déjà aux
-                    # mémoires et au show — même source de vérité.
+                    # mémoires et au show - même source de vérité.
                     # Avant, cette branche ne faisait que redimensionner la
                     # luminosité : le curseur semblait sans effet sur une lyre
                     # dont la roue n'avait pas été décrite (import QLC+ ancien).
@@ -1502,10 +1541,10 @@ def apply_pan_tilt(main_window, proj, pan, tilt):
     Les deux écritures sont nécessaires, chacune couvre un cas que l'autre rate :
 
     • `proj.pan/tilt` seul : un effet qui pilote le mouvement le réécrit à la
-      frame suivante depuis son centre capturé — la lyre revient sur place.
+      frame suivante depuis son centre capturé - la lyre revient sur place.
     • `effect_saved_colors` (le centre) seul : un effet de COULEUR (Rainbow) ne
       touche jamais `proj.pan`, donc plus rien ne reporte le centre déplacé sur
-      la lyre — le pad et les presets du plan 2D devenaient inertes, et la
+      la lyre - le pad et les presets du plan 2D devenaient inertes, et la
       position n'apparaissait qu'à l'arrêt de l'effet, qui restaure ce centre.
 
     Écrire les deux donne le même résultat dans les deux cas.
@@ -1526,8 +1565,8 @@ class _PersistentMenu(QMenu):
     """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction.
 
     Qt6 traite les events souris dans QMenu::event() (via QMenuPrivate) avant
-    d'appeler mouseReleaseEvent(), donc il faut surcharger event() — pas les
-    handlers individuels — pour intercepter les clics sur les zones QWidgetAction.
+    d'appeler mouseReleaseEvent(), donc il faut surcharger event() - pas les
+    handlers individuels - pour intercepter les clics sur les zones QWidgetAction.
     """
 
     def keyPressEvent(self, e):
@@ -1631,7 +1670,7 @@ class _PersistentMenu(QMenu):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VUE « CURSEURS » (canaux bruts) — habillage
+# VUE « CURSEURS » (canaux bruts) - habillage
 # ─────────────────────────────────────────────────────────────────────────────
 # La couleur dit CE QUE fait le canal, l'intensité dit QUI le pilote :
 # terne = calculé par le moteur, vif = forcé à la main. Sur une barre de 165
@@ -1660,7 +1699,7 @@ _TEINTE_DEFAUT = "#00d4ff"
 
 # Nom affiché d'un type de canal, quand la fixture n'a pas de libellé
 # constructeur (`channel_labels`). Volontairement dans le vocabulaire des
-# notices de fixtures — « Pan Fine », « Gobo Rot », « Color Wheel » — plutôt que
+# notices de fixtures - « Pan Fine », « Gobo Rot », « Color Wheel » - plutôt que
 # traduit : c'est écrit ainsi sur les appareils et dans leurs manuels, dans les
 # cinq langues de l'app. À ne pas confondre avec `CHANNEL_DISPLAY`, qui abrège
 # pour les listes serrées (« PanF ») ; ici on a la place de lire.
@@ -1677,7 +1716,7 @@ _NOM_CANAL = {
     "ColorWheel": "Color Wheel", "CTO": "CTO", "CTB": "CTB",
     "Effects": "Effects", "Speed": "Speed", "Mode": "Mode", "Reset": "Reset",
     "Smoke": "Smoke", "Fan": "Fan",
-    "Spark": "Spark", "Flame": "Flame", "Unused": "—",
+    "Spark": "Spark", "Flame": "Flame", "Unused": "-",
     "Preset1": "Preset 1", "Preset2": "Preset 2",
     "Preset3": "Preset 3", "Preset4": "Preset 4",
 }
@@ -1715,7 +1754,7 @@ _CANAL_ATTR_SIMPLE = {
     "Effects": "effects", "Speed": "speed", "Mode": "mode_value",
     "Fan": "fan_speed",
     # Presets : la vue « Curseurs » ecrit donc le MEME attribut que la section
-    # Presets du menu. Un seul writer par canal — sans cette entree, le curseur
+    # Presets du menu. Un seul writer par canal - sans cette entree, le curseur
     # brut passerait par `channel_extras` et les deux chemins divergeraient.
     "Preset1": "preset1", "Preset2": "preset2",
     "Preset3": "preset3", "Preset4": "preset4",
@@ -1728,7 +1767,7 @@ def _ecrire_canal_modele(proj, ctype, valeur):
     C'est le chemin INVERSE de `ArtNetDMX._update_from_projectors_locked`, et
     la raison d'être des curseurs bruts : sans lui, bouger « Pan » en vue
     brute écrivait un forçage (`channel_extras`) qui court-circuite le modèle.
-    Le pad Pan du panneau normal restait alors sur l'ancienne position — et
+    Le pad Pan du panneau normal restait alors sur l'ancienne position - et
     réciproquement, le pad ne pouvait plus rien bouger puisque le forçage
     gagne. Les deux vues montraient deux vérités différentes du même canal.
 
@@ -1754,7 +1793,7 @@ def _ecrire_canal_modele(proj, ctype, valeur):
         # l'intensité (`_update_from_projectors_locked`, branche « pas de canal
         # Dim »). Écrire seulement la couleur ne ressortait donc jamais telle
         # quelle : à niveau 0 le canal restait à 0 quoi qu'on pousse, à 50 % on
-        # n'obtenait que la moitié — et le suivi live ramenait le curseur sous
+        # n'obtenait que la moitié - et le suivi live ramenait le curseur sous
         # les doigts 0,4 s plus tard (remontée utilisateur, 17/08/2026).
         #
         # L'inverse exact du moteur est ici de replier le niveau dans la
@@ -1775,7 +1814,7 @@ def _ecrire_canal_modele(proj, ctype, valeur):
 
     if ctype in ("Dim", "Dim2", "Smoke", "Spark", "Flame"):
         # Smoke / Spark / Flame : sur une machine à effet, le débit EST le
-        # niveau (branche dédiée du moteur, qui ignore les forçages — d'où le
+        # niveau (branche dédiée du moteur, qui ignore les forçages - d'où le
         # passage obligé par le modèle ici).
         proj.set_level(round(v / 255 * 100))
         return True
@@ -1784,7 +1823,7 @@ def _ecrire_canal_modele(proj, ctype, valeur):
         # Le moteur étale 0-100 % sur 16-250 ; en dessous de 16, strobe éteint.
         # La valeur brute est gardée à côté : sans elle, 255 ressortait 250
         # (plafond de l'étalement) et le suivi live ramenait le curseur à 250
-        # sous les doigts — « je le règle à 255, il redescend à 250 ». Le
+        # sous les doigts - « je le règle à 255, il redescend à 250 ». Le
         # moteur ne l'émet que tant que `strobe_speed` est celle qu'elle a
         # produite : un pad ou un effet qui change la vitesse reprend la main.
         proj.strobe_speed = strobe_speed_from_dmx(v)
@@ -1833,7 +1872,7 @@ _CANAUX_MODELE = set(_CANAL_ATTR_SIMPLE) | {
 def _feuille_curseur(plein, teinte):
     """Feuille de style d'un curseur de canal, teintée.
 
-    Partagée par les DEUX vues du menu contextuel — la vue « Curseurs » et le
+    Partagée par les DEUX vues du menu contextuel - la vue « Curseurs » et le
     panneau métier (Dim, Strobe, UV/Blanc/Ambre, gobo, prisme, réglages
     d'effet) : deux jeux de curseurs côte à côte dans le même menu n'ont aucune
     raison de se ressembler « à peu près ».
@@ -1868,7 +1907,7 @@ class _CurseurCanal(QSlider):
     Deux écarts volontaires avec QSlider :
       • la molette règle par pas de 5 (Ctrl = 1, Maj = 25) au lieu du pas de
         page, illisible sur 0-255. Elle ne fait défiler la liste que si le
-        curseur de souris est AILLEURS que sur un curseur — voir
+        curseur de souris est AILLEURS que sur un curseur - voir
         `_PersistentMenu._faire_defiler`.
       • un clic sur la barre saute à la valeur cliquée puis enchaîne sur le
         glisser, comme sur un pupitre. Le comportement Qt par défaut (avancer
@@ -2026,7 +2065,7 @@ def _find_free_canvas_pos(projectors, pref_x, pref_y, min_dist=0.13):
 
 # Viser une lyre en glissant la souris sur son faisceau ou son corps dans le
 # plan 2D. Désactivé : le geste entrait sans cesse en conflit avec la simple
-# sélection de projecteurs — un clic un peu appuyé déplaçait le faisceau au
+# sélection de projecteurs - un clic un peu appuyé déplaçait le faisceau au
 # lieu de sélectionner. Le pan/tilt reste réglable au contrôleur, aux faders
 # et dans les propriétés du projecteur.
 # Repasser à True suffit à tout réactiver : rien d'autre n'a été supprimé.
@@ -2261,8 +2300,8 @@ class _PanTiltFloater(QFrame):
 # Géométrie du faisceau 2D d'une lyre
 # ─────────────────────────────────────────────────────────────────────────────
 # Point UNIQUE de la relation (pan, tilt) → cône dessiné. Trois consommateurs en
-# dépendent — le rendu (`_draw_fixture`), la prise du faisceau à la souris
-# (`_beam_at`) et le ciblage inverse (`_apply_target`) — et ils en avaient
+# dépendent - le rendu (`_draw_fixture`), la prise du faisceau à la souris
+# (`_beam_at`) et le ciblage inverse (`_apply_target`) - et ils en avaient
 # chacun une version DIFFÉRENTE : on attrapait un faisceau là où rien n'était
 # dessiné, et viser un point posait un tilt qui n'y menait pas.
 #
@@ -2270,13 +2309,13 @@ class _PanTiltFloater(QFrame):
 # `beam_len` portait un plancher de 2r : sur un effet de Tilt seul, l'angle ne
 # prend que deux valeurs (0° ou 180°, la composante Pan étant nulle) et la
 # pointe sautait de +2r à −2r au franchissement du centre, sans jamais passer
-# par les positions intermédiaires — « ça bouge, mais c'est tout ou rien ».
+# par les positions intermédiaires - « ça bouge, mais c'est tout ou rien ».
 # Le biais +0,015 qui traînait sur `fdy` était un pansement sur ce symptôme
 # (« évite le battement visuel quand tilt est neutre »).
 #
 # La longueur part donc de zéro : la pointe vaut `(−fdx, fdy) × k`, fonction
 # linéaire de la déflexion, continue par construction. C'est aussi la géométrie
-# juste — vue de dessus, une lyre qui vise droit en bas n'a pas de faisceau
+# juste - vue de dessus, une lyre qui vise droit en bas n'a pas de faisceau
 # latéral. Le facteur passe de 6 à 10 pour conserver l'amplitude que le plancher
 # apportait. Même famille de bug que le faisceau 3D qui sautait à l'horizontale :
 # la discontinuité vit dans une BORNE, pas dans la trigonométrie.
@@ -2287,7 +2326,7 @@ _BEAM_TILT_SPAN = 0.75  # course de tilt représentée : ±0,75·π (= 270°)
 def beam_geometry(pan_val, tilt_val, r):
     """(angle en degrés, longueur, demi-largeur) du cône d'une lyre.
 
-    Modèle linéaire indépendant : Pan → X, Tilt → profondeur scène — un cercle
+    Modèle linéaire indépendant : Pan → X, Tilt → profondeur scène - un cercle
     en pan/tilt donne un cercle à l'écran, un huit donne un huit.
     """
     fdx  = math.sin((pan_val  - 32768) / 32768.0 * math.pi)
@@ -2348,7 +2387,7 @@ class FixtureCanvas(QWidget):
 
         # ── Piles (totems) ───────────────────────────────────────────
         # Plusieurs appareils sur le MÊME point du plan : un pied, un totem,
-        # deux ponts superposés. Rien n'est stocké — une pile, c'est simplement
+        # deux ponts superposés. Rien n'est stocké - une pile, c'est simplement
         # des fixtures qui partagent la même position. Aucun champ nouveau,
         # donc aucune migration des shows ni du patch.
         # Pastilles « nombre d'appareils » posées au dernier paintEvent :
@@ -2359,7 +2398,7 @@ class FixtureCanvas(QWidget):
         self._stack_snap   = None
         # Appareil VISÉ, plus large que l'aimantation : il cesse d'être repoussé
         # par l'anti-chevauchement et s'entoure d'un cercle « lâchez ici ».
-        # Sans lui, empiler était impossible — la cible reculait à 32 px alors
+        # Sans lui, empiler était impossible - la cible reculait à 32 px alors
         # que l'aimantation n'opère qu'à 13, elle fuyait donc toujours avant
         # d'être atteinte.
         self._stack_hint   = None
@@ -2391,7 +2430,7 @@ class FixtureCanvas(QWidget):
         # ── Vue (zoom / déplacement) ────────────────────────────────
         # Le zoom écarte les POSITIONS sans grossir les icônes : c'est ce qui
         # sépare des fixtures serrées. Une loupe classique (painter.scale) les
-        # aurait grossies avec l'écart — aussi collées, juste plus grosses.
+        # aurait grossies avec l'écart - aussi collées, juste plus grosses.
         # Les positions du modèle (canvas_x/canvas_y, normalisées 0-1) ne sont
         # jamais touchées : le zoom est purement une transformation d'affichage.
         self._zoom      = 1.0
@@ -2496,7 +2535,7 @@ class FixtureCanvas(QWidget):
     def _apply_target(self, pos):
         """Oriente les lyres sélectionnées vers le point pos (pixels canvas).
 
-        Travaille en pixels — même repère que le rendu visuel du faisceau :
+        Travaille en pixels - même repère que le rendu visuel du faisceau :
         `beam_aim` est l'inverse exact de `beam_geometry`, donc la pointe du
         cône dessiné tombe sur le point cliqué.
         """
@@ -2542,7 +2581,7 @@ class FixtureCanvas(QWidget):
             # Le plafond était 49152 (192/255) en dur : le plan 2D ne connaît
             # ni la hauteur de la lyre ni la distance de la piste, et une lyre
             # posée bas (pied, totem) devait dépasser 192 pour éclairer la
-            # piste — le ciblage la calait en butée (client FuraxX, 13/11/2026).
+            # piste - le ciblage la calait en butée (client FuraxX, 13/11/2026).
             # Désormais : la portée naturelle de `beam_aim` (l'horizontale,
             # ≈ 213/255) et, si elle est réglée, la zone de la lyre
             # (« Limites de mouvement »), seul garde-fou qui connaît le matériel.
@@ -2557,7 +2596,7 @@ class FixtureCanvas(QWidget):
 
             # Appliquer le swap si actif : artnet_dmx va re-swapper, donc on
             # pre-swap ici pour que les bons axes arrivent sur les bons canaux.
-            # Pan_invert / tilt_invert sont gérés par artnet_dmx directement —
+            # Pan_invert / tilt_invert sont gérés par artnet_dmx directement -
             # il ne faut PAS les appliquer ici (ce serait une double inversion).
             if getattr(proj, 'pan_tilt_swap', False):
                 pan_val, tilt_val = tilt_val, pan_val
@@ -2614,7 +2653,7 @@ class FixtureCanvas(QWidget):
     # sortir un appareil.
 
     # Tolérance de regroupement, en unités de plan (0-1). Deux positions à
-    # moins de ça sont le même point. Volontairement minuscule — 0,02 % de
+    # moins de ça sont le même point. Volontairement minuscule - 0,02 % de
     # plan, soit 3 mm en X : l'empilement se fait par AIMANTATION au dépôt
     # (cf. `_stack_snap_target`), qui recopie la position à l'identique. Cette
     # marge n'est là que pour absorber les arrondis d'un aller-retour par la
@@ -2633,7 +2672,7 @@ class FixtureCanvas(QWidget):
                 continue
             # Position NON stockée = fixture placée d'office par le canvas :
             # ce n'est pas un empilement voulu. L'écarter ferme aussi la porte
-            # au coût quadratique — `_get_norm_pos` reparcourt toute la liste
+            # au coût quadratique - `_get_norm_pos` reparcourt toute la liste
             # pour retrouver le rang d'une fixture dans son groupe, et cette
             # méthode est appelée à chaque mouvement de souris.
             nx, ny = p.canvas_x, p.canvas_y
@@ -2755,7 +2794,9 @@ class FixtureCanvas(QWidget):
             ftype = getattr(proj_i, 'fixture_type', 'PAR LED')
             if ftype == "Barre LED":
                 _br = 9 if self.compact else 13
-                if abs(px - cx) <= int(_br * 2.4) and abs(py - cy) <= max(6, int(_br * 0.46)):
+                # Point ramené dans le repère de la barre (inverse du dessin).
+                _lx, _ly = _bar_local(px - cx, py - cy, _bar_angle_2d(proj_i))
+                if abs(_lx) <= int(_br * 2.4) and abs(_ly) <= max(6, int(_br * 0.46)):
                     return i
             elif ftype in ("Machine a fumee", "Machine a brouillard"):
                 if abs(px - cx) <= 13 and abs(py - cy) <= 7:
@@ -2770,7 +2811,7 @@ class FixtureCanvas(QWidget):
             else:
                 if (px - cx) ** 2 + (py - cy) ** 2 <= 13 * 13:
                     # Pile : renvoyer le membre qui PORTE le dessin. Les autres
-                    # sont exactement dessous et ne sont jamais peints — sans
+                    # sont exactement dessous et ne sont jamais peints - sans
                     # ça, le survol et l'étiquette annonceraient un appareil
                     # que rien à l'écran ne représente.
                     _membres = self._stack_members(i)
@@ -2791,7 +2832,7 @@ class FixtureCanvas(QWidget):
             cx, cy = self._get_canvas_pos(i)
             # Même géométrie que le dessin : sans ça on attrape le faisceau
             # là où il n'est pas (l'ancien calcul avait sa propre formule,
-            # avec un tilt ramené sur 0..1 au lieu d'un écart au centre —
+            # avec un tilt ramené sur 0..1 au lieu d'un écart au centre -
             # une lyre au repos se voyait attribuer un cône de 71 px).
             # Repère « face scène » de la lyre (cf. core.pan_front_offset).
             pan_angle, beam_len, beam_hw = beam_geometry(
@@ -2856,7 +2897,7 @@ class FixtureCanvas(QWidget):
             if level > 0 and not proj.muted:
                 # ⚠️ `color` est DÉJÀ la couleur ÉMISE : `_compute_htp_overrides`
                 # la calcule en `base × niveau / 100`. La remultiplier par
-                # `level` — qui vaut 0-100, pas 0-1 — sortait de 0-255 et
+                # `level` - qui vaut 0-100, pas 0-1 - sortait de 0-255 et
                 # QColor rendait alors une couleur INVALIDE, c'est-à-dire NOIRE.
                 # Une seule mémoire levée sur des fixtures RVB suffisait à le
                 # déclencher : le mix additif reconstruit `proj.level` depuis les
@@ -2864,7 +2905,7 @@ class FixtureCanvas(QWidget):
                 # position de fader sur cinq la mémoire dépasse le modèle d'un
                 # cran et pose un override. Monter un fader faisait clignoter le
                 # plan 2D, et s'arrêter sur une de ces positions (dont 100 %)
-                # éteignait les fixtures à l'écran — sorties DMX et 3D correctes,
+                # éteignait les fixtures à l'écran - sorties DMX et 3D correctes,
                 # elles ne passent pas par ici.
                 return QColor(color)
             return QColor("#1a1a1a")
@@ -2872,7 +2913,7 @@ class FixtureCanvas(QWidget):
             return QColor("#1a1a1a")
         # Canaux couleur repris à la main (vue « Curseurs ») : ils ne passent
         # plus par `color`/`level`, la fixture restait donc noire à l'écran
-        # alors qu'elle sortait du rouge — et sur un PAR sans canal Dim, son
+        # alors qu'elle sortait du rouge - et sur un PAR sans canal Dim, son
         # niveau vaut 0 en permanence, si bien que le test juste en dessous la
         # déclarait éteinte quoi qu'on règle. À placer AVANT ce test, mais après
         # le mute, qui lui coupe vraiment tout (le moteur zérote alors la
@@ -2895,7 +2936,7 @@ class FixtureCanvas(QWidget):
             return QColor(255, int(220 * br), int(100 * br))
 
         # Lyre à roue de couleurs : la couleur affichée vient de la POSITION DE
-        # LA ROUE, pas de base_color. Une roue est toujours sur un slot — elle
+        # LA ROUE, pas de base_color. Une roue est toujours sur un slot - elle
         # ne peut pas être noire. Se fier à base_color affichait la fixture
         # éteinte tant qu'aucune couleur n'avait été posée à la main, alors
         # qu'elle sort bel et bien du blanc.
@@ -2904,7 +2945,7 @@ class FixtureCanvas(QWidget):
         # tant qu'aucune couleur n'avait été posée à la main.
         # Intensité : `emitted_brightness` et non `proj.level`, qui vaut 100 en
         # permanence dès qu'un effet couleur tourne (toute la brillance est
-        # alors encodée dans `proj.color`) — une couche RVB sur une lyre à roue
+        # alors encodée dans `proj.color`) - une couche RVB sur une lyre à roue
         # s'affichait donc à intensité fixe pendant que la vraie lyre pulsait.
         _cwc = color_wheel_display_color(proj, emitted_brightness(proj))
         if _cwc is not None:
@@ -2972,14 +3013,14 @@ class FixtureCanvas(QWidget):
             tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
             # Dessin dans le repère « face scène » : une lyre calibrée qui vise
             # le centre de la scène se dessine droite (cf. core.pan_front_offset).
-            # Lyre posée (retournée) : même pan, profondeur inversée — miroir
+            # Lyre posée (retournée) : même pan, profondeur inversée - miroir
             # de la géométrie 3D (rotation X de 180° : z → −z).
             if not mount_is_hung(proj):
                 tilt_val = 65536 - tilt_val
             pan_angle, beam_len, beam_hw = beam_geometry(
                 pan_to_front(proj, pan_val), tilt_val, r)
             # Base du cône : au bord de l'icône quand le faisceau est franc,
-            # ramenée vers le centre quand il se rétracte — sans quoi un cône
+            # ramenée vers le centre quand il se rétracte - sans quoi un cône
             # plus court que `r` se dessinerait à l'envers (base au-delà de la
             # pointe). Le corps de la lyre, dessiné par-dessus, masque ce qui
             # reste sous l'icône.
@@ -3016,17 +3057,17 @@ class FixtureCanvas(QWidget):
                     painter.drawEllipse(QPointF(_ex, _ey), 1.6, 1.6)
                 painter.restore()
 
-            # Cone de faisceau orienté — gradient lumineux à la source
+            # Cone de faisceau orienté - gradient lumineux à la source
             if is_lit and ftype != "Laser":
                 # 0 = ouvert, 1-15 = motif. `fixture_projects_gobo` ferme la
                 # porte aux fixtures SANS optique de projection : sur un PAR LED
                 # dont le canal `Gobo1` sert en realite de canal de programme,
                 # la valeur ne doit ni dessiner de motif ni assombrir le cone
                 # (`haze_alpha`/`alpha_src` ci-dessous en dependent aussi).
-                # Meme porte qu'en 3D — cf. `core.fixture_projects_gobo`.
+                # Meme porte qu'en 3D - cf. `core.fixture_projects_gobo`.
                 gobo_val = getattr(proj, 'gobo', 0)
                 # Forme choisie dans la calibration de la roue si elle existe,
-                # sinon découpage symbolique — cf. `core.gobo_display_slot`.
+                # sinon découpage symbolique - cf. `core.gobo_display_slot`.
                 gobo_idx = (gobo_display_slot(proj, gobo_val)
                             if fixture_projects_gobo(proj) else 0)
 
@@ -3086,7 +3127,7 @@ class FixtureCanvas(QWidget):
                 painter.setBrush(QBrush(impact_col))
                 painter.drawEllipse(QPoint(0, beam_len), iw, ih)
 
-                # Motif gobo dans l'impact — cf. `_draw_gobo_pattern`.
+                # Motif gobo dans l'impact - cf. `_draw_gobo_pattern`.
                 if gobo_idx > 0:
                     pat_col = QColor(fill_color)
                     pat_col.setAlpha(160)
@@ -3221,7 +3262,7 @@ class FixtureCanvas(QWidget):
                 painter.drawEllipse(QPoint(cx + yoke_bot_hw - arm_t_bot // 2, head_cy),
                                     pivot_r, pivot_r)
 
-                # Tête (cercle — la tête de la lyre)
+                # Tête (cercle - la tête de la lyre)
                 head_grad = QRadialGradient(
                     float(cx - head_r * 0.28), float(head_cy - head_r * 0.28),
                     float(head_r * 1.5))
@@ -3255,7 +3296,12 @@ class FixtureCanvas(QWidget):
                     painter.restore()
 
         elif ftype == "Barre LED":
-            painter.drawRoundedRect(QRect(cx - barre_hw, cy - barre_hh, barre_hw * 2, barre_hh * 2), 3, 3)
+            # Orientation = RY de la 3D (body_rotation) : pivoter en 2D tourne
+            # la 3D et inversement (cf. _bar_angle_2d pour le sens).
+            painter.save()
+            painter.translate(cx, cy)
+            painter.rotate(-_bar_angle_2d(proj))
+            painter.drawRoundedRect(QRect(-barre_hw, -barre_hh, barre_hw * 2, barre_hh * 2), 3, 3)
             # Segments internes
             if is_lit:
                 seg_col = QColor(fill_color)
@@ -3263,8 +3309,9 @@ class FixtureCanvas(QWidget):
                 painter.setPen(QPen(seg_col, 1))
                 seg_step = max(4, barre_hw * 2 // 4)
                 for seg in range(1, 4):
-                    sx = cx - barre_hw + seg * seg_step
-                    painter.drawLine(sx, cy - barre_hh + 1, sx, cy + barre_hh - 1)
+                    sx = -barre_hw + seg * seg_step
+                    painter.drawLine(sx, -barre_hh + 1, sx, barre_hh - 1)
+            painter.restore()
 
         elif ftype == "Stroboscope":
             sw = int(r * 1.18)   # demi-largeur boîtier
@@ -3334,7 +3381,7 @@ class FixtureCanvas(QWidget):
         elif ftype == "Machine a brouillard":
             # Même corps que la fumée, nappe différente : une brume ne fait pas
             # de volutes, elle NOIE l'espace. D'où des bandes larges et basses
-            # au lieu des petits nuages qui montent — c'est ce qui distingue
+            # au lieu des petits nuages qui montent - c'est ce qui distingue
             # les deux machines d'un coup d'œil sur le plan.
             painter.drawEllipse(QRect(cx - fumee_hw, cy - fumee_hh, fumee_hw * 2, fumee_hh * 2))
             if is_lit:
@@ -3423,10 +3470,18 @@ class FixtureCanvas(QWidget):
         if hasattr(self.pdf, 'main_window') and hasattr(self.pdf.main_window, 'GROUP_DISPLAY'):
             gd = self.pdf.main_window.GROUP_DISPLAY
         ftype = getattr(proj, 'fixture_type', 'PAR LED')
+        # Barre/matrice : on survole un PIXEL, mais l'adresse à montrer est
+        # celle de l'appareil, comme dans le patch (CH 53), pas celle du pixel
+        # sous la souris (CH 75) - remontée Discord du 20/11/2026.
+        addr = proj.start_address
+        _mid = getattr(proj, 'matrix_id', None)
+        if _mid is not None:
+            addr = min(getattr(p, 'start_address', addr) for p in self.pdf.projectors
+                       if getattr(p, 'matrix_id', None) == _mid)
         lines = [
-            proj.name or proj.group,
+            (proj.name or proj.group).split(" · ")[0] if _mid is not None else (proj.name or proj.group),
             f"{ftype}  ·  {gd.get(proj.group, proj.group)}",
-            tr("pdf3_021", a=getattr(proj,'universe',0)+1, start_address=proj.start_address, level=proj.level) + ("  (mute)" if proj.muted else ""),
+            tr("pdf3_021", a=getattr(proj,'universe',0)+1, start_address=addr, level=proj.level) + ("  (mute)" if proj.muted else ""),
         ]
         card_w, line_h = 178, 15
         card_h = len(lines) * line_h + 14
@@ -3524,7 +3579,7 @@ class FixtureCanvas(QWidget):
 
         Pas en bas : c'est la place de la pastille de rang de sélection, et les
         deux peuvent s'afficher en même temps. Elle est aussi le bouton qui
-        ouvre la liste des membres (cf. `_stack_badge_at`) — d'où le retour du
+        ouvre la liste des membres (cf. `_stack_badge_at`) - d'où le retour du
         rectangle cliquable, mémorisé par le paintEvent.
         """
         r    = 9 if self.compact else 13
@@ -3538,7 +3593,7 @@ class FixtureCanvas(QWidget):
         by = max(rad + 1, min(self.height() - rad - 1, by))
         # Blanc cerné de noir, et surtout PAS une couleur : la pastille se pose
         # sur une fixture allumée, dont la teinte est arbitraire. En ambre elle
-        # devenait invisible sur un projecteur en ambre — le cas le plus banal
+        # devenait invisible sur un projecteur en ambre - le cas le plus banal
         # d'un plan de feu. Le liseré sombre la détache aussi d'une fixture
         # blanche. Le cyan est réservé au rang de sélection, en bas de l'icône :
         # deux pastilles peuvent coexister, elles doivent rester distinctes.
@@ -3574,7 +3629,7 @@ class FixtureCanvas(QWidget):
 
         Le plan de feu est vu de dessus : les membres d'un totem sont l'un sur
         l'autre et un seul est atteignable à la souris. C'est ce menu qui donne
-        accès aux autres — sans lui, empiler reviendrait à rendre des
+        accès aux autres - sans lui, empiler reviendrait à rendre des
         projecteurs impossibles à sélectionner.
 
         Deux usages, selon le bouton qui l'ouvre :
@@ -3582,7 +3637,7 @@ class FixtureCanvas(QWidget):
         - clic droit (`edit_pos` = position d'ouverture) : choisir un appareil
           le sélectionne PUIS ouvre son menu de réglages. Sans ça, le clic droit
           sur un totem tombait droit sur le gros menu de l'appareil qui porte le
-          dessin — les autres n'étaient réglables qu'en passant d'abord par la
+          dessin - les autres n'étaient réglables qu'en passant d'abord par la
           pastille, et rien ne le disait.
 
         Construit à part de son affichage : c'est ce qui permet d'en vérifier
@@ -3612,15 +3667,15 @@ class FixtureCanvas(QWidget):
             act.triggered.connect(
                 lambda _=False, k=j: self._pick_stack([k], edit_pos))
 
-        # Défaire une pile. Le glisser suffit — on choisit un appareil dans la
-        # liste, puis on le tire à l'écart — mais rien ne l'annonce, et c'est la
+        # Défaire une pile. Le glisser suffit - on choisit un appareil dans la
+        # liste, puis on le tire à l'écart - mais rien ne l'annonce, et c'est la
         # première question qui vient une fois le totem composé. L'entrée
         # explicite évite d'avoir à connaître le geste.
         if self._editable:
             menu.addSeparator()
             # Construit avec `menu` pour parent, et non via `addMenu(titre)` :
             # le sous-menu créé par la seconde forme n'est retenu par personne
-            # côté Python et se fait ramasser avant l'affichage — l'entrée
+            # côté Python et se fait ramasser avant l'affichage - l'entrée
             # apparaissait vide.
             sous = QMenu(tr("pdf_stack_unstack"), menu)
             sous.setStyleSheet(_MENU_STYLE)
@@ -3637,7 +3692,7 @@ class FixtureCanvas(QWidget):
         """Sort un appareil de sa pile et le pose juste à côté.
 
         À côté, et pas n'importe où : ce qu'on veut voir, c'est qu'il n'est plus
-        sur le totem — pas le chercher à l'autre bout du plan. L'écart demandé
+        sur le totem - pas le chercher à l'autre bout du plan. L'écart demandé
         vaut à peu près une largeur d'appareil sur le plateau.
         """
         _ph = getattr(self.pdf, '_push_history_cb', None)
@@ -3675,7 +3730,7 @@ class FixtureCanvas(QWidget):
             return
         # Différé : on est dans le `triggered` du menu de la pile, encore en
         # train de se fermer. Ouvrir un second menu modal dans cette pile
-        # d'événements le fait apparaître sous celui qui disparaît — même
+        # d'événements le fait apparaître sous celui qui disparaît - même
         # raison que la bascule « canaux bruts » du menu de fixture.
         _idx = self._stack_rep(membres) if len(membres) > 1 else membres[0]
         QTimer.singleShot(
@@ -3685,7 +3740,7 @@ class FixtureCanvas(QWidget):
         """[[matrix_id, …]] des barres/matrices SUPERPOSÉES sur le plan.
 
         Deux barres accrochées l'une au-dessus de l'autre (même X/Z, hauteurs
-        différentes — le long d'une tour) tombent au même endroit en vue de
+        différentes - le long d'une tour) tombent au même endroit en vue de
         dessus : la seconde recouvrait la première, qu'on allumait sans la
         voir (remontée de Nico, 04/11/26). Elles se traitent alors comme une
         pile de PAR : un seul bloc dessiné, une pastille « N » qui ouvre la
@@ -3782,7 +3837,7 @@ class FixtureCanvas(QWidget):
         # le dernier pixel, dans l'ordre du câblage. Les positions stockées sont
         # arrondies au pixel d'écran (≈ 3 cm) à chaque passage par le plan 2D :
         # sur une barre de 25 pixels elles tremblaient de ±3 cm en travers et
-        # de 8 à 16 cm le long — la barre se dessinait en zigzag, en carrés
+        # de 8 à 16 cm le long - la barre se dessinait en zigzag, en carrés
         # décalés, au lieu d'un ruban droit (remontée de Nico, 04/11/26).
         _rows = {getattr(pr, 'pixel_row', None) for pr, *_ in pixels}
         _cols = {getattr(pr, 'pixel_col', None) for pr, *_ in pixels}
@@ -3812,12 +3867,12 @@ class FixtureCanvas(QWidget):
                 if _d > 0:
                     _gaps.append(_d)
         # Plancher à 3 (cellule 6 px) : en dessous les pixels sont illisibles.
-        # Un léger chevauchement est préférable — une vraie barre LED est un
+        # Un léger chevauchement est préférable - une vraie barre LED est un
         # ruban continu, pas des points espacés.
         hs = max(3, min(_hs_max, int(min(_gaps) / 2))) if _gaps else _hs_max
         hsx = hsy = hs
         # Barre (une seule rangée) : ruban continu. Chaque cellule prend tout
-        # le pas le long de la barre, et une épaisseur FIXE en travers — avec
+        # le pas le long de la barre, et une épaisseur FIXE en travers - avec
         # des cellules carrées, une barre de 32 pixels faisait 6 px d'épaisseur.
         # Tolérance de 3 px : les positions arrondies au pixel d'écran laissent
         # une barre « droite » de travers d'un ou deux pixels.
@@ -3936,8 +3991,12 @@ class FixtureCanvas(QWidget):
             painter.drawText(QRect(_cx - 38, int(y1) + 3, 76, 14),
                              Qt.AlignCenter, base_name[:11])
 
-            # Adresse de l'appareil entier = celle de son premier canal
-            _all = ([master[0]] if master else []) + [p[0] for p in pixels]
+            # Adresse de l'appareil entier = celle de son premier canal, sur
+            # TOUS les membres. `master` ne garde que le dernier rencontré : sur
+            # une barre à canaux globaux de tête ET de fin, c'était le « Master
+            # 2 » de fin, et le plan affichait l'adresse du 1er pixel (55) au
+            # lieu de celle de la barre (53) que montre le patch (20/11/2026).
+            _all = [self.pdf.projectors[i] for i in indices]
             _base_addr = min(getattr(p, 'start_address', 1) for p in _all)
             _uni = getattr(_all[0], 'universe', 0) + 1
             painter.setFont(QFont("Segoe UI", 7))
@@ -3994,7 +4053,7 @@ class FixtureCanvas(QWidget):
         # ── Zone scene ───────────────────────────────────────────
         # Le déplacement borne le CENTRE d'une fixture (0,05–0,95 en x, cf.
         # mouseMoveEvent), mais l'icône a un rayon : posée à l'extrémité, elle
-        # débordait du rectangle de scène — d'autant plus que la fenêtre est
+        # débordait du rectangle de scène - d'autant plus que la fenêtre est
         # petite, la marge étant en % et le rayon en pixels. Une rangée alignée
         # d'un bord à l'autre sortait donc du cadre. On élargit le TRACÉ jusqu'à
         # englober les icônes extrêmes ; aucune position n'est touchée, et sur
@@ -4057,18 +4116,18 @@ class FixtureCanvas(QWidget):
         font_name = QFont("Segoe UI", 8)
         font_ch   = QFont("Segoe UI", 7)
 
-        # Rang de sélection (1, 2, 3…) — vide si la numérotation est désactivée.
+        # Rang de sélection (1, 2, 3…) - vide si la numérotation est désactivée.
         _sel_rank = self._selection_rank_map()
 
         # Étiquettes déjà posées (nom + adresse). Une étiquette qui tomberait sur
         # une précédente n'est pas dessinée : empilées, elles ne formaient qu'une
         # bouillie illisible. En zoomant, les fixtures s'écartent et les
-        # étiquettes réapparaissent une à une — au lieu de disparaître en bloc.
+        # étiquettes réapparaissent une à une - au lieu de disparaître en bloc.
         _label_rects = []
         _label_todo  = []   # (cx, cy, proj, group, is_selected, is_hover)
 
-        # Piles : N appareils sur un point. On en dessine UN — les autres sont
-        # rigoureusement dessous, les empiler ne ferait qu'épaissir le trait —
+        # Piles : N appareils sur un point. On en dessine UN - les autres sont
+        # rigoureusement dessous, les empiler ne ferait qu'épaissir le trait -
         # et une pastille annonce le compte. `_stack_skip` retient les membres
         # qui ne portent pas le dessin.
         _stacks = self._stacks()
@@ -4113,7 +4172,8 @@ class FixtureCanvas(QWidget):
                     (self._draw_stack_badge(painter, cx, cy, len(_membres)), _membres))
 
             if is_selected and key in _sel_rank:
-                self._draw_selection_badge(painter, cx, cy + self._flip_label_dy(proj),
+                self._draw_selection_badge(painter, cx, cy + self._flip_label_dy(proj)
+                                           + self._bar_label_dy(proj),
                                            _sel_rank[key])
 
             if not self.compact:
@@ -4126,8 +4186,8 @@ class FixtureCanvas(QWidget):
         for cx, cy, proj, group, is_selected, _ in sorted(
                 _label_todo, key=lambda t: not (t[4] or t[5])):
             # Lyre retournée (posée au sol) : socle en bas, l'icône descend
-            # plus bas — on décale l'étiquette d'autant.
-            cy = cy + self._flip_label_dy(proj)
+            # plus bas - on décale l'étiquette d'autant.
+            cy = cy + self._flip_label_dy(proj) + self._bar_label_dy(proj)
             _lbl_rect = QRect(cx - 38, cy + 16, 76, 24)
             if any(_lbl_rect.intersects(r) for r in _label_rects):
                 continue              # place déjà prise : on n'empile pas
@@ -4146,7 +4206,7 @@ class FixtureCanvas(QWidget):
                              f"U{getattr(proj,'universe',0)+1} CH {proj.start_address}")
 
         # ── Matrices / barres à pixels (rendu en bloc) ───────────
-        # Piles de barres : un seul bloc dessiné — celui qui est SÉLECTIONNÉ,
+        # Piles de barres : un seul bloc dessiné - celui qui est SÉLECTIONNÉ,
         # sinon celui qui est ALLUMÉ, sinon le plus haut. Avant, la barre du
         # dessous restait cachée même allumée (on ne voyait que son halo).
         _mx_shown = {}            # mid dessiné -> pile
@@ -4237,7 +4297,7 @@ class FixtureCanvas(QWidget):
 
         # ── Badge de zoom (coin haut droit) ──────────────────────
         # Dessiné hors du repère du plan : c'est une indication d'interface.
-        # Présent même sans barre de statut (vue principale) — sinon, rien ne
+        # Présent même sans barre de statut (vue principale) - sinon, rien ne
         # dirait qu'on ne voit qu'une partie du plan.
         if self._zoom != 1.0:
             _lbl = f"×{self._zoom:.1f}".replace(".0", "")
@@ -4285,7 +4345,7 @@ class FixtureCanvas(QWidget):
     # ── Interactions souris ─────────────────────────────────────────
 
     def mousePressEvent(self, event):
-        # Déplacement de la vue : AVANT le garde read_only — regarder un plan
+        # Déplacement de la vue : AVANT le garde read_only - regarder un plan
         # zoomé n'est pas l'éditer, ça doit marcher aussi dans REC Lumière.
         if self._zoom != 1.0 and (event.button() == Qt.MiddleButton
                                   or (event.button() == Qt.LeftButton
@@ -4305,14 +4365,14 @@ class FixtureCanvas(QWidget):
             return
 
         # Pastille d'une pile : c'est le bouton qui donne accès aux appareils
-        # du dessous. Testée AVANT les fixtures — elle déborde de l'icône, et
+        # du dessous. Testée AVANT les fixtures - elle déborde de l'icône, et
         # sans cette priorité le clic retomberait sur celle du dessus, seule
         # atteignable, ce qui est précisément le problème qu'elle résout.
         if event.button() in (Qt.LeftButton, Qt.RightButton) and not self._target_mode:
             _pile = self._stack_badge_at(pos)
             if _pile:
                 # Clic droit sur la pastille : même liste, mais elle débouche
-                # sur les réglages de l'appareil choisi — le clic droit doit
+                # sur les réglages de l'appareil choisi - le clic droit doit
                 # rester le chemin des réglages, pile ou pas.
                 self._show_stack_menu(
                     event.globalPos(), _pile,
@@ -4386,7 +4446,7 @@ class FixtureCanvas(QWidget):
                 elif _bars is not None:
                     # Clic simple sur une barre (ou une pile de barres) : toute
                     # la pile. On garde la sélection si une barre de la pile y
-                    # est déjà ENTIÈRE — choisie par la pastille, ou lot qu'on
+                    # est déjà ENTIÈRE - choisie par la pastille, ou lot qu'on
                     # s'apprête à glisser. Un pixel seul ne compte pas.
                     if not any(all(k in self.pdf.selected_lamps for k in ks) for ks in _bars):
                         self.pdf.selected_lamps = set(_unit)
@@ -4395,7 +4455,7 @@ class FixtureCanvas(QWidget):
                     # Clic sur une pile → tout le totem, comme une matrice :
                     # l'icône représente l'ensemble, et déplacer le pied doit
                     # emmener ce qui est dessus. Pour n'en viser qu'un, on passe
-                    # par la pastille — après quoi la sélection ne contient plus
+                    # par la pastille - après quoi la sélection ne contient plus
                     # que lui et le glisser suivant l'extrait de la pile.
                     if not any(k in self.pdf.selected_lamps for k in _unit):
                         self.pdf.selected_lamps = set(_unit)
@@ -4422,7 +4482,7 @@ class FixtureCanvas(QWidget):
                     # déplace : tout le calcul de delta part de SA position de
                     # départ. Sur une pile, la fixture cliquée est celle qui
                     # porte le dessin, et elle n'est pas forcément celle qu'on a
-                    # choisie dans la liste — sans ce recalage, extraire un
+                    # choisie dans la liste - sans ce recalage, extraire un
                     # appareil d'un totem déplaçait celui du dessus à sa place.
                     if self._drag_starts and self._drag_index not in self._drag_starts:
                         self._drag_index = next(iter(self._drag_starts))
@@ -4457,7 +4517,7 @@ class FixtureCanvas(QWidget):
                 group, local_idx = self._local_idx(idx)
                 key = (group, local_idx)
                 # Totem : passer par la liste avant les réglages. Sur un point
-                # empilé, `idx` est l'appareil qui PORTE le dessin — ouvrir son
+                # empilé, `idx` est l'appareil qui PORTE le dessin - ouvrir son
                 # menu directement rendait les autres inatteignables au clic
                 # droit. Sauf si la sélection déborde de la pile (rectangle de
                 # sélection sur plusieurs projecteurs) : là le clic droit vise
@@ -4493,7 +4553,7 @@ class FixtureCanvas(QWidget):
                     self._notify_cpb()
                 # Double-clic : menu contextuel de la fixture pour TOUS les types,
                 # y compris les Moving Head (même comportement qu'un projecteur).
-                # Sur un totem, il ouvre la liste — même raison qu'au clic droit.
+                # Sur un totem, il ouvre la liste - même raison qu'au clic droit.
                 _membres = self._stack_members(idx)
                 if _membres:
                     self._show_stack_menu(event.globalPos(), _membres, edit=True)
@@ -4506,7 +4566,7 @@ class FixtureCanvas(QWidget):
         # Distance min centre à centre, en pixels du plan (zoom 1). Divisée par
         # le zoom : les icônes gardent leur taille écran, donc à ×4 deux fixtures
         # distantes de 8 px de plan sont déjà séparées de 32 px à l'écran. Sans
-        # ça, zoomer pour resserrer des projos ne servait à rien — l'anti-overlap
+        # ça, zoomer pour resserrer des projos ne servait à rien - l'anti-overlap
         # les repoussait au même écart qu'à ×1.
         min_sep = (r * 2 + 6) / max(self._zoom, 1e-6)
         SB_H = 22
@@ -4515,7 +4575,7 @@ class FixtureCanvas(QWidget):
         y_max = 1.0 - 0.05 - SB_H / max(canvas_h, 1)
 
         # Membres d'une pile (totem) : leur position est celle du PIED, pas la
-        # leur. Les pousser un par un disloquerait le totem — exactement la
+        # leur. Les pousser un par un disloquerait le totem - exactement la
         # raison pour laquelle les membres de matrice sont déjà épargnés
         # ci-dessous. Sans cette exception, extraire un appareil d'une pile
         # faisait exploser les autres au premier pixel de glissement, la pile
@@ -4529,7 +4589,7 @@ class FixtureCanvas(QWidget):
                 continue
             if i == self._stack_hint:
                 # Appareil visé pour un empilement : il doit rester en place.
-                # C'est lui qu'on cherche à atteindre — le repousser rendait le
+                # C'est lui qu'on cherche à atteindre - le repousser rendait le
                 # geste impossible, la cible s'éloignant toujours plus vite que
                 # le curseur n'approchait.
                 continue
@@ -4563,6 +4623,20 @@ class FixtureCanvas(QWidget):
                     xi = pi.canvas_x * canvas_w
                     yi = pi.canvas_y * canvas_h
 
+    def _bar_label_dy(self, proj):
+        """Décalage vers le bas de l'étiquette d'une barre LED PIVOTÉE.
+        L'étiquette est posée pour une barre horizontale (16 px sous le
+        centre) : une barre verticale descendait jusque dans le nom."""
+        if getattr(proj, 'fixture_type', '') != 'Barre LED':
+            return 0
+        a = math.radians(_bar_angle_2d(proj))
+        if not a:
+            return 0
+        r = 9 if self.compact else 13
+        hw, hh = int(r * 2.4), max(4, int(r * 0.46))
+        hh_rot = hw * abs(math.sin(a)) + hh * abs(math.cos(a))
+        return int(max(0.0, hh_rot - hh) + 0.5)
+
     def _fixture_bbox_px(self, i):
         """Retourne (cx, cy, hw, hh) en pixels pour la fixture i (demi-largeur / demi-hauteur)."""
         cx, cy = self._get_canvas_pos(i)
@@ -4573,6 +4647,11 @@ class FixtureCanvas(QWidget):
             # est bien plus longue qu'un PAR, l'ancienne vignette faisait 32 px.
             hw = int(r * 2.4)
             hh = max(4, int(r * 0.46))
+            # Barre pivotée : boîte englobante de la barre tournée.
+            _a = math.radians(_bar_angle_2d(self.pdf.projectors[i]))
+            if _a:
+                _c, _s = abs(math.cos(_a)), abs(math.sin(_a))
+                hw, hh = int(hw * _c + hh * _s + 0.5), int(hw * _s + hh * _c + 0.5)
         elif ftype in ("Machine a fumee", "Machine a brouillard"):
             hw = int(r * 0.92)
             hh = max(3, int(r * 0.46))
@@ -4593,7 +4672,7 @@ class FixtureCanvas(QWidget):
 
         Tout le calcul se fait en pixels ÉCRAN (comme _fixture_bbox_px), donc
         les seuils sont des seuils visuels : à ×4, snapper à 8 px écran revient
-        à 2 px de plan — c'est exactement la précision qu'on vient chercher.
+        à 2 px de plan - c'est exactement la précision qu'on vient chercher.
         `canvas_w`/`canvas_h` ne servent plus qu'aux appelants historiques.
         """
         SNAP_PX   = 8   # Seuil de snap en pixels
@@ -4628,12 +4707,12 @@ class FixtureCanvas(QWidget):
                 continue
             ocx, ocy, ohw, ohh = self._fixture_bbox_px(i)
 
-            # Snap X (axe vertical — aligner les centres X)
+            # Snap X (axe vertical - aligner les centres X)
             dx = abs(px - ocx)
             if dx < SNAP_PX and dx < best_dx:
                 best_x, best_dx = ocx, dx
 
-            # Snap Y (axe horizontal — aligner les centres Y)
+            # Snap Y (axe horizontal - aligner les centres Y)
             dy = abs(py - ocy)
             if dy < SNAP_PX and dy < best_dy:
                 best_y, best_dy = ocy, dy
@@ -4911,7 +4990,7 @@ class FixtureCanvas(QWidget):
             # le seul geste qui crée une pile, et il doit passer avant
             # l'anti-chevauchement : celui-ci écarterait justement les deux
             # appareils qu'on cherche à réunir. On ne l'arme que pour un
-            # déplacement d'UN seul appareil — traîner une sélection entière
+            # déplacement d'UN seul appareil - traîner une sélection entière
             # sur une fixture voudrait empiler tout le rig sur un point.
             self._stack_snap = None
             self._stack_hint = None
@@ -4948,7 +5027,7 @@ class FixtureCanvas(QWidget):
                 self._hover_index = new_hover
                 self.update()
             # Pastille d'une pile : c'est un bouton, il doit s'annoncer comme
-            # tel — sinon rien ne laisse deviner qu'on peut cliquer le chiffre
+            # tel - sinon rien ne laisse deviner qu'on peut cliquer le chiffre
             # pour atteindre les appareils du dessous.
             _pile = self._stack_badge_at(pos)
             if _pile:
@@ -5075,7 +5154,7 @@ class FixtureCanvas(QWidget):
                 return
             step_px = 10 if (event.modifiers() & Qt.ShiftModifier) else 1
             # Le pas reste 1 pixel ÉCRAN : zoomé à ×4, une flèche avance donc de
-            # 1/4 de pixel de plan — le réglage fin suit le zoom.
+            # 1/4 de pixel de plan - le réglage fin suit le zoom.
             cw = max(self.width(),  1) * self._zoom
             ch = max(self.height(), 1) * self._zoom
             dx = dy = 0.0
@@ -5123,7 +5202,7 @@ class PlanDeFeu(QFrame):
         self.sym_mode = False                 # symétrie Pan active
         self._htp_overrides = None    # dict {id(proj): (level, QColor)} ou None
         # Solo FLASH KILL : groupes EPARGNES (set) pendant la coupure, None hors
-        # solo. Purement de l'AFFICHAGE — la coupure reelle est une porte par
+        # solo. Purement de l'AFFICHAGE - la coupure reelle est une porte par
         # frame juste avant l'envoi DMX, elle ne touche pas au modele, donc rien
         # ne pouvait le montrer a l'ecran.
         self._kill_display = None
@@ -5134,7 +5213,7 @@ class PlanDeFeu(QFrame):
         self._qe_amplitude = 50       # amplitude des effets rapides (0-100, 50 = amplitude naturelle)
         self._qe_phase = 0            # déphasage entre fixtures (0 = synchrone, 100 = vague complète)
         self._custom_groups = {}      # nom → frozenset of (group, local_idx)
-        self._undo_stack = []         # pile d'undo du plan 2D (Ctrl+Z) — voir push_undo
+        self._undo_stack = []         # pile d'undo du plan 2D (Ctrl+Z) - voir push_undo
         self._load_custom_groups()
 
         root = QVBoxLayout(self)
@@ -5180,7 +5259,7 @@ class PlanDeFeu(QFrame):
 
             # Pixel map : dégradé spatial sur la sélection. Comme 🎯, il
             # n'apparaît que lorsqu'il a de quoi agir (≥ 2 projecteurs couleur
-            # sélectionnés) — cf. `refresh_pixmap_btn`.
+            # sélectionnés) - cf. `refresh_pixmap_btn`.
             _PXM_SS = (
                 "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #3a3a3a;"
                 " border-radius:4px; font-size:13px; }"
@@ -5286,7 +5365,7 @@ class PlanDeFeu(QFrame):
             # ailleurs les rend visibles selon l'état (_sync_sym_visibility
             # rallume btn_sym dès 2 lyres sélectionnées). Sans toolbar, ça
             # posait un rectangle gris nu de 100x30 dans le coin du plan.
-            # Les cacher ne suffit donc pas — il faut qu'ils ne puissent rien
+            # Les cacher ne suffit donc pas - il faut qu'ils ne puissent rien
             # dessiner même affichés.
             for _nom in ("dmx_toggle_btn", "btn_3d", "btn_target", "btn_sym",
                          "btn_pixmap"):
@@ -5303,7 +5382,7 @@ class PlanDeFeu(QFrame):
         # (comportement historique), mais REC Lumière demande explicitement un
         # plan interactif SANS toolbar (interactive=True) pour envoyer des états.
         # `select_only` : plan interactif mais UNIQUEMENT pour sélectionner
-        # (clic + lasso) — pas de drag pan/tilt de lyre, pas de menus couleur.
+        # (clic + lasso) - pas de drag pan/tilt de lyre, pas de menus couleur.
         # Utilisé par l'éditeur d'effet (cible « Sélection ») pour ne surtout pas
         # modifier l'état réel des projecteurs pendant l'édition.
         _interactive = True if select_only else (
@@ -5311,14 +5390,14 @@ class PlanDeFeu(QFrame):
         self.canvas._read_only   = not _interactive
         self.canvas._select_only = select_only
         # Plan « sélecteur » (éditeur d'effet) : afficher le rang de sélection.
-        # Ailleurs (vue principale) ce serait du bruit — la sélection y sert à
+        # Ailleurs (vue principale) ce serait du bruit - la sélection y sert à
         # poser une couleur, pas à ordonner un chenillard.
         self.canvas.show_selection_order = select_only
         root.addWidget(self.canvas)
 
         self._dirty = True  # Redessiner seulement si les données ont changé
 
-        # Timer de refresh — 50 ms quand strobe actif, 100 ms sinon
+        # Timer de refresh - 50 ms quand strobe actif, 100 ms sinon
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._timer_tick)
         self.timer.start(50)
@@ -5337,7 +5416,7 @@ class PlanDeFeu(QFrame):
     # Tout ce que le menu contextuel du plan 2D peut modifier sur un projecteur.
     # Liste établie en relevant les affectations `p.<attr> = …` de _show_context_menu.
     # ⚠ Toute nouvelle commande ajoutée à ce menu doit inscrire son attribut ici,
-    # sinon le Ctrl+Z ne la restaurera pas — c'est le seul point à tenir à jour.
+    # sinon le Ctrl+Z ne la restaurera pas - c'est le seul point à tenir à jour.
     _UNDO_ATTRS = (
         "level", "pan", "tilt", "color_wheel", "strobe_speed", "shutter",
         "gobo", "gobo_rotation", "prism", "prism_rotation", "zoom", "effects",
@@ -5352,7 +5431,7 @@ class PlanDeFeu(QFrame):
         """État complet de tous les projecteurs.
 
         Quand un effet tourne, l'état d'origine vit dans `effect_saved_colors`
-        du main window et pas dans le projecteur — on capture les deux, sinon
+        du main window et pas dans le projecteur - on capture les deux, sinon
         annuler pendant un effet ne rendrait rien de visible.
         """
         esc = getattr(self.main_window, 'effect_saved_colors', {}) if self.main_window else {}
@@ -5639,7 +5718,7 @@ class PlanDeFeu(QFrame):
             if id(proj) in ids:
                 self.selected_lamps.add((proj.group, li))
         n = len(projs)
-        self._log(f"Ciblage activé — {n} lyre{'s' if n > 1 else ''}", "info")
+        self._log(f"Ciblage activé - {n} lyre{'s' if n > 1 else ''}", "info")
         self.canvas.set_target_mode(True)
         self.canvas.update()
 
@@ -5653,7 +5732,7 @@ class PlanDeFeu(QFrame):
                 self.selected_lamps.add((proj.group, li))
 
         letters = [self._GROUP_LETTERS.get(g, g[0].upper()) for g in selected_groups]
-        self._log(f"Ciblage activé — groupe{'s' if len(letters) > 1 else ''} {', '.join(letters)}", "info")
+        self._log(f"Ciblage activé - groupe{'s' if len(letters) > 1 else ''} {', '.join(letters)}", "info")
 
         self.canvas.set_target_mode(True)
         self.canvas.update()
@@ -5678,7 +5757,7 @@ class PlanDeFeu(QFrame):
         """Affiche/cache btn_sym selon le nombre de lyres sélectionnées."""
         # Un seul passage : l'ancienne version rappelait _local_idx_for (qui
         # reparcourt tous les projecteurs) pour chaque projecteur ET pour
-        # chaque lampe sélectionnée — du O(n³) rejoué 10 fois par seconde.
+        # chaque lampe sélectionnée - du O(n³) rejoué 10 fois par seconde.
         g_cnt, n_lyres = {}, 0
         for p in self.projectors:
             g  = p.group
@@ -5696,7 +5775,7 @@ class PlanDeFeu(QFrame):
         # off », détecté via isVisible(). Piège : isVisible() est faux dès
         # qu'un PARENT est caché (page masquée, splitter replié, fenêtre
         # minimisée), sans que la sélection ait bougé. Au retour, SYM était
-        # donc désarmé en silence — et tant que le plan restait masqué, ce
+        # donc désarmé en silence - et tant que le plan restait masqué, ce
         # branchement le remettait à zéro 10 fois par seconde. Le cas était
         # de toute façon redondant : si le bouton était caché c'est qu'il y
         # avait moins de 2 lyres, et la garde ci-dessous a déjà désarmé SYM.
@@ -5750,6 +5829,14 @@ class PlanDeFeu(QFrame):
         _last = getattr(self, '_fx_last_tick', None)
         dt = _EffectState.DT if _last is None else min(0.25, max(0.0, _now - _last))
         self._fx_last_tick = _now
+        # Fader 9 (vitesse des effets) : il règle aussi les effets rapides,
+        # ×1 à sa position par défaut (cf. core.quick_fx_fader_mult).
+        try:
+            from core import quick_fx_fader_mult
+            dt *= quick_fx_fader_mult(getattr(self.main_window, 'effect_speed', 80)
+                                      if self.main_window else 80)
+        except Exception:
+            pass
 
         # Effets Pan/Tilt (Moving Head)
         dead = []
@@ -5830,7 +5917,7 @@ class PlanDeFeu(QFrame):
                 proj.base_color = bc
                 # Lyre à ROUE de couleurs : sa teinte vient de `color_wheel`,
                 # pas du RVB (qu'elle n'a pas). Sans ça la roue restait sur
-                # son slot d'avant — le blanc — et la lyre s'allumait BLANCHE
+                # son slot d'avant - le blanc - et la lyre s'allumait BLANCHE
                 # en 3D comme en vrai. Même métrique que la couche « Dégradé »
                 # du moteur (`MainWindow._update_color_wheel`).
                 _mw = self.main_window
@@ -5879,12 +5966,12 @@ class PlanDeFeu(QFrame):
                 "phase":        0.0,
                 "phase_offset": 0.0,    # déphasage par fixture (slider DÉPHASAGE)
                 "speed":        speed,
-                "base_speed":   speed,  # vitesse "naturelle" — référence du slider VITESSE
+                "base_speed":   speed,  # vitesse "naturelle" - référence du slider VITESSE
                 # Niveau de RÉFÉRENCE de l'effet : forcé > 0, sinon un projecteur
                 # éteint resterait éteint et l'effet serait invisible.
                 "saved_level":  saved_lvl,
                 "saved_color": QColor(base_col),
-                # État à RESTAURER au stop — distinct du précédent, qui est une
+                # État à RESTAURER au stop - distinct du précédent, qui est une
                 # amplitude de travail et pas l'état d'origine.
                 "restore_level": proj.level,
                 "restore_color": QColor(base_col),
@@ -6021,7 +6108,7 @@ class PlanDeFeu(QFrame):
 
         Sur une barre (rows == 1) :
         - « radial »    part du centre vers les extrémités ;
-        - « radial_in » part des extrémités vers le centre — c'est le motif
+        - « radial_in » part des extrémités vers le centre - c'est le motif
           1&8, puis 2&7, puis 3&6, les paires symétriques allumées ensemble.
         """
         _c = (cols - 1) or 1
@@ -6222,7 +6309,7 @@ class PlanDeFeu(QFrame):
         Seul CE chemin demande : couper le DMX à la main en pleine prestation
         éteint toute la salle, et le bouton est petit, collé à ses voisins, dans
         une barre qu'on manipule à tâtons dans le noir. Les autres chemins
-        passent par `_toggle_dmx_output` et ne demandent rien — une coupure
+        passent par `_toggle_dmx_output` et ne demandent rien - une coupure
         déclenchée depuis la tablette ou le Stream Deck est déjà un geste
         délibéré, et personne n'est devant l'écran pour répondre.
 
@@ -6364,11 +6451,11 @@ class PlanDeFeu(QFrame):
     # ── Symétrie Pan (bouton ⇄ SYM) ──────────────────────────────────
 
     def _sym_norm_x(self, proj):
-        """Abscisse normalisée d'un projecteur — délègue à la fonction module."""
+        """Abscisse normalisée d'un projecteur - délègue à la fonction module."""
         return sym_norm_x(proj, self.projectors)
 
     def sym_mirror_ids(self, projs):
-        """Lyres à passer en Pan miroir — délègue à la fonction module."""
+        """Lyres à passer en Pan miroir - délègue à la fonction module."""
         return sym_mirror_ids(projs, self.projectors)
 
     def _deselect_all(self):
@@ -6424,7 +6511,7 @@ class PlanDeFeu(QFrame):
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
         if self.main_window and hasattr(self.main_window, '_log_message'):
-            self.main_window._log_message("Plan de feu — CLEAR tous projecteurs", "info")
+            self.main_window._log_message("Plan de feu - CLEAR tous projecteurs", "info")
 
     def _select_group(self, selection):
         self.selected_lamps.clear()
@@ -6506,7 +6593,7 @@ class PlanDeFeu(QFrame):
             menu.addAction(g.capitalize(), lambda grp=g: _selec_puis_regler(
                 lambda: self._select_group(grp)))
 
-        # Groupes de sélection rapide personnalisés — 1 clic direct
+        # Groupes de sélection rapide personnalisés - 1 clic direct
         if self._custom_groups:
             menu.addSeparator()
             for gname, members in self._custom_groups.items():
@@ -6525,7 +6612,7 @@ class PlanDeFeu(QFrame):
         """Ouvre le menu de réglages sur la sélection courante.
 
         Différé d'un tour de boucle : on est appelé depuis une action du menu
-        SELEC, qui n'a pas encore fini de se refermer — ouvrir un second menu
+        SELEC, qui n'a pas encore fini de se refermer - ouvrir un second menu
         modal pendant ce temps le ferait disparaître aussitôt.
         """
         self.canvas._notify_cpb()
@@ -6871,7 +6958,7 @@ class PlanDeFeu(QFrame):
             )
             # Effet rapide en cours (chenillard, respiration, scintillement…) :
             # il suit la couleur choisie. Il tournait sur la couleur figée à son
-            # lancement — blanc le plus souvent — et le clic sur une pastille
+            # lancement - blanc le plus souvent - et le clic sur une pastille
             # ne changeait rien (remontée de Nico, 04/11/26). Couleur de retour
             # au stop = celle-ci aussi : c'est la dernière que l'on a choisie.
             # Arc-en-ciel / dégradé / strobe : la couleur, c'est l'effet.
@@ -6987,11 +7074,11 @@ class PlanDeFeu(QFrame):
 
         Tous les curseurs suivent la sortie en direct ; ce qui change d'un canal
         à l'autre, c'est OÙ part la valeur quand on les bouge (voir `_voie`) :
-          • LIÉ    — le canal a un équivalent dans Projector (Dim, Pan, Gobo,
+          • LIÉ    - le canal a un équivalent dans Projector (Dim, Pan, Gobo,
                      R/G/B…). Le curseur écrit la propriété : le panneau normal
                      montre la même chose, et réciproquement. Rien à « rendre »,
                      ↺ reste éteint.
-          • FORCÉ  — canal sans équivalent (CTO, Lime, Unused…). Le bouger pose
+          • FORCÉ  - canal sans équivalent (CTO, Lime, Unused…). Le bouger pose
                      une valeur brute qui prime sur le moteur ; la ligne prend
                      son liseré coloré et ↺ rend le canal au moteur.
 
@@ -7021,15 +7108,15 @@ class PlanDeFeu(QFrame):
 
         # ── Où va la valeur d'un curseur ? Trois voies, décidées ici ──────
         #
-        #   MODÈLE  — le canal a un équivalent dans Projector (Dim, Pan, Gobo,
+        #   MODÈLE  - le canal a un équivalent dans Projector (Dim, Pan, Gobo,
         #             R/G/B…). On écrit la PROPRIÉTÉ : le pad Pan et les
         #             curseurs du panneau normal montrent alors la même chose,
         #             dans les deux sens. Aucun forçage, donc rien à rendre.
-        #   TYPE    — pas d'équivalent (CTO, Lime, roue additive…), mais le type
+        #   TYPE    - pas d'équivalent (CTO, Lime, roue additive…), mais le type
         #             n'apparaît qu'une fois : on écrit `channel_extras[type]`,
         #             exactement là où lisent les « canaux avancés » du panneau
         #             normal. Les deux vues restent d'accord là aussi.
-        #   NUMÉRO  — le type apparaît PLUSIEURS fois (Unused en tête) : une clé
+        #   NUMÉRO  - le type apparaît PLUSIEURS fois (Unused en tête) : une clé
         #             par type piloterait tous ces canaux d'un coup, ce qui
         #             ruinerait la promesse « un curseur = un canal ». On force
         #             alors par numéro, seule clé prioritaire sur tout le reste.
@@ -7037,7 +7124,7 @@ class PlanDeFeu(QFrame):
         # ⚠️ R/G/B/W d'une fixture à LED blanche ne sont PAS dans le modèle,
         # malgré les propriétés qui portent leur nom. Le moteur y extrait le
         # blanc commun (W = min(R,G,B)) et le SOUSTRAIT des trois autres :
-        # écrire « R = 200 » dans `base_color` ressortait donc ailleurs — le
+        # écrire « R = 200 » dans `base_color` ressortait donc ailleurs - le
         # rouge restait à 0, le vert et le bleu baissaient et le blanc montait
         # (remonté sur un PAR R/G/B/Blanc/Ambre/UV, 17/08/2026). Le blanc a le
         # défaut symétrique : sa propriété est un BOOST qui s'AJOUTE au blanc
@@ -7047,7 +7134,7 @@ class PlanDeFeu(QFrame):
         # impose min(R,G,B) = 0 en sortie, donc aucune couleur de base ne peut
         # demander « du rouge à 200 avec du vert à 255 ». Ces quatre canaux-là
         # sont hors modèle au même titre qu'un CTO ou un Lime, et se reprennent
-        # à la main — le liseré et le ↺ disent que le moteur ne les calcule plus.
+        # à la main - le liseré et le ↺ disent que le moteur ne les calcule plus.
         _extraction_blanc = "W" in profile and {"R", "G", "B"} <= set(profile)
 
         def _voie(ctype):
@@ -7096,7 +7183,7 @@ class PlanDeFeu(QFrame):
 
         # Le nom du canal est ce qu'on LIT dans cette vue : police posée sur le
         # widget (et non en feuille de style) pour que la mesure d'élision porte
-        # sur la vraie police — sinon Qt tronque sans les « … », au ras du mot.
+        # sur la vraie police - sinon Qt tronque sans les « … », au ras du mot.
         _POLICE_NOM = QFont()
         _POLICE_NOM.setPixelSize(13)
         _POLICE_NOM.setWeight(QFont.Weight.DemiBold)
@@ -7187,7 +7274,7 @@ class PlanDeFeu(QFrame):
             nl = QLabel(); nl.setFixedWidth(_LARG_NOM)
             nl.setFont(_POLICE_NOM)
             nl.setText(_METRIQUE_NOM.elidedText(nom, Qt.ElideRight, _LARG_NOM - 4))
-            nl.setToolTip(f"CH {num} — {ctype}" + (f"\n{nom}" if nom else "")
+            nl.setToolTip(f"CH {num} - {ctype}" + (f"\n{nom}" if nom else "")
                           + "\n" + tr("pdf2_raw_linked" if voie == 'modele'
                                       else "pdf2_raw_forcable"))
 
@@ -7206,7 +7293,7 @@ class PlanDeFeu(QFrame):
             pl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
             # Plus de bouton ↺ par ligne : un canal repris se rend au moteur en
-            # reprenant la main dessus (choisir une couleur libère R/G/B/W —
+            # reprenant la main dessus (choisir une couleur libère R/G/B/W -
             # `Projector.release_color_overrides`) ou par le Clear du menu. Mais
             # l'état « cette ligne est reprise » reste nécessaire au suivi live,
             # qui doit laisser tranquille un curseur que l'utilisateur mène : il
@@ -7224,7 +7311,7 @@ class PlanDeFeu(QFrame):
                                   f"color:{'#9aa2a8' if actif else '#5b6165'};")
                 # Pas de `font-size` ici : la police du nom est posée sur le
                 # widget (voir `_POLICE_NOM`), et une taille en feuille de style
-                # la remplacerait — l'élision serait alors calculée à côté.
+                # la remplacerait - l'élision serait alors calculée à côté.
                 _nl.setStyleSheet("background:transparent;border:none;"
                                   f"color:{'#ffffff' if actif else '#b6bec4'};")
                 _dl.setStyleSheet(_MONO + "background:transparent;font-size:14px;"
@@ -7284,11 +7371,11 @@ class PlanDeFeu(QFrame):
         # Les canaux laissés au moteur affichent ce qui SORT, rafraîchi 10×/s.
         # On ne touche jamais un canal forcé : sa valeur vient de l'utilisateur,
         # la réécrire ferait sauter le curseur sous ses doigts. Et `blockSignals`
-        # est indispensable — sans lui, la mise à jour d'affichage déclencherait
+        # est indispensable - sans lui, la mise à jour d'affichage déclencherait
         # `valueChanged`, donc une écriture, et le canal bougerait tout seul.
         #
         # Coût : une lecture de liste par ligne et par tick, et seulement tant
-        # que le menu est ouvert — la trame est lue d'un bloc plutôt que canal
+        # que le menu est ouvert - la trame est lue d'un bloc plutôt que canal
         # par canal, et les lignes inchangées ne touchent à aucun widget. Rien
         # ici ne tourne pendant le spectacle, et le timer meurt avec le menu.
         def _rafraichir():
@@ -7302,7 +7389,7 @@ class PlanDeFeu(QFrame):
                 sli = l['sli']
                 if l['etat']['force']:
                     # Reprise à la main : on n'écrase pas, SAUF si le forçage a
-                    # disparu du modèle entre-temps — un pad couleur, la palette
+                    # disparu du modèle entre-temps - un pad couleur, la palette
                     # ou le Clear rendent ces canaux au moteur (voir
                     # `Projector.release_color_overrides`). Sans ce test, la
                     # ligne restait figée sur son ancienne valeur et le menu
@@ -7352,7 +7439,7 @@ class PlanDeFeu(QFrame):
         # Mêmes curseurs que la vue « Curseurs » : même feuille de style
         # (`_feuille_curseur`) et même classe (`_CurseurCanal`, qui saute à la
         # valeur cliquée et se règle à la molette). Les deux vues du menu se
-        # manipulent donc pareil — viser 40 % se faisait ici en dix clics de
+        # manipulent donc pareil - viser 40 % se faisait ici en dix clics de
         # page, là en un seul.
         _SLI = _feuille_curseur(True, _TEINTE_DEFAUT)
 
@@ -7360,7 +7447,7 @@ class PlanDeFeu(QFrame):
         # Un laser est piloté comme une lyre par le moteur, mais il ne se
         # RÈGLE pas comme une lyre : pas de dimmer, un canal qui l'allume ET
         # choisit son mode, des dessins au lieu de gobos, et ses animations
-        # (rotations, bascules, taille) sont le cœur du réglage — elles
+        # (rotations, bascules, taille) sont le cœur du réglage - elles
         # dormaient repliées dans « Canaux avancés ». Seulement quand TOUTE la
         # sélection est laser : une sélection mixte garde le menu commun.
         _all_laser = all(getattr(p, 'fixture_type', '') == 'Laser'
@@ -7421,7 +7508,7 @@ class PlanDeFeu(QFrame):
         # Une seule grille ici : étiquette de largeur FIXE, curseur qui prend
         # toute la place restante, valeur de largeur fixe collée à droite. Les
         # trois colonnes tombent alors au même x d'une ligne à l'autre, quelle
-        # que soit la section — et quelle que soit la largeur du menu.
+        # que soit la section - et quelle que soit la largeur du menu.
         _LARG_ETIQ    = 96     # « DÉPHASAGE », « Effects », « Gobo 2 »…
         _LARG_VAL     = 48     # « +100% », « Off », « 255 »
         _MIN_CURSEUR  = 180    # comme la vue « Curseurs »
@@ -7450,7 +7537,7 @@ class PlanDeFeu(QFrame):
             # Réglages de la vue « Curseurs », sans lesquels le curseur ne LUI
             # ressemble pas malgré la même feuille de style : la poignée fait
             # 20 px de haut avec une marge négative, et le layout du menu ne
-            # donnait que 15 px à la barre — elle sortait rognée et aplatie.
+            # donnait que 15 px à la barre - elle sortait rognée et aplatie.
             sli.setFixedHeight(_HAUT_CURSEUR)
             sli.setFocusPolicy(Qt.NoFocus)     # pas de rectangle de focus dans un menu
             sli.setCursor(Qt.PointingHandCursor)
@@ -7467,7 +7554,7 @@ class PlanDeFeu(QFrame):
             """Remet les lignes du projecteur à 0 après un Clear.
 
             Signaux bloqués : les rejouer réécrirait la valeur dans le
-            projecteur — inoffensif en soi (tout vient d'être mis à zéro), mais
+            projecteur - inoffensif en soi (tout vient d'être mis à zéro), mais
             `_flush` y repose `_manual_beam`, et le Clear vient justement de le
             libérer pour rendre la fixture aux mémoires.
             """
@@ -7480,7 +7567,7 @@ class PlanDeFeu(QFrame):
         def _slot_actif(v, valeurs):
             """Valeur du bloc réellement atteint, ou None si on est en deçà.
 
-            Une position de roue — et un programme d'appareil — occupe une
+            Une position de roue - et un programme d'appareil - occupe une
             PLAGE, pas un point : à DMX 150 entre un bloc à 137 et un bloc à
             200, la fixture exécute bien celui de 137. C'est la règle de
             `core.cw_slot_at` (« le dernier bloc franchi »), et le surlignage
@@ -7532,7 +7619,7 @@ class PlanDeFeu(QFrame):
             # drapeau, `_recompute_memory_mix` réimpose les canaux spéciaux de
             # la mémoire active au MOINDRE mouvement de fader : on règle un
             # gobo, on touche un fader, le gobo saute. Même mécanisme que
-            # `_manual_color` pour la couleur — libéré par CLEAR et par toute
+            # `_manual_color` pour la couleur - libéré par CLEAR et par toute
             # action mémoire volontaire (`_release_manual_grabs`).
             if grab:
                 for p, g, i in t:
@@ -7551,7 +7638,7 @@ class PlanDeFeu(QFrame):
             wa.setDefaultWidget(widget)
             menu.addAction(wa)
             # Rendue pour les sections repliables : masquer une ligne, c'est
-            # masquer son ACTION (`setVisible`), pas son widget — QMenu pose
+            # masquer son ACTION (`setVisible`), pas son widget - QMenu pose
             # sinon un rectangle vide à la place.
             return wa
 
@@ -7758,7 +7845,7 @@ class PlanDeFeu(QFrame):
                 _b = QPushButton(str(_s.get('name', '') or _dv))
                 _b.setCursor(Qt.PointingHandCursor)
                 _b.setFocusPolicy(Qt.NoFocus)
-                _b.setToolTip(f"{_s.get('name', '')} — DMX {_dv}")
+                _b.setToolTip(f"{_s.get('name', '')} - DMX {_dv}")
                 _b.clicked.connect(lambda _=False, v=_dv: _pw_set(v))
                 _pw_row.addWidget(_b, 1)
                 _pw_btns.append((_b, _dv))
@@ -7847,7 +7934,7 @@ class PlanDeFeu(QFrame):
             ("Effects", "Effects",      "#cc44ff", "effects",      0,   255),
         ]
         # Ces quatre-la sortaient 0 en dur et n'existaient qu'en curseur brut.
-        # Ils ont maintenant un etat propre, donc un curseur dedie — et ils
+        # Ils ont maintenant un etat propre, donc un curseur dedie - et ils
         # sont retires de la liste des canaux avances (_HANDLED_IN_MENU) pour
         # ne pas se retrouver avec DEUX curseurs qui ecrivent le meme canal.
         #
@@ -7855,7 +7942,7 @@ class PlanDeFeu(QFrame):
         # laisser ici les séparait du reste des canaux techniques par tout le
         # bloc Moving Head (pad, roue, gobo, prisme, couleurs). Sur une Maverick
         # Force S Spot, Focus/Gobo 2/Vitesse/Mode se retrouvaient en haut et
-        # Zoom/Iris/Frost/CTO tout en bas — deux endroits pour la même famille
+        # Zoom/Iris/Frost/CTO tout en bas - deux endroits pour la même famille
         # de réglages. Ils sont donc rendus AVEC les « Canaux avancés », en tête
         # de section : même emplacement, mais toujours leur état dédié (et non
         # `channel_extras`, qui court-circuiterait le modèle).
@@ -7872,7 +7959,7 @@ class PlanDeFeu(QFrame):
 
             `pourcent=False` affiche la valeur DMX brute : les lignes rendues
             dans « Canaux avancés » voisinent avec des canaux bruts en 0-255, et
-            un « 38 % » au milieu d'eux ne se compare à rien — un Mode ou un
+            un « 38 % » au milieu d'eux ne se compare à rien - un Mode ou un
             Gobo 2 se règle sur une valeur de macro, pas sur un pourcentage.
             """
             cur_val = getattr(targets[0][0], attr_name, 0)
@@ -7922,7 +8009,7 @@ class PlanDeFeu(QFrame):
 
             La LED dédiée passe DERRIÈRE le dimmer de la fixture : curseur UV
             à fond sur un projecteur à 0 %, rien ne sort. Avant, on trichait
-            en peignant le violet dans `p.color` — ce qui allumait aussi les
+            en peignant le violet dans `p.color` - ce qui allumait aussi les
             LED ROUGE et BLEUE (le moteur DMX reconstitue le RVB depuis
             `p.color`) : l'« UV » sortait en violet RVB. On n'ouvre donc plus
             que le master, RVB à zéro, et la teinte violette n'existe plus
@@ -7958,7 +8045,7 @@ class PlanDeFeu(QFrame):
         # Les curseurs ci-dessus adressent un TYPE de canal. Le pilotage
         # canal par canal, lui, vit dans la vue « Curseurs » (bascule en
         # haut du menu) : un curseur par canal DMX, qui suit la sortie en
-        # direct. Ne pas remettre ici un second jeu de curseurs bruts —
+        # direct. Ne pas remettre ici un second jeu de curseurs bruts -
         # deux chemins pour le même réglage finissent par diverger.
 
         def _build_laser_stepper(sli, cur, open_editor):
@@ -8009,7 +8096,11 @@ class PlanDeFeu(QFrame):
             return w
 
         # ── Moving Head : PanTilt + Presets + Roue Couleur + Gobo + Prisme ──
-        if proj.fixture_type in ("Moving Head", "Laser"):
+        # Aussi les appareils À MOTEUR qui ne sont pas des lyres (barre LED à
+        # Tilt motorisé, ex. Eurolite LED Bar-8 Swing) : sans ça, aucun pad au
+        # clic → impossible de les faire bouger (retour utilisateur 23/11/2026).
+        # Roue, gobo et prisme restent masqués : ils dépendent du profil.
+        if proj.fixture_type in ("Moving Head", "Laser") or fixture_motor_only(proj):
             menu.addSeparator()
 
             # Conteneur horizontal : pad à gauche, presets à droite
@@ -8082,6 +8173,7 @@ class PlanDeFeu(QFrame):
                 get_all_lyres=lambda: [
                     (p, p.group, 0) for p in self.projectors
                     if getattr(p, 'fixture_type', '') in ('Moving Head', 'Laser')
+                    or fixture_motor_only(p)
                 ],
             )
             def _on_preset(preset, pad=pt_pad, t=targets):
@@ -8183,7 +8275,7 @@ class PlanDeFeu(QFrame):
                 _cw_btn_refs = []
 
                 def _restyle_cw_btns(selected_dmx):
-                    # Règle de `core.cw_slot_at` — le dernier slot FRANCHI — et
+                    # Règle de `core.cw_slot_at` - le dernier slot FRANCHI - et
                     # non « le plus proche à ±8 ». C'est la même fonction qui
                     # décide de la couleur affichée en 2D et en 3D : diverger
                     # ici, c'est allumer un bouton pendant que le plan montre la
@@ -8222,7 +8314,7 @@ class PlanDeFeu(QFrame):
                     # Le bouton POSE le curseur, il n'écrit plus la lyre
                     # lui-même : `_on_cw` fait déjà exactement ce travail (même
                     # couleur, via `cw_slot_at`), et le dupliquer ici laissait le
-                    # curseur figé pendant que la roue tournait — deux écritures
+                    # curseur figé pendant que la roue tournait - deux écritures
                     # pour un seul canal, dont une invisible dans le menu.
                     def _on_cw_preset(chk, v=dmx_v, s=_cw_sli, t=targets):
                         if s is not None:
@@ -8297,7 +8389,7 @@ class PlanDeFeu(QFrame):
 
                 # Le curseur est gardé : ce sont les boutons qui le poussent, et
                 # non l'inverse. Cliquer un gobo laissait sinon le curseur là où
-                # il était — la lyre changeait de gobo, le menu montrait encore
+                # il était - la lyre changeait de gobo, le menu montrait encore
                 # l'ancien.
                 _gobo_row = _slider_row(
                     _laser_label("Gobo1", tr("pdf_laser_motif")) if _all_laser else "Gobo",
@@ -8305,7 +8397,7 @@ class PlanDeFeu(QFrame):
                 _gobo_sli = _gobo_row.findChild(QSlider)
                 _wa(_gobo_row)
 
-                # Boutons presets gobo — OFL si disponible, sinon génériques
+                # Boutons presets gobo - OFL si disponible, sinon génériques
                 _ofl_gobo = getattr(proj, 'gobo_wheel_slots', [])
                 if _ofl_gobo:
                     _GOBO_SLOTS = [
@@ -8326,7 +8418,7 @@ class PlanDeFeu(QFrame):
 
                 # Un bouton POSE le curseur ; le curseur écrit la lyre, met à
                 # jour sa valeur affichée et rallume le bon bouton. Un seul
-                # chemin — et tirer le curseur allume désormais le gobo atteint.
+                # chemin - et tirer le curseur allume désormais le gobo atteint.
                 def _set_gobo_btn(val, s=_gobo_sli, t=targets):
                     if s is not None:
                         s.setValue(val)
@@ -8388,7 +8480,7 @@ class PlanDeFeu(QFrame):
 
                 if _all_laser and not _ofl_gobo and _gobo_sli is not None:
                     # Laser : pas de roue de gobos, des DESSINS. La grille de
-                    # pictogrammes de lyre ne voulait rien dire ici — place à
+                    # pictogrammes de lyre ne voulait rien dire ici - place à
                     # « ◀ Motif 12 / 51 ▶ », qui se joue au clic en live.
                     _wa(_build_laser_stepper(_gobo_sli, cur_gobo, _open_gobo_editor))
                 else:
@@ -8516,7 +8608,7 @@ class PlanDeFeu(QFrame):
         # le prisme. C'est tout l'objet de la section : les canaux de programme
         # sont majoritairement sur des PAR LED, des barres et des machines à
         # effets. Les mettre avec les réglages de lyre les aurait rendus
-        # invisibles précisément aux appareils qui en ont besoin — c'est déjà ce
+        # invisibles précisément aux appareils qui en ont besoin - c'est déjà ce
         # qui arrive aux presets de roue de couleurs, inatteignables sur un PAR.
         _preset_types = [t for t in PRESET_TYPES if t in (_proj_profile or [])
                          # Laser : déjà rendu en rangée d'allumage, en tête.
@@ -8524,7 +8616,7 @@ class PlanDeFeu(QFrame):
         if _preset_types:
             # Styles redéfinis ici : les `_SS_BTN_*` de la section roue/gobo sont
             # affectés DANS le bloc Moving Head. Python les laisserait visibles
-            # ensuite, mais seulement si ce bloc s'est exécuté — sur un PAR LED
+            # ensuite, mais seulement si ce bloc s'est exécuté - sur un PAR LED
             # ils n'existent pas, et la section plantait en NameError.
             _SS_PST_ON  = ("QPushButton{background:#00cc99;color:#000;border:none;"
                            "border-radius:4px;font-size:12px;font-weight:bold;padding:0 4px;}")
@@ -8559,7 +8651,7 @@ class PlanDeFeu(QFrame):
 
                 # Le curseur est gardé sous la main : c'est LUI que les boutons
                 # de blocs vont pousser, et non le projecteur en direct. Cliquer
-                # « Programme 1 » laissait sinon le curseur là où il était — la
+                # « Programme 1 » laissait sinon le curseur là où il était - la
                 # valeur partait bien en DMX, mais le menu affichait autre chose
                 # que ce que la fixture recevait.
                 _pst_row = _mk_slider_row(_lbl_txt, _cur, 255, _on_pst)
@@ -8576,7 +8668,7 @@ class PlanDeFeu(QFrame):
 
                 # Un bloc POSE le curseur ; le curseur écrit le projecteur,
                 # rafraîchit sa valeur affichée et rallume le bon bouton. Un
-                # seul chemin, donc rien qui puisse se désynchroniser — et le
+                # seul chemin, donc rien qui puisse se désynchroniser - et le
                 # repli direct si la ligne n'a pas pu être construite.
                 def _set_pst(val, s=_pst_sli, t=targets, a=_attr):
                     if s is not None:
@@ -8587,7 +8679,7 @@ class PlanDeFeu(QFrame):
                 # Branché sur le CURSEUR et non sur le clic : tirer le curseur
                 # jusqu'à la valeur d'un bloc allume ce bloc, exactement comme
                 # le test en direct de l'éditeur. C'est ce qui rend la
-                # calibration lisible — on voit quel programme on a atteint.
+                # calibration lisible - on voit quel programme on a atteint.
                 def _sync_pst(v, w=_pst_w, vals=[int(s.get('dmx', 0)) for s in _slots]):
                     # Même règle que la roue et le gobo : un programme occupe une
                     # PLAGE. À DMX 150 entre un bloc à 137 et un à 200, c'est
@@ -8607,7 +8699,7 @@ class PlanDeFeu(QFrame):
                     _nm  = (_s.get('name', '') or '?')
                     _btn = QPushButton(_nm[:8])
                     _btn.setFixedHeight(22)
-                    _btn.setToolTip(f"{_nm} — DMX {_dv}")
+                    _btn.setToolTip(f"{_nm} - DMX {_dv}")
                     _btn.setProperty("pst_val", _dv)
                     _btn.setStyleSheet(_SS_PST_ON if _dv == _pst_act else _SS_PST_OFF)
                     _btn.clicked.connect(lambda chk, v=_dv, f=_set_pst: f(v))
@@ -8650,7 +8742,7 @@ class PlanDeFeu(QFrame):
             "Focus", "Gobo2", "Speed", "Mode",
             # Les canaux de preset ont leur propre section, juste au-dessus.
             # Sans cette exclusion ils auraient DEUX curseurs qui écrivent le
-            # même canal — l'un ici, l'autre dans « Canaux avancés ».
+            # même canal - l'un ici, l'autre dans « Canaux avancés ».
             *PRESET_TYPES,
         }
         # Une ligne par CANAL, et non plus par type.
@@ -8666,7 +8758,7 @@ class PlanDeFeu(QFrame):
         #   type unique dans le profil  → clé = le TYPE (forme historique, et
         #       ce que contiennent déjà les mémoires enregistrées) ;
         #   type répété                 → clé = le NUMÉRO de canal, seule clé
-        #       qui désigne UN canal — une clé de type les piloterait tous
+        #       qui désigne UN canal - une clé de type les piloterait tous
         #       ensemble, ce qui remettrait les 17 canaux du laser en commun.
         _prof_counts = Counter(_proj_profile or [])
         _labels_adv = getattr(targets[0][0], 'channel_labels', None) or []
@@ -8680,13 +8772,13 @@ class PlanDeFeu(QFrame):
                 _nom = short_channel_label(_nom) or _nom
             if _prof_counts[_ct] > 1:
                 # Numéro affiché : sans lui, neuf lignes « Generic » seraient
-                # indiscernables — et le nom constructeur manque parfois.
+                # indiscernables - et le nom constructeur manque parfois.
                 _adv_channels.append((_n, f"{_n:02d} · {_nom or _ct}"))
             else:
                 _adv_channels.append((_ct, _nom or _ct))
 
         # Les canaux techniques à état dédié (Focus, Gobo 2, Vitesse, Mode)
-        # ouvrent la section : même famille de réglages, donc même endroit —
+        # ouvrent la section : même famille de réglages, donc même endroit -
         # ils restent pilotés par leur attribut, pas par `channel_extras`.
         _adv_dedicated = [_d for _d in _ADV_DEDICATED if _d[0] in _proj_profile]
 
@@ -8696,7 +8788,7 @@ class PlanDeFeu(QFrame):
             _cur_extras = getattr(targets[0][0], 'channel_extras', {}) or {}
 
             def _val_adv(cle, ex=_cur_extras):
-                """Valeur courante, les deux formes de clé — un aller-retour par
+                """Valeur courante, les deux formes de clé - un aller-retour par
                 le JSON d'un show transforme les clés entières en chaînes."""
                 v = ex.get(cle)
                 if v is None and isinstance(cle, int):
@@ -8713,7 +8805,7 @@ class PlanDeFeu(QFrame):
             # Sauf UN cas : si un canal avancé porte déjà une valeur, la section
             # s'ouvre d'office tant que l'utilisateur ne l'a pas repliée
             # lui-même. Replier par défaut ne doit jamais escamoter un réglage
-            # actif — un Zoom coincé à 200 qu'on ne voit plus est exactement le
+            # actif - un Zoom coincé à 200 qu'on ne voit plus est exactement le
             # genre de panne qu'on passe une soirée à chercher.
             _adv_total  = len(_adv_dedicated) + len(_adv_channels)
             _adv_actifs = (
@@ -8722,7 +8814,7 @@ class PlanDeFeu(QFrame):
                 + sum(1 for _cle, _txt in _adv_channels if _val_adv(_cle) > 0)
             )
             _choix = getattr(self, '_adv_expanded', None)
-            # Laser : ces canaux SONT le réglage (rotations, bascules, taille) —
+            # Laser : ces canaux SONT le réglage (rotations, bascules, taille) -
             # la section s'appelle « Animation » et s'ouvre toujours.
             _etat_adv = {"ouvert": True if _all_laser else
                          (_adv_actifs > 0 if _choix is None else _choix)}
@@ -8733,7 +8825,7 @@ class PlanDeFeu(QFrame):
             _adv_sec.setFocusPolicy(Qt.NoFocus)
             _tip = tr("pdf2_adv_fold_tip")
             if _adv_actifs:
-                _tip += " — " + tr("pdf2_adv_active", n=_adv_actifs)
+                _tip += " - " + tr("pdf2_adv_active", n=_adv_actifs)
             _adv_sec.setToolTip(_tip)
             # Un titre de section reste un titre : même graisse et même taille
             # que les autres, juste assez éclairci pour se voir cliquable.
@@ -10134,7 +10226,7 @@ class NewPlanWizard(QDialog):
             grid.addWidget(name, row, 1)
 
             # Compte
-            count_lbl = QLabel(f"{count} fixture{'s' if count != 1 else ''}" if count > 0 else "—")
+            count_lbl = QLabel(f"{count} fixture{'s' if count != 1 else ''}" if count > 0 else "-")
             count_lbl.setStyleSheet("color: #888; font-size: 12px;")
             count_lbl.setAlignment(Qt.AlignCenter)
             grid.addWidget(count_lbl, row, 2)
@@ -10294,6 +10386,11 @@ class _PatchCanvasProxy:
         if getattr(proj, 'matrix_id', None) is not None:
             menu.addAction(tr("pdf_rotate_matrix"),
                            lambda: self._rotate_matrix(idx))
+        elif getattr(proj, 'fixture_type', '') == 'Barre LED':
+            # Barre simple : pivote son RY (body_rotation), donc la 3D aussi.
+            # Seulement dans le plan du patch, et par 90° (choix utilisateur
+            # 23/11/2026 : pas de 45°, rien dans le clic droit du plan principal).
+            menu.addAction(tr("pdf_rotate_bar_90"), lambda: self._rotate_bars(idx, 90))
         if getattr(proj, 'fixture_type', '') == 'Moving Head':
             menu.addAction(tr("pdf_flip_lyre_to_hung" if not mount_is_hung(proj)
                               else "pdf_flip_lyre_to_floor"),
@@ -10337,6 +10434,25 @@ class _PatchCanvasProxy:
         if self._refresh_cb:
             self._refresh_cb()
 
+    def _rotate_bars(self, idx, step):
+        """Pivote une barre LED simple de `step` degrés (sens inverse des
+        aiguilles d'une montre à l'écran), et toute la sélection si elle en
+        fait partie. Même réglage que la colonne RY du plan 3D."""
+        g_cnt, sel = {}, []
+        for i, p in enumerate(self.projectors):
+            li = g_cnt.get(p.group, 0)
+            if (p.group, li) in self.selected_lamps:
+                sel.append(i)
+            g_cnt[p.group] = li + 1
+        cibles = sel if idx in sel else [idx]
+        rotate_simple_bars([self.projectors[i] for i in cibles], step)
+        if self.main_window and hasattr(self.main_window, 'save_dmx_patch_config'):
+            self.main_window.save_dmx_patch_config()
+        if self.canvas_widget:
+            self.canvas_widget.update()
+        if self._refresh_cb:
+            self._refresh_cb()
+
     def _rotate_matrix(self, idx):
         """Fait pivoter une matrice/barre de 90° autour de son centre (bloc)."""
         from pixel_fixture import layout_pixels
@@ -10357,7 +10473,7 @@ class _PatchCanvasProxy:
         # constante : une barre de 16 pixels espacés de 0.070 occupait 1.12 en
         # normalisé, soit plus que la hauteur du plan. On mesure le pas réel en
         # pixels écran et on le reporte sur l'axe d'arrivée, pour que pivoter
-        # ne change que l'orientation — jamais la longueur apparente.
+        # ne change que l'orientation - jamais la longueur apparente.
         W = H = 0
         _cw = getattr(self, 'canvas_widget', None) or getattr(self, 'canvas', None)
         if _cw is not None:

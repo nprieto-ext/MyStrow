@@ -1,5 +1,5 @@
 """
-Panneau d'administration MyStrow — interface graphique autonome.
+Panneau d'administration MyStrow - interface graphique autonome.
 Lancer avec : python admin_panel.py
 """
 
@@ -57,7 +57,7 @@ try:
 except Exception:
     _RELEASE_OK = False
 
-# Firebase Admin SDK (optionnel — suppression compte Auth uniquement)
+# Firebase Admin SDK (optionnel - suppression compte Auth uniquement)
 try:
     import firebase_admin
     from firebase_admin import credentials as fa_credentials
@@ -238,7 +238,19 @@ TEXT_DIM = "#aaaaaa"
 # À confirmer sur la facture SSL.com si un doute : la date de prélèvement donne
 # le jour d'ancrage exact.
 ESIGNER_MONTHLY_QUOTA    = 20
-ESIGNER_SIGS_PER_RELEASE = 2
+# 3 signatures par release depuis le 23/11/2026 : MyStrow.exe + l'installeur
+# + sa copie temporaire setup.tmp, désormais signés par Inno Setup lui-même
+# (Erreur 4551 du Contrôle intelligent des applications). 2 avant.
+ESIGNER_SIGS_PER_RELEASE = 3
+ESIGNER_SIGS_PER_RELEASE_AVANT = 2
+ESIGNER_3_SIGS_DEPUIS    = date(2026, 11, 23)
+
+
+def esigner_sigs_for(d: date) -> int:
+    """Signatures consommées par une release publiée le jour `d`."""
+    return (ESIGNER_SIGS_PER_RELEASE if d >= ESIGNER_3_SIGS_DEPUIS
+            else ESIGNER_SIGS_PER_RELEASE_AVANT)
+
 ESIGNER_EXTRA_SIG_COST   = 1.0          # $ par signature au-delà du quota
 ESIGNER_CYCLE_ANCHOR_DAY = 9            # jour de bascule du cycle
 ESIGNER_BILLING_START    = date(2026, 7, 9)  # 1er cycle facturé (30 j d'essai avant)
@@ -249,14 +261,14 @@ _UNSET = object()
 # Tarifs publics, pour le calcul du chiffre d'affaires mensuel récurrent (MRR).
 #
 # ⚠️ TROISIÈME copie de ces prix. Les deux autres sont `license_ui.py` (cartes
-# de la fenêtre d'achat) et `tarifs.html` du site — elles divergent déjà d'une
+# de la fenêtre d'achat) et `tarifs.html` du site - elles divergent déjà d'une
 # génération de tarifs. Toute hausse doit passer par les trois.
 #
 # ⚠️ Ce sont les prix D'AUJOURD'HUI appliqués à TOUS les abonnés. Les anciens
 # tarifs (21,69 € / mois, 216,99 € / an) restent facturés à ceux qui s'y sont
 # abonnés : le MRR affiché est donc une ESTIMATION, pas un relevé Stripe. Le
 # panneau n'a aucun accès à l'API Stripe, seulement des liens vers le tableau
-# de bord — un chiffre exact demanderait de brancher cette API.
+# de bord - un chiffre exact demanderait de brancher cette API.
 PRICE_MONTHLY_TTC = 23.99       # € TTC / mois
 PRICE_ANNUAL_TTC  = 143.86      # € TTC / an  (soit 11,99 € / mois)
 # Même taux que `functions/main.py` (TVA_RATE), qui a déjà valu des factures
@@ -432,7 +444,7 @@ def _query_all_licenses(id_token: str) -> list:
 def _count_collection(collection: str, id_token: str) -> int:
     """
     Nombre de documents d'une collection, compté CÔTÉ SERVEUR
-    (runAggregationQuery) : une seule requête, sans rapatrier les documents —
+    (runAggregationQuery) : une seule requête, sans rapatrier les documents -
     la bibliothèque de fixtures en compte plusieurs centaines.
     """
     body = {"structuredAggregationQuery": {
@@ -648,7 +660,7 @@ def _publish_controller_profile(sub: dict, id_token: str, reviewer: str = "") ->
     chaîne évite d'imbriquer 200 maps Firestore et se relit sans conversion.
 
     `version` est incrémentée à chaque republication : c'est ce qui permettra
-    à un client d'apprendre qu'un mapping installé chez lui a été corrigé —
+    à un client d'apprendre qu'un mapping installé chez lui a été corrigé -
     sans ce compteur, une erreur publiée reste figée chez tous ceux qui l'ont
     téléchargée.
     """
@@ -883,7 +895,7 @@ def _token_seconds_left(id_token: str) -> float:
     Secondes restant avant l'expiration d'un ID token Firebase (JWT non vérifié :
     on lit juste la charge utile, la validation est l'affaire du serveur).
 
-    Renvoie 0 si le jeton est vide ou illisible — mieux vaut renouveler pour rien
+    Renvoie 0 si le jeton est vide ou illisible - mieux vaut renouveler pour rien
     que d'envoyer un jeton mort et récolter un « HTTP Error 401: Unauthorized ».
     """
     if not id_token:
@@ -1000,7 +1012,7 @@ def _gc_thread(parent, thread):
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MyStrow Admin — Connexion")
+        self.setWindowTitle("MyStrow Admin - Connexion")
         self.setFixedSize(360, 290)
         self.id_token      = None
         self.refresh_token = None
@@ -1012,7 +1024,7 @@ class LoginDialog(QDialog):
         lay.setContentsMargins(32, 32, 32, 32)
         lay.setSpacing(14)
 
-        title = QLabel("MyStrow — Admin")
+        title = QLabel("MyStrow - Admin")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         title.setStyleSheet(f"color: {ACCENT};")
@@ -1179,7 +1191,7 @@ class CreateClientDialog(QDialog):
         label  = self.days_combo.currentText().replace(" (défaut)", "")
         expiry = _expiry_from_days(days)
         self.summary_lbl.setText(
-            f"Licence {label} — expire le {_fmt_date(expiry)}\n"
+            f"Licence {label} - expire le {_fmt_date(expiry)}\n"
             "Un email de définition de mot de passe sera envoyé automatiquement."
         )
 
@@ -1423,7 +1435,7 @@ class MachinesDialog(QDialog):
         lay.setSpacing(12)
 
         email = self._client.get("email", "?")
-        title = QLabel(f"Machines — {email}")
+        title = QLabel(f"Machines - {email}")
         title.setFont(QFont("Segoe UI", 12, QFont.Bold))
         lay.addWidget(title)
 
@@ -1456,7 +1468,7 @@ class MachinesDialog(QDialog):
             if w:
                 w.deleteLater()
             else:
-                # Layout item — clean up sub-widgets
+                # Layout item - clean up sub-widgets
                 pass
 
         machines = self._client.get("machines", [])
@@ -1478,7 +1490,7 @@ class MachinesDialog(QDialog):
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
 
-            lbl = QLabel(f"<b>{short_id}</b>&nbsp;&nbsp;—&nbsp;&nbsp;activée le {act_str}")
+            lbl = QLabel(f"<b>{short_id}</b>&nbsp;&nbsp;-&nbsp;&nbsp;activée le {act_str}")
             lbl.setTextFormat(Qt.RichText)
             lbl.setStyleSheet(f"color: {TEXT_DIM};")
             row_layout.addWidget(lbl)
@@ -1586,7 +1598,7 @@ class OflSyncWorker(QObject):
         )
         with urllib.request.urlopen(req, timeout=120) as resp:
             zip_bytes = resp.read()
-        self.progress.emit(0, 0, f"ZIP téléchargé ({len(zip_bytes) // 1024} Ko) — extraction…")
+        self.progress.emit(0, 0, f"ZIP téléchargé ({len(zip_bytes) // 1024} Ko) - extraction…")
 
         zf = _zf.ZipFile(_io.BytesIO(zip_bytes))
 
@@ -1614,7 +1626,7 @@ class OflSyncWorker(QObject):
                 fixture_entries.append((parts[2], parts[3][:-5], member))
 
         total = len(fixture_entries)
-        self.progress.emit(0, total, f"{total} fixtures trouvées — parsing…")
+        self.progress.emit(0, total, f"{total} fixtures trouvées - parsing…")
 
         done   = 0
         errors = []
@@ -1646,11 +1658,11 @@ class OflSyncWorker(QObject):
                     pass
                 if e.code == 403:
                     raise Exception(
-                        f"Accès refusé (403) — {body or 'Secret invalide ou non configuré'}\n\n"
+                        f"Accès refusé (403) - {body or 'Secret invalide ou non configuré'}\n\n"
                         f"Vérifiez que GDTF_SYNC_SECRET est identique dans gdtf_config.py "
                         f"et dans Firebase (firebase functions:secrets:set GDTF_SYNC_SECRET)."
                     )
-                raise Exception(f"HTTP {e.code} — {body or e.reason}")
+                raise Exception(f"HTTP {e.code} - {body or e.reason}")
             if not r.get("ok"):
                 raise Exception(r.get("error", "Upload batch échoué"))
             upload_batch.clear()
@@ -1664,7 +1676,7 @@ class OflSyncWorker(QObject):
                 parsed = ofl_parser.parse_ofl_json(raw, mfr_key, fix_key, mfr_name)
                 upload_batch.append(parsed)
                 done += 1
-                self.progress.emit(done, total, f"✅ {mfr_name} — {parsed['name']}")
+                self.progress.emit(done, total, f"✅ {mfr_name} - {parsed['name']}")
                 if len(upload_batch) >= _OFL_BATCH:
                     _flush_batch()
             except Exception as exc:
@@ -1689,7 +1701,7 @@ class OflSyncDialog(QDialog):
 
     def __init__(self, parent=None, id_token: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Open Fixture Library — Sync Firestore")
+        self.setWindowTitle("Open Fixture Library - Sync Firestore")
         self.setMinimumSize(640, 520)
         self._id_token = id_token
         self._thread = None
@@ -1774,7 +1786,7 @@ class OflSyncDialog(QDialog):
 
     def _start(self):
         if not self._id_token:
-            self._append_log("❌ Token manquant — relancez l'admin panel.", RED)
+            self._append_log("❌ Token manquant - relancez l'admin panel.", RED)
             return
 
         self.btn_start.setEnabled(False)
@@ -1819,9 +1831,9 @@ class OflSyncDialog(QDialog):
         errors  = result["errors"]
         stopped = result.get("stopped", False)
         label   = "Interrompu" if stopped else "Terminé"
-        self.status_lbl.setText(f"{label} — {done}/{total} fixtures uploadées")
+        self.status_lbl.setText(f"{label} - {done}/{total} fixtures uploadées")
         self._append_log(
-            f"{'⏸' if stopped else '✅'} {label} — {done}/{total} fixtures uploadées",
+            f"{'⏸' if stopped else '✅'} {label} - {done}/{total} fixtures uploadées",
             "#e67e22" if stopped else "#2ecc71",
         )
         if errors:
@@ -1875,7 +1887,7 @@ class GdtfUploadDialog(QDialog):
         lay.addWidget(title)
 
         sub = QLabel(
-            "Formats acceptés : .xml (GrandMA2/3) · .mystrow — "
+            "Formats acceptés : .xml (GrandMA2/3) · .mystrow - "
             "parsés localement puis uploadés dans Firestore avec profil complet."
         )
         sub.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
@@ -1912,7 +1924,7 @@ class GdtfUploadDialog(QDialog):
         pick_row.addWidget(btn_clear)
         lay.addLayout(pick_row)
 
-        # Table des fixtures parsées — éditable avant upload
+        # Table des fixtures parsées - éditable avant upload
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             ["Statut", "Nom", "Fabricant", "Type", "Groupe", "Modes"]
@@ -2111,7 +2123,7 @@ class GdtfUploadDialog(QDialog):
         return ", ".join(
             f"{m.get('name', '?')} ({m.get('channelCount', len(m.get('profile', [])))}ch)"
             for m in fx.get("modes", [])
-        ) or "— aucun mode —"
+        ) or "- aucun mode -"
 
     def _add_fixture_row(self, fx: dict):
         """Insère une ligne éditable pour une fixture parsée."""
@@ -2196,7 +2208,7 @@ class GdtfUploadDialog(QDialog):
             it.setText("✏️")
             it.setForeground(QColor(ACCENT))
             it.setToolTip(
-                f"{fx.get('_source_file', '')} — modifié localement, "
+                f"{fx.get('_source_file', '')} - modifié localement, "
                 f"sera uploadé tel qu'affiché"
             )
 
@@ -2225,7 +2237,7 @@ class GdtfUploadDialog(QDialog):
         if not new:
             # Nom / fabricant vides refusés par la CF : on restaure l'ancienne valeur.
             self._append_log(
-                f"⚠ {'Nom' if key == 'name' else 'Fabricant'} vide refusé — "
+                f"⚠ {'Nom' if key == 'name' else 'Fabricant'} vide refusé - "
                 f"valeur précédente restaurée.", ORANGE
             )
             self._loading = True
@@ -2288,7 +2300,7 @@ class GdtfUploadDialog(QDialog):
             self._loading = False
         self._mark_edited(row)
         self._append_log(
-            f"✏️ Profil édité : {fx.get('name')} — "
+            f"✏️ Profil édité : {fx.get('name')} - "
             f"{len(fx.get('modes', []))} mode(s), "
             f"{sum(len(m.get('profile', [])) for m in fx.get('modes', []))} canal/canaux",
             ACCENT,
@@ -2323,7 +2335,7 @@ class GdtfUploadDialog(QDialog):
         if not self._parsed:
             return
         if not self._id_token:
-            self._append_log("❌ Token manquant — relancez l'admin panel.", RED)
+            self._append_log("❌ Token manquant - relancez l'admin panel.", RED)
             return
 
         n = len(self._parsed)
@@ -2374,9 +2386,9 @@ class GdtfUploadDialog(QDialog):
         written = result.get("written", 0)
         errors  = result.get("errors", [])
         ver     = result.get("newVersion", "?")
-        self.status_lbl.setText(f"{written} fixture(s) écrite(s) — v{ver}")
+        self.status_lbl.setText(f"{written} fixture(s) écrite(s) - v{ver}")
         self._append_log(
-            f"✅ Upload OK — {written} fixture(s) dans Firestore (v{ver})"
+            f"✅ Upload OK - {written} fixture(s) dans Firestore (v{ver})"
             + (f" | {len(errors)} erreur(s)" if errors else ""),
             "#2ecc71",
         )
@@ -2413,7 +2425,7 @@ def _gdtf_to_pack_fixtures(gdtf_fixtures: list) -> list:
         elif len(modes) > 1:
             for m in modes:
                 entry = dict(base)
-                entry["name"]    = f"{base['name']} — {m['name']}"
+                entry["name"]    = f"{base['name']} - {m['name']}"
                 entry["profile"] = m.get("profile", [])
                 entry["modes"]   = [m]
                 out.append(entry)
@@ -2589,14 +2601,14 @@ def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: s
             except Exception as e2:
                 raise Exception(f"Token expiré et rafraîchissement impossible : {e2}")
         else:
-            raise Exception(f"HTTP {e.code} — {body or e.reason}")
+            raise Exception(f"HTTP {e.code} - {body or e.reason}")
     if not r.get("ok"):
         raise Exception(r.get("error", "Upload échoué"))
     return id_token
 
 
 # ---------------------------------------------------------------
-# _AdminChannelRowWidget — ligne de canal avec valeur par défaut
+# _AdminChannelRowWidget - ligne de canal avec valeur par défaut
 # ---------------------------------------------------------------
 
 class _AdminChannelRowWidget(QWidget):
@@ -2725,7 +2737,7 @@ class _AdminChannelRowWidget(QWidget):
 
 
 # ---------------------------------------------------------------
-# FixtureEditDialog — formulaire ajout / édition d'une fixture
+# FixtureEditDialog - formulaire ajout / édition d'une fixture
 # ---------------------------------------------------------------
 
 class _FixtureEditDialog(QDialog):
@@ -2810,7 +2822,7 @@ class _FixtureEditDialog(QDialog):
 
         self.setWindowTitle(
             "Nouvelle fixture" if self._is_new
-            else f"Modifier — {self._fixture.get('name', '')}"
+            else f"Modifier - {self._fixture.get('name', '')}"
         )
         self.setMinimumSize(900, 640)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -3297,7 +3309,7 @@ class _FixtureEditDialog(QDialog):
 
 
 # ---------------------------------------------------------------
-# SparklineWidget — graphique courbe custom
+# SparklineWidget - graphique courbe custom
 # ---------------------------------------------------------------
 
 STATS_WINDOW_DAYS = 90
@@ -3309,9 +3321,9 @@ def _daily_window(daily: dict, days: int = STATS_WINDOW_DAYS) -> list:
     jours vides à 0.
 
     Fenêtre COMMUNE aux trois courbes de la page Stats (visites, téléchargements,
-    abonnements) : chacune comblait auparavant à sa façon — abonnements sur 90 j,
+    abonnements) : chacune comblait auparavant à sa façon - abonnements sur 90 j,
     visites depuis le premier jour non nul renvoyé par GA4, téléchargements sur
-    tout l'historique — si bien qu'un même jour ne tombait pas à la même
+    tout l'historique - si bien qu'un même jour ne tombait pas à la même
     abscisse d'une courbe à l'autre.
     """
     import datetime as _dt
@@ -3474,7 +3486,7 @@ class _ActivityChart(QWidget):
 
     Les ordres de grandeur n'ont rien à voir (des dizaines de visites par jour,
     quelques abonnements par mois) : sur une échelle commune les abonnements
-    seraient une ligne plate. Chaque série a donc sa PROPRE échelle verticale —
+    seraient une ligne plate. Chaque série a donc sa PROPRE échelle verticale -
     on compare des tendances, et les valeurs exactes sont dans l'infobulle.
     Trois tracés distincts pour qu'on ne les confonde pas : zone (visites),
     ligne (téléchargements), pics (abonnements, événements ponctuels).
@@ -3630,7 +3642,7 @@ class _ActivityChart(QWidget):
                 if key in self._hidden:
                     continue
                 serie = self._data[key]
-                val = _fmt_int(serie[h][1]) if len(serie) == n else "—"
+                val = _fmt_int(serie[h][1]) if len(serie) == n else "-"
                 rows.append((lbl, val, color))
             fb = QFont("Segoe UI", 9, QFont.Bold)
             fn = QFont("Segoe UI", 9)
@@ -3693,7 +3705,7 @@ class _SeriesFeed:
 
 
 # ---------------------------------------------------------------
-# Widgets graphiques — Téléchargements
+# Widgets graphiques - Téléchargements
 # ---------------------------------------------------------------
 
 class _DlDonutWidget(QWidget):
@@ -3784,7 +3796,7 @@ class _DlDonutWidget(QWidget):
 
 
 class _DlDailyBarsWidget(QWidget):
-    """Histogramme vertical — téléchargements site par jour."""
+    """Histogramme vertical - téléchargements site par jour."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3865,7 +3877,7 @@ class _DlDailyBarsWidget(QWidget):
 
 
 # ---------------------------------------------------------------
-# AdminPanel — fenêtre principale
+# AdminPanel - fenêtre principale
 # ---------------------------------------------------------------
 
 class AdminPanel(QMainWindow):
@@ -3877,7 +3889,7 @@ class AdminPanel(QMainWindow):
         self._clients: list     = []
         self._filtered_clients: list = []
 
-        self.setWindowTitle("MyStrow — Admin")
+        self.setWindowTitle("MyStrow - Admin")
         self.setMinimumSize(1000, 600)
         self._build_ui()
         self._load_clients()
@@ -3913,8 +3925,8 @@ class AdminPanel(QMainWindow):
 
         Le QTimer de 50 min ne suffit pas : il ne tourne pas pendant la mise en
         veille du PC, et un échec de renouvellement n'était que journalisé. Les
-        pages chargées à la demande — la Modération en tête, seule page qui n'est
-        peuplée qu'au clic sur son onglet — repartaient donc avec le jeton du
+        pages chargées à la demande - la Modération en tête, seule page qui n'est
+        peuplée qu'au clic sur son onglet - repartaient donc avec le jeton du
         démarrage, et affichaient une erreur HTTP brute là où les autres pages,
         chargées au démarrage, passaient sans souci.
 
@@ -3936,7 +3948,7 @@ class AdminPanel(QMainWindow):
             # Ne JAMAIS partir avec un jeton absent ou tronqué : l'en-tête
             # devient « Bearer None » et Firestore répond 401 UNAUTHENTICATED,
             # une erreur qui ne ressemble en rien à sa cause (un jeton
-            # simplement périmé, lui, donne 403 PERMISSION_DENIED — les deux
+            # simplement périmé, lui, donne 403 PERMISSION_DENIED - les deux
             # codes ont été vérifiés contre l'API réelle).
             self._warn_session_dead()
         return self._id_token or ""
@@ -4090,6 +4102,13 @@ class AdminPanel(QMainWindow):
         self._btn_nav_asst.clicked.connect(lambda: self._switch_view(9))
         nav_lay.addWidget(self._btn_nav_asst)
 
+        # MyStrow Up : sessions en direct et historique (relais live.mystrow.fr).
+        self._btn_nav_up = QPushButton("MyStrow Up")
+        self._btn_nav_up.setFixedHeight(38)
+        self._btn_nav_up.setStyleSheet(_nav_idle)
+        self._btn_nav_up.clicked.connect(lambda: self._switch_view(11))
+        nav_lay.addWidget(self._btn_nav_up)
+
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
 
@@ -4176,7 +4195,7 @@ class AdminPanel(QMainWindow):
         a_lay.setContentsMargins(20, 0, 20, 0)
         a_lay.setSpacing(8)
 
-        # Créer nouveau client — toujours actif
+        # Créer nouveau client - toujours actif
         self.btn_new = QPushButton("＋  Nouveau client")
         self.btn_new.setStyleSheet(_BTN_PRIMARY)
         self.btn_new.setFixedHeight(36)
@@ -4261,7 +4280,7 @@ class AdminPanel(QMainWindow):
 
         a_lay.addStretch()
 
-        # Supprimer — danger, isolé à droite
+        # Supprimer - danger, isolé à droite
         self.btn_delete = QPushButton("🗑  Supprimer")
         self.btn_delete.setStyleSheet(f"""
             QPushButton {{ background:transparent; color:{RED}; border:1px solid #6a2020;
@@ -4310,6 +4329,22 @@ class AdminPanel(QMainWindow):
         from codemagic_panel import CodemagicPanel
         self._cm_panel = CodemagicPanel()
         self._content_stack.addWidget(self._cm_panel)
+
+        # ── Page 11 : MyStrow Up (direct + historique des sessions) ───────────
+        from up_panel import UpPanel
+        self._up_tok = ""
+        self._up_panel = UpPanel(resoudre_clients=self._up_resoudre_clients)
+        self._content_stack.addWidget(self._up_panel)
+
+    def _up_resoudre_clients(self, uids) -> dict:
+        """uid → email pour l'onglet MyStrow Up (appelé dans un fil) : la liste des
+        licences déjà chargée, sinon une lecture avec le jeton pris au clic."""
+        clients = getattr(self, "_clients", None) or []
+        noms = {c.get("_uid"): c.get("email", "") for c in clients if c.get("_uid")}
+        if not set(uids) <= set(noms) and self._up_tok:
+            noms.update({c.get("_uid"): c.get("email", "")
+                         for c in _query_all_licenses(self._up_tok) if c.get("_uid")})
+        return {u: noms[u] for u in uids if noms.get(u)}
 
     # ------------------------------------------------------------------
 
@@ -4455,7 +4490,7 @@ class AdminPanel(QMainWindow):
             li = QLabel(icon)
             li.setStyleSheet(f"color:{color}; font-size:15px; background:transparent;")
             top.addWidget(li)
-            lv = QLabel("—")
+            lv = QLabel("-")
             lv.setFont(QFont("Segoe UI", 22, QFont.Bold))
             lv.setStyleSheet(f"color:{color}; background:transparent;")
             top.addWidget(lv, 1)
@@ -4546,7 +4581,7 @@ class AdminPanel(QMainWindow):
             lbl_n.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
             top_row.addWidget(lbl_n)
             top_row.addStretch()
-            lbl_v = QLabel("—")
+            lbl_v = QLabel("-")
             lbl_v.setStyleSheet(f"color:{TEXT}; font-size:11px; font-weight:bold; background:transparent;")
             top_row.addWidget(lbl_v)
             row_l.addLayout(top_row)
@@ -4574,7 +4609,7 @@ class AdminPanel(QMainWindow):
         act_lay.setContentsMargins(16, 14, 16, 14)
         act_lay.setSpacing(10)
 
-        t2 = QLabel("Nouvelles licences — 30 derniers jours")
+        t2 = QLabel("Nouvelles licences - 30 derniers jours")
         t2.setFont(QFont("Segoe UI", 11, QFont.Bold))
         t2.setStyleSheet(f"color:{TEXT}; background:transparent;")
         act_lay.addWidget(t2)
@@ -4658,7 +4693,7 @@ class AdminPanel(QMainWindow):
             # Le critère est `stripe_customer_id` et NON `stripe_subscription_id`
             # comme avant : ce dernier était effacé à chaque renouvellement (14
             # abonnés actifs manquaient au compteur le 12/08/2026), et il reste
-            # vidé volontairement par `_revoke_license` à la résiliation — d'où
+            # vidé volontairement par `_revoke_license` à la résiliation - d'où
             # la lecture de `plan`, qui est le vrai marqueur d'un abonnement
             # résilié. L'identifiant client, lui, survit à tout.
             if pt in ("monthly", "annual") and c.get("stripe_customer_id") \
@@ -4704,7 +4739,7 @@ class AdminPanel(QMainWindow):
         # ── Chiffre d'affaires mensuel récurrent (MRR) ───────────────────────
         # Un annuel est lissé sur 12 mois : c'est la convention du MRR, sinon
         # le chiffre bondirait le mois de l'encaissement et retomberait à zéro
-        # les onze suivants. Les licences à vie en sont EXCLUES — un paiement
+        # les onze suivants. Les licences à vie en sont EXCLUES - un paiement
         # unique n'est pas récurrent, l'inclure gonflerait un indicateur censé
         # dire « combien rentre le mois prochain sans rien vendre de neuf ».
         _mrr_ttc = (subs_monthly * PRICE_MONTHLY_TTC
@@ -4712,7 +4747,7 @@ class AdminPanel(QMainWindow):
         _mrr_ht  = _mrr_ttc / (1.0 + TVA_RATE_PCT / 100.0)
         self._stat_mrr.setText(f"{_mrr_ht:,.0f} €".replace(",", " "))
         self._stat_mrr_card.setToolTip(
-            f"Chiffre d'affaires mensuel récurrent — ESTIMATION.\n\n"
+            f"Chiffre d'affaires mensuel récurrent - ESTIMATION.\n\n"
             f"  {subs_monthly} mensuels  × {PRICE_MONTHLY_TTC:.2f} €\n"
             f"  {subs_annual} annuels   × {PRICE_ANNUAL_TTC:.2f} € / 12"
             f"  = {PRICE_ANNUAL_TTC / 12.0:.2f} € / mois\n"
@@ -4722,7 +4757,7 @@ class AdminPanel(QMainWindow):
             f"Annuels lissés sur 12 mois. Licences à vie exclues : un paiement\n"
             f"unique n'est pas récurrent.\n\n"
             f"⚠️ Calculé aux tarifs D'AUJOURD'HUI. Les abonnés entrés sur un\n"
-            f"ancien tarif sont comptés au prix actuel — le panneau n'a pas\n"
+            f"ancien tarif sont comptés au prix actuel - le panneau n'a pas\n"
             f"accès à l'API Stripe. Le chiffre exact est sur le tableau de bord."
             .replace(",", " "))
         self._stat_total.setText(str(total))
@@ -4731,7 +4766,7 @@ class AdminPanel(QMainWindow):
         # ── KPI ligne 2 ──────────────────────────────────────────────────────
         self._stat_new_month.setText(str(new_this_month))
 
-        avg_mach = f"{machines / total:.1f}" if total else "—"
+        avg_mach = f"{machines / total:.1f}" if total else "-"
         self._stat_avg_mach.setText(avg_mach)
 
         self._stat_paid.setText(str(stripe_count))
@@ -4799,7 +4834,7 @@ class AdminPanel(QMainWindow):
         self._recent_table.setRowCount(len(recent))
         for i, (d, c) in enumerate(recent):
             email  = c.get("email", "")
-            plan   = _forfait_labels.get(c.get("plan_type", ""), c.get("plan_type", "—"))
+            plan   = _forfait_labels.get(c.get("plan_type", ""), c.get("plan_type", "-"))
             source = "Stripe" if c.get("stripe_customer_id") else "Manuel"
             src_color = "#635bff" if source == "Stripe" else TEXT_DIM
             self._recent_table.setItem(i, 0, QTableWidgetItem(email))
@@ -4830,8 +4865,8 @@ class AdminPanel(QMainWindow):
 
         def _on_releases(releases: list):
             if not releases:
-                self._stat_downloads.setText("—")
-                self._stat_releases_month.setText("—")
+                self._stat_downloads.setText("-")
+                self._stat_releases_month.setText("-")
                 return
             total = sum(
                 asset.get("download_count", 0)
@@ -4860,7 +4895,7 @@ class AdminPanel(QMainWindow):
                 for asset in rel.get("assets", []):
                     by_tag[tag] += asset.get("download_count", 0)
         _run_async(self, _fetch, on_success=_on_releases,
-                   on_error=lambda _: self._stat_downloads.setText("—"))
+                   on_error=lambda _: self._stat_downloads.setText("-"))
 
     def _load_fixture_count(self):
         """Tuile « Fixtures (bibliothèque) » : taille de gdtf_fixtures, comptée
@@ -4873,7 +4908,7 @@ class AdminPanel(QMainWindow):
 
         def _err(msg):
             print(f"[stats] comptage des fixtures impossible : {msg}")
-            self._stat_fixtures.setText("—")
+            self._stat_fixtures.setText("-")
 
         _run_async(self, _count_collection, "gdtf_fixtures", self._token(),
                    on_success=_ok, on_error=_err)
@@ -5065,13 +5100,14 @@ class AdminPanel(QMainWindow):
         self._btn_nav_bx.setStyleSheet(_active if idx == 8 else _idle)
         self._btn_nav_asst.setStyleSheet(_active if idx == 9 else _idle)
         self._btn_nav_cm.setStyleSheet(_active if idx == 10 else _idle)
+        self._btn_nav_up.setStyleSheet(_active if idx == 11 else _idle)
         self._content_stack.setCurrentIndex(idx)
         if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
         if idx == 3 and hasattr(self, "_rel_quota_label"):
             self._update_esigner_quota()
             # Relu à chaque ouverture : une release faite dans cette session a
-            # pu mettre Discord à jour — ou pas — depuis le dernier affichage.
+            # pu mettre Discord à jour - ou pas - depuis le dernier affichage.
             self._update_discord_state()
         if idx == 5 and not getattr(self, "_ga4_insights_loaded", False):
             self._ga4_insights_loaded = True
@@ -5088,6 +5124,12 @@ class AdminPanel(QMainWindow):
             self._load_assistant_reports()
         if idx == 10:
             self._cm_panel.on_show()
+        if idx == 11:
+            try:
+                self._up_tok = self._token()   # GUI : jeton frais pour les noms des clients
+            except Exception:
+                pass
+            self._up_panel.on_show()
 
     def _build_fixtures_panel(self):
         fix_page = QWidget()
@@ -5134,7 +5176,7 @@ class AdminPanel(QMainWindow):
         btn_footprint = QPushButton("📋  Footprint IA")
         btn_footprint.setStyleSheet(_BTN_SECONDARY)
         btn_footprint.setFixedHeight(30)
-        btn_footprint.setToolTip("Coller un footprint texte libre — l'IA détecte les canaux")
+        btn_footprint.setToolTip("Coller un footprint texte libre - l'IA détecte les canaux")
         btn_footprint.clicked.connect(self._on_import_footprint)
         ft_lay.addWidget(btn_footprint)
 
@@ -5296,14 +5338,14 @@ class AdminPanel(QMainWindow):
         self._mod_filter.currentIndexChanged.connect(lambda *_: self._refresh_mod_table())
         mt_lay.addWidget(self._mod_filter)
 
-        self._mod_count = QLabel("—")
+        self._mod_count = QLabel("-")
         self._mod_count.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
         mt_lay.addWidget(self._mod_count)
 
         mt_lay.addStretch()
 
         # Nettoyage en un clic des profils impossibles à identifier
-        # (« lyre (amazon) », « colonne 2 », « Wash ») — fixtures seulement.
+        # (« lyre (amazon) », « colonne 2 », « Wash ») - fixtures seulement.
         self._btn_mod_generic = QPushButton("🧹  Profils trop génériques…")
         self._btn_mod_generic.setStyleSheet(_BTN_SECONDARY)
         self._btn_mod_generic.setFixedHeight(30)
@@ -5380,7 +5422,7 @@ class AdminPanel(QMainWindow):
         ma_lay.setContentsMargins(16, 0, 16, 0)
         ma_lay.setSpacing(8)
 
-        hint = QLabel("↑/↓ parcourir · A approuver · R refuser · Maj/Ctrl+clic pour un lot — "
+        hint = QLabel("↑/↓ parcourir · A approuver · R refuser · Maj/Ctrl+clic pour un lot - "
                       "l'approbation publie pour tous les utilisateurs.")
         hint.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         ma_lay.addWidget(hint)
@@ -5467,7 +5509,7 @@ class AdminPanel(QMainWindow):
         """Charge l'autre file en tâche de fond, juste pour le badge.
 
         Sans ça, un profil de contrôleur en attente resterait invisible tant que
-        l'admin n'aurait pas pensé à basculer le sélecteur — c'est-à-dire jamais,
+        l'admin n'aurait pas pensé à basculer le sélecteur - c'est-à-dire jamais,
         puisque rien ne lui signalerait qu'il y a quelque chose à voir.
         """
         other = "controller" if loaded_kind == "fixture" else "fixture"
@@ -5532,7 +5574,7 @@ class AdminPanel(QMainWindow):
             try:
                 when = datetime.fromtimestamp(float(ts), timezone.utc).strftime("%d/%m/%Y")
             except Exception:
-                when = "—"
+                when = "-"
             values = [
                 sub.get("name", ""),
                 sub.get("manufacturer", ""),
@@ -5576,10 +5618,10 @@ class AdminPanel(QMainWindow):
             try:
                 when = datetime.fromtimestamp(float(ts), timezone.utc).strftime("%d/%m/%Y")
             except Exception:
-                when = "—"
+                when = "-"
             values = [
                 sub.get("name", ""),
-                ", ".join(sub.get("keywords") or []) or "—",
+                ", ".join(sub.get("keywords") or []) or "-",
                 f"{sub.get('grid_rows', 0)} × {sub.get('grid_cols', 0)}",
                 str(sub.get("fader_count", 0)),
                 str(sub.get("pad_count", 0)),
@@ -5628,7 +5670,7 @@ class AdminPanel(QMainWindow):
         elif subs:
             self._mod_detail.setPlainText(
                 f"{len(subs)} contributions sélectionnées, dont {n_pending} en attente :\n\n"
-                + "\n".join(f"  · {s.get('name', '')}  —  {s.get('manufacturer', '')}"
+                + "\n".join(f"  · {s.get('name', '')}  -  {s.get('manufacturer', '')}"
                             f"  [{s.get('status', '')}]" for s in subs))
         else:
             self._mod_detail.clear()
@@ -5668,7 +5710,7 @@ class AdminPanel(QMainWindow):
     def _controller_report(self, sub: dict) -> list:
         """Fiche d'un profil de contrôleur : le mapping, lisiblement.
 
-        Un admin ne peut PAS juger un mapping sans posséder l'appareil — c'est
+        Un admin ne peut PAS juger un mapping sans posséder l'appareil - c'est
         la différence de fond avec une fixture, dont on relit le patch DMX. Ce
         rapport sert donc à repérer ce qui se voit sans matériel : un profil
         vide, une géométrie incohérente, des notes toutes identiques, un nom
@@ -5690,7 +5732,7 @@ class AdminPanel(QMainWindow):
 
         lines = [
             f"Contrôleur     : {sub.get('name', '')}",
-            f"Mots-clés      : {', '.join(sub.get('keywords') or []) or '—'}",
+            f"Mots-clés      : {', '.join(sub.get('keywords') or []) or '-'}",
             f"Géométrie      : {rows} × {cols} pads, "
             f"{sub.get('fader_count', 0)} faders, {sub.get('effect_count', 0)} effets",
             f"Contributeur   : {sub.get('contributed_by', '')}",
@@ -5708,9 +5750,9 @@ class AdminPanel(QMainWindow):
         notes = [e.get("note") for e in pads.values() if isinstance(e, dict)]
         if notes and len(set(notes)) < len(notes):
             lines.append(f"  ⚠ {len(notes) - len(set(notes))} note(s) de pad en double "
-                         f"— deux pads déclencheraient la même cellule")
+                         f"- deux pads déclencheraient la même cellule")
         if notes and len(set(notes)) == 1:
-            lines.append("  ⚠ tous les pads sur la MÊME note — mapping inutilisable")
+            lines.append("  ⚠ tous les pads sur la MÊME note - mapping inutilisable")
         ccs = [e.get("cc") for e in faders.values() if isinstance(e, dict)]
         if ccs and len(set(ccs)) < len(ccs):
             lines.append(f"  ⚠ {len(ccs) - len(set(ccs))} CC de fader en double")
@@ -5720,7 +5762,7 @@ class AdminPanel(QMainWindow):
 
         # Contrôleur déjà géré nativement : le profil ne doit PAS être publié.
         # En Auto, MIDIHandler consulte les profils AVANT SUPPORTED_CONTROLLERS
-        # (midi_handler.connect_controller) — approuver remplacerait la gestion
+        # (midi_handler.connect_controller) - approuver remplacerait la gestion
         # native, LED et particularités comprises, chez tous les utilisateurs.
         # Même contrôle que generate_controllers_bundle._collides_with_native,
         # qui écarte le profil du catalogue embarqué en dernier recours.
@@ -5730,7 +5772,7 @@ class AdminPanel(QMainWindow):
             clash = _collides_with_native(sub.get("keywords"), _native_keywords())
             if clash:
                 lines.append(f"  ⚠ modèle DÉJÀ SUPPORTÉ NATIVEMENT (mot-clé « {clash} ») "
-                             f"— à rejeter : un profil publié passerait devant")
+                             f"- à rejeter : un profil publié passerait devant")
         except Exception as e:
             lines.append(f"  · contrôle « déjà natif » indisponible ({e})")
 
@@ -5766,7 +5808,7 @@ class AdminPanel(QMainWindow):
             lines = self._fixture_report(sub)
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Contribution — {sub.get('name', '')}")
+        dlg.setWindowTitle(f"Contribution - {sub.get('name', '')}")
         dlg.resize(560, 660)
         dlg.setStyleSheet(f"QDialog {{ background: {BG_MAIN}; }}")
         lay = QVBoxLayout(dlg)
@@ -5790,7 +5832,7 @@ class AdminPanel(QMainWindow):
             "",
             f"Provenance     : {sub.get('declared_source', '')}",
             f"Licence        : {sub.get('license', '')}",
-            f"Attribution    : {sub.get('attribution', '') or '—'}",
+            f"Attribution    : {sub.get('attribution', '') or '-'}",
             f"Attestation    : {'oui' if sub.get('attestation') else 'NON'}",
             f"Contributeur   : {sub.get('contributed_by', '')}",
             f"Statut         : {sub.get('status', '')}",
@@ -5801,7 +5843,7 @@ class AdminPanel(QMainWindow):
             if not isinstance(m, dict):
                 continue
             profile = m.get("profile") or []
-            lines.append(f"\n  ▸ {m.get('name', 'Mode')} — {len(profile)} canaux")
+            lines.append(f"\n  ▸ {m.get('name', 'Mode')} - {len(profile)} canaux")
             for i, ch in enumerate(profile, 1):
                 lines.append(f"      {i:>3}. {ch}")
         return lines
@@ -5815,7 +5857,7 @@ class AdminPanel(QMainWindow):
         if len(subs) == 1:
             sub = subs[0]
             if is_ctrl:
-                detail = (f"Détection : {', '.join(sub.get('keywords') or []) or '—'}\n"
+                detail = (f"Détection : {', '.join(sub.get('keywords') or []) or '-'}\n"
                           f"Grille : {sub.get('grid_rows', 0)} × {sub.get('grid_cols', 0)}, "
                           f"{sub.get('fader_count', 0)} faders\n"
                           f"Contributeur : {sub.get('contributed_by', '')}\n\n"
@@ -5986,7 +6028,7 @@ class AdminPanel(QMainWindow):
             " border-radius:6px; font-size:12px; }"
             " QListWidget::item { padding:5px 6px; border-bottom:1px solid #1e1e1e; }")
         for s, why in cands:
-            mfr = s.get("manufacturer") or "—"
+            mfr = s.get("manufacturer") or "-"
             it = QListWidgetItem(f"{s.get('name', '')}   ·   {mfr}      ({why})")
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked)
@@ -6067,7 +6109,7 @@ class AdminPanel(QMainWindow):
         lay.setContentsMargins(32, 28, 32, 24)
         lay.setSpacing(14)
 
-        title = QLabel("Site Web — MyStrow_Site")
+        title = QLabel("Site Web - MyStrow_Site")
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet(f"color: {ACCENT};")
         lay.addWidget(title)
@@ -6219,7 +6261,7 @@ class AdminPanel(QMainWindow):
             li = QLabel(icon)
             li.setStyleSheet(f"color:{color}; font-size:14px; background:transparent;")
             top.addWidget(li)
-            lv = QLabel("—")
+            lv = QLabel("-")
             lv.setFont(QFont("Segoe UI", 20, QFont.Bold))
             lv.setStyleSheet(f"color:{color}; background:transparent;")
             top.addWidget(lv, 1)
@@ -6269,7 +6311,7 @@ class AdminPanel(QMainWindow):
         bars_lay = QVBoxLayout(bars_card)
         bars_lay.setContentsMargins(14, 14, 14, 14)
         bars_lay.setSpacing(6)
-        t_bars = QLabel("GitHub — téléchargements par version")
+        t_bars = QLabel("GitHub - téléchargements par version")
         t_bars.setFont(QFont("Segoe UI", 11, QFont.Bold))
         t_bars.setStyleSheet(f"color:{TEXT}; background:transparent;")
         bars_lay.addWidget(t_bars)
@@ -6330,7 +6372,7 @@ class AdminPanel(QMainWindow):
         inner_lay.addWidget(fs_card)
         inner_lay.addStretch()
 
-        # ── releases_table (non affichée — alimentée par _populate_releases_table) ──
+        # ── releases_table (non affichée - alimentée par _populate_releases_table) ──
         self._releases_table = QTableWidget()
         self._releases_table.setColumnCount(4)
 
@@ -6497,7 +6539,7 @@ class AdminPanel(QMainWindow):
         def _on_err(e):
             msg = str(e)
             if "403" in msg:
-                msg = "accès refusé — règle Firestore assistant_reports"
+                msg = "accès refusé - règle Firestore assistant_reports"
             self._asst_stats_lbl.setText(f"⚠ {msg}")
 
         _run_async(self, lambda: _query_assistant_reports(self._token()),
@@ -6560,7 +6602,7 @@ class AdminPanel(QMainWindow):
         if row >= len(self._asst_shown):
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle("Assistant — détail")
+        dlg.setWindowTitle("Assistant - détail")
         dlg.resize(760, 480)
         lay = QVBoxLayout(dlg)
         txt = QPlainTextEdit()
@@ -6694,7 +6736,7 @@ class AdminPanel(QMainWindow):
             holder = r.get("activated_uid") or ""
             if holder:
                 n_act += 1
-                statut = f"activé — {r.get('activated_email', '?')}"
+                statut = f"activé - {r.get('activated_email', '?')}"
                 if r.get("activated_utc"):
                     statut += f" le {heure(float(r['activated_utc']))}"
                 coul = "#4caf50"
@@ -6702,7 +6744,7 @@ class AdminPanel(QMainWindow):
                 # Branché dans MyStrow chez quelqu'un (boitier_detect) sans
                 # activation : interface seule vendue, ou client qui hésite.
                 n_vu += 1
-                statut = (f"dans la nature — vu le {heure(float(r['seen_first_utc']))}"
+                statut = (f"dans la nature - vu le {heure(float(r['seen_first_utc']))}"
                           + (" (sans licence)" if not int(r.get("months") or 0)
                              else ", pas encore activé"))
                 coul = ACCENT
@@ -6711,9 +6753,9 @@ class AdminPanel(QMainWindow):
             if r.get("poste"):
                 statut += f" · préparé par {r['poste']}"
             vals = [r["_id"], libelle_offre(int(r.get("months") or 0)),
-                    r.get("usb_id", "—"), r.get("firmware", "—"),
-                    heure(float(r["flashed_utc"])) if r.get("flashed_utc") else "—",
-                    heure(float(r["initialized_utc"])) if r.get("initialized_utc") else "—",
+                    r.get("usb_id", "-"), r.get("firmware", "-"),
+                    heure(float(r["flashed_utc"])) if r.get("flashed_utc") else "-",
+                    heure(float(r["initialized_utc"])) if r.get("initialized_utc") else "-",
                     statut]
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(str(v))
@@ -6735,15 +6777,15 @@ class AdminPanel(QMainWindow):
         r = next((x for x in self._bx_rows if x["_id"] == serial), None)
         if not r:
             return
-        lignes = [f"{heure(float(e.get('utc') or 0))}  —  {e.get('evt', '?')}"
+        lignes = [f"{heure(float(e.get('utc') or 0))}  -  {e.get('evt', '?')}"
                   f"  (fw {e.get('firmware') or '?'}, {e.get('poste', '')})"
                   for e in (r.get("history") or [])]
         if r.get("activated_utc"):
-            lignes.append(f"{heure(float(r['activated_utc']))}  —  activé par "
+            lignes.append(f"{heure(float(r['activated_utc']))}  -  activé par "
                           f"{r.get('activated_email', '?')}")
         QMessageBox.information(
             self, f"Boîtier {serial}",
-            f"Carte USB : {r.get('usb_id', '—')}\n\n"
+            f"Carte USB : {r.get('usb_id', '-')}\n\n"
             + ("\n".join(lignes) or "Aucun historique."))
 
     def _on_boitiers_run(self):
@@ -6814,7 +6856,7 @@ class AdminPanel(QMainWindow):
         def _on_err(e):
             msg = str(e)
             if "403" in msg:
-                msg = "accès refusé — règle Firestore boitier_commandes à déployer"
+                msg = "accès refusé - règle Firestore boitier_commandes à déployer"
             self._cmd_stats_lbl.setText(f"⚠ {msg}")
 
         _run_async(self, _fetch, on_success=_on_data, on_error=_on_err)
@@ -6836,7 +6878,7 @@ class AdminPanel(QMainWindow):
                 msg = json.loads(e.read().decode()).get("error", str(e))
             except Exception:
                 msg = str(e)
-            raise RuntimeError(f"{e.code} — {msg}")
+            raise RuntimeError(f"{e.code} - {msg}")
 
     @staticmethod
     def _eur(x) -> str:
@@ -6860,9 +6902,9 @@ class AdminPanel(QMainWindow):
         if not e:
             self._load_remu_fanny()
             return
-        lignes = [f"{_fmt_date(c['utc']) if c.get('utc') else '?'}  —  {c['ref']}  "
+        lignes = [f"{_fmt_date(c['utc']) if c.get('utc') else '?'}  -  {c['ref']}  "
                   f"{c.get('nom', '')}  :  {self._eur(c['montant'])}" for c in e.get("colis") or []]
-        vers = [f"{_fmt_date(v['utc'])}  —  {self._eur(v.get('montant'))}"
+        vers = [f"{_fmt_date(v['utc'])}  -  {self._eur(v.get('montant'))}"
                 for v in e.get("versements") or [] if v.get("utc")]
         du = float(e.get("du") or 0)
         dlg = QDialog(self)
@@ -6927,7 +6969,7 @@ class AdminPanel(QMainWindow):
                 f"{a.get('postal_code', '')} {a.get('city', '')}".strip(),
                 f"{int(r.get('quantity') or 1)} · {ttc:.2f} €" if isinstance(ttc, (int, float))
                 else str(int(r.get("quantity") or 1)),
-                suivi or "—",
+                suivi or "-",
             ]
             for c, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
@@ -6955,7 +6997,7 @@ class AdminPanel(QMainWindow):
     # Clés = celles de _TRANSPORTEURS dans functions/main.py
     _CMD_TRANSPORTEURS = [
         ("colissimo", "Colissimo"),
-        ("lettre_suivie", "La Poste — Lettre suivie"),
+        ("lettre_suivie", "La Poste - Lettre suivie"),
         ("mondial_relay", "Mondial Relay"),
         ("chronopost", "Chronopost"),
     ]
@@ -6983,10 +7025,10 @@ class AdminPanel(QMainWindow):
         colis = (r.get("packages") or [{}])[0]
 
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Suivi — commande {ref}")
+        dlg.setWindowTitle(f"Suivi - commande {ref}")
         dlg.setMinimumWidth(380)
         lay = QVBoxLayout(dlg)
-        info = QLabel(f"<b>{a.get('name', '')}</b> — {a.get('postal_code', '')} {a.get('city', '')}"
+        info = QLabel(f"<b>{a.get('name', '')}</b> - {a.get('postal_code', '')} {a.get('city', '')}"
                       f"<br>{r.get('email', '')}")
         lay.addWidget(info)
         if deja:
@@ -7048,7 +7090,7 @@ class AdminPanel(QMainWindow):
                     msg = json.loads(e.read().decode()).get("error", str(e))
                 except Exception:
                     msg = str(e)
-                raise RuntimeError(f"{e.code} — {msg}")
+                raise RuntimeError(f"{e.code} - {msg}")
 
         def _ok(_res):
             self._cmd_stats_lbl.setText(f"Suivi {code} envoyé ({ref})")
@@ -7080,7 +7122,7 @@ class AdminPanel(QMainWindow):
         _scroll.setWidget(_inner)
         _outer.addWidget(_scroll)
 
-        title = QLabel("Analytics — mystrow.fr")
+        title = QLabel("Analytics - mystrow.fr")
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setStyleSheet(f"color: {ACCENT};")
         lay.addWidget(title)
@@ -7186,7 +7228,7 @@ class AdminPanel(QMainWindow):
         beh_lay.setSpacing(14)
 
         beh_hdr = QHBoxLayout()
-        beh_title = QLabel("Comportement des visiteurs — 90 derniers jours")
+        beh_title = QLabel("Comportement des visiteurs - 90 derniers jours")
         beh_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
         beh_title.setStyleSheet(f"color: {TEXT};")
         beh_hdr.addWidget(beh_title)
@@ -7210,7 +7252,7 @@ class AdminPanel(QMainWindow):
             c = QFrame()
             c.setStyleSheet("QFrame { background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 6px; }")
             cl = QVBoxLayout(c); cl.setContentsMargins(14, 10, 14, 10); cl.setSpacing(2)
-            v = QLabel("—"); v.setFont(QFont("Segoe UI", 20, QFont.Bold))
+            v = QLabel("-"); v.setFont(QFont("Segoe UI", 20, QFont.Bold))
             v.setStyleSheet(f"color: {color}; background: transparent;")
             cl.addWidget(v)
             n = QLabel(f"{icon}  {label}")
@@ -7272,7 +7314,7 @@ class AdminPanel(QMainWindow):
         (exe packagé, dépôt absent...).
 
         Le résultat est mémorisé : la liste des tags ne bouge qu'à la release
-        suivante, alors que cette fonction était rappelée — git compris — à
+        suivante, alors que cette fonction était rappelée - git compris - à
         chaque clic sur l'onglet Release, dans le thread GUI.
         """
         if getattr(self, "_esigner_dates_cache", _UNSET) is not _UNSET:
@@ -7335,15 +7377,15 @@ class AdminPanel(QMainWindow):
         cycle_end   = self._esigner_add_month(cycle_start)
 
         releases = sum(1 for d in dates if cycle_start <= d < cycle_end)
-        used     = releases * ESIGNER_SIGS_PER_RELEASE
+        used     = sum(esigner_sigs_for(d) for d in dates if cycle_start <= d < cycle_end)
         quota    = ESIGNER_MONTHLY_QUOTA
 
         # Report : les signatures non consommées des cycles déjà facturés
         # s'accumulent sans expirer tant que l'abonnement est actif.
         cycles_done = max(0, (cycle_start.year  - ESIGNER_BILLING_START.year) * 12
                              + cycle_start.month - ESIGNER_BILLING_START.month)
-        used_before = ESIGNER_SIGS_PER_RELEASE * sum(
-            1 for d in dates if ESIGNER_BILLING_START <= d < cycle_start
+        used_before = sum(
+            esigner_sigs_for(d) for d in dates if ESIGNER_BILLING_START <= d < cycle_start
         )
         reserve = max(0, cycles_done * quota - used_before)
 
@@ -7365,8 +7407,8 @@ class AdminPanel(QMainWindow):
         self._rel_quota_label.setText(
             f"Signatures eSigner : <b style='color:{color};'>{used} / {quota}</b>"
             f" sur ce cycle &nbsp;<span style='color:{TEXT_DIM};'>"
-            f"({releases} release{'s' if releases > 1 else ''} × {ESIGNER_SIGS_PER_RELEASE}"
-            f" — {window})</span>"
+            f"({releases} release{'s' if releases > 1 else ''}, "
+            f"{ESIGNER_SIGS_PER_RELEASE} signatures chacune - {window})</span>"
         )
         self._rel_quota_bar.setVisible(True)
         self._rel_quota_bar.setValue(min(used, quota))
@@ -7416,7 +7458,7 @@ class AdminPanel(QMainWindow):
         # L'annonce part maintenant de GitHub Actions, qui ne peut pas écrire le
         # fichier d'état de ce poste : « en retard » d'après le disque local ne
         # veut plus dire « en retard » dans le canal. On le vérifie chez Discord
-        # avant d'alarmer — un GET sur le message, qui ne poste rien.
+        # avant d'alarmer - un GET sur le message, qui ne poste rien.
         self._rel_discord_label.setText(
             f"<span style='color:{TEXT_DIM};'>Vérification du canal Discord…</span>"
         )
@@ -7440,7 +7482,7 @@ class AdminPanel(QMainWindow):
             vu = live or annoncee
             self._rel_discord_label.setText(
                 f"<span style='color:#e0a030;'>⚠️  Discord annonce encore "
-                f"<b>{vu}</b> — l'application est en <b>{actuelle}</b></span>"
+                f"<b>{vu}</b> - l'application est en <b>{actuelle}</b></span>"
             )
             self._rel_discord_btn.setVisible(True)
 
@@ -7473,7 +7515,7 @@ class AdminPanel(QMainWindow):
 
         Le travail part dans un thread : c'est une requête réseau, et la geler
         dans le thread GUI figerait la fenêtre. Le résultat revient par
-        `_run_async`, qui rebranche les rappels sur le thread principal — y
+        `_run_async`, qui rebranche les rappels sur le thread principal - y
         toucher un widget depuis le worker planterait.
         """
         version = get_current_version()
@@ -7537,7 +7579,7 @@ class AdminPanel(QMainWindow):
             current = get_current_version() or "?"
             bumped  = bump_version(current) if current != "?" else ""
         else:
-            current, bumped = "—", ""
+            current, bumped = "-", ""
 
         v_row.addWidget(QLabel(
             f"Version actuelle :  <b>{current}</b>", textFormat=Qt.RichText
@@ -7571,7 +7613,7 @@ class AdminPanel(QMainWindow):
         # Filet de sécurité, indépendant du déroulé d'une release : l'annonce
         # Discord n'part que si la fenêtre est restée ouverte pendant toute la
         # CI (une dizaine de minutes). Fermée avant, le canal reste en arrière
-        # sans que rien ne le signale — c'est ainsi qu'il a annoncé 3.1.81
+        # sans que rien ne le signale - c'est ainsi qu'il a annoncé 3.1.81
         # pendant que l'application en était à 3.1.83. Ici on compare, à chaque
         # ouverture de l'onglet, ce que dit le canal et ce que dit core.py.
         self._rel_discord_row = QWidget()
@@ -7628,7 +7670,7 @@ class AdminPanel(QMainWindow):
         lay.addLayout(a_row)
 
         self._rel_mac_note = QLabel(
-            "ℹ️  Mode 'local' : build Windows uniquement — le Mac est géré par GitHub CI."
+            "ℹ️  Mode 'local' : build Windows uniquement - le Mac est géré par GitHub CI."
         )
         self._rel_mac_note.setStyleSheet(f"color: #555; font-size: 10px;")
         self._rel_mac_note.setVisible(False)
@@ -7894,7 +7936,7 @@ class AdminPanel(QMainWindow):
         for row, c in enumerate(clients):
             email       = c.get("email", "?")
             plan        = c.get("plan", "?")
-            forfait     = _forfait_labels.get(c.get("plan_type", ""), "—")
+            forfait     = _forfait_labels.get(c.get("plan_type", ""), "-")
             is_stripe   = bool(c.get("stripe_customer_id", ""))
             # Une licence venue d'un boitier n'est ni Stripe ni "manuelle" :
             # sans ce cas, elle s'affichait "✏️ Manuel" et rien ne signalait
@@ -8022,7 +8064,7 @@ class AdminPanel(QMainWindow):
 
         Un boîtier renvoyé (retour Amazon, rétractation) est remboursé : le
         client ne doit pas garder les 12 mois qui venaient avec. On remet la
-        licence exactement dans l'état d'avant l'activation — d'où les champs
+        licence exactement dans l'état d'avant l'activation - d'où les champs
         `boitier_prev_*` posés par la Cloud Function.
 
         Le code, lui, n'est PAS remis au stock : le client l'a vu. Il passe à
@@ -8065,7 +8107,7 @@ class AdminPanel(QMainWindow):
             f"Boîtier  : {serial}\n"
             f"Code     : {code or '?'}\n\n"
             f"Après l'opération : {apres}.\n"
-            f"Le code passe à « révoqué » — il ne pourra plus servir.\n"
+            f"Le code passe à « révoqué » - il ne pourra plus servir.\n"
             f"Le boîtier devra repartir avec une carte neuve."
             + ("\n\n⚠ Activation antérieure au suivi de l'état précédent :\n"
                "la date restaurée est une soustraction de 12 mois, à vérifier."
@@ -8111,7 +8153,7 @@ class AdminPanel(QMainWindow):
             # 2. /boitiers et /activation_codes n'ont aucune regle Firestore :
             #    elles sont refusees au jeton client, y compris admin. On passe
             #    donc par le jeton de compte de service, qui ne traverse pas
-            #    les regles — comme le fait la Cloud Function.
+            #    les regles - comme le fait la Cloud Function.
             sa_token = _get_service_account_token()
             _patch_firestore(f"boitiers/{serial}", {
                 "returned_utc":   {"doubleValue": now},
@@ -8205,7 +8247,7 @@ class AdminPanel(QMainWindow):
 
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QLabel, QDialogButtonBox
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Forcer le mot de passe — {email}")
+        dlg.setWindowTitle(f"Forcer le mot de passe - {email}")
         dlg.setFixedWidth(360)
         dlg.setStyleSheet("background:#1a1a1a; color:#cccccc;")
         lay = QVBoxLayout(dlg)
@@ -8268,7 +8310,7 @@ class AdminPanel(QMainWindow):
         uid      = client.get("_uid", "")
         has_sdk  = _init_firebase_admin()
         auth_msg = "Le compte Auth Firebase sera également supprimé." if has_sdk else (
-            "⚠️ service_account.json absent — le compte Auth Firebase devra être "
+            "⚠️ service_account.json absent - le compte Auth Firebase devra être "
             "supprimé manuellement depuis la console Firebase."
         )
         reply = QMessageBox.warning(
@@ -8534,7 +8576,7 @@ class AdminPanel(QMainWindow):
         name = fx.get("name", "?")
         doc_id = fx.get("_doc_id", "")
         if not doc_id:
-            QMessageBox.warning(self, "Erreur", "ID de document introuvable — suppression impossible.")
+            QMessageBox.warning(self, "Erreur", "ID de document introuvable - suppression impossible.")
             return
         rep = QMessageBox.question(
             self, "Supprimer la fixture",
@@ -8627,7 +8669,7 @@ class AdminPanel(QMainWindow):
     def _on_backup(self):
         """Lance la sauvegarde du projet en .zip dans le dossier choisi."""
         if not _RELEASE_OK:
-            QMessageBox.warning(self, "Backup", "release.py introuvable — impossible de localiser le dossier projet.")
+            QMessageBox.warning(self, "Backup", "release.py introuvable - impossible de localiser le dossier projet.")
             return
 
         src  = _RELEASE_DIR
@@ -8751,7 +8793,7 @@ class ReleaseWorker(QObject):
         # Avertissements de fin : ce qui a échoué SANS faire échouer la release.
         # Sans eux, le suivi CI pouvait abandonner et l'annonce Discord ne
         # jamais partir, pendant que la fenêtre concluait « terminée avec
-        # succès » — le décalage Discord 3.1.81 → 3.1.83 a duré deux versions
+        # succès » - le décalage Discord 3.1.81 → 3.1.83 a duré deux versions
         # et sept jours avant d'être remarqué à l'œil.
         self._warnings: list = []
         self._discord_done   = False
@@ -8832,13 +8874,13 @@ class ReleaseWorker(QObject):
                 self._push_github(v)
                 self._watch_actions(v)
                 if not self._discord_done:
-                    self._warn("Discord n'a PAS été mis à jour — le canal "
+                    self._warn("Discord n'a PAS été mis à jour - le canal "
                                "annonce encore la version précédente.\n"
                                "    Rattrapage : bouton « Mettre Discord à jour » "
                                "de l'onglet Release.")
 
             self._prog(100)
-            # La release reste un succès — le tag est poussé, la CI a tourné.
+            # La release reste un succès - le tag est poussé, la CI a tourné.
             # Mais un « terminée avec succès » nu a laissé passer deux fois une
             # annonce Discord jamais partie : les ratés remontent ici.
             resume = f"Release v{v} terminée avec succès !"
@@ -8904,7 +8946,7 @@ class ReleaseWorker(QObject):
         self._prog(m["sig"])
 
         # Inno Setup
-        self._step("Inno Setup — packaging installeur...")
+        self._step("Inno Setup - packaging installeur...")
         self._p("\n--- Inno Setup ---")
         iscc_candidates = [
             Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -8958,7 +9000,7 @@ class ReleaseWorker(QObject):
         ci_start = m["ci_start"]
         ci_done  = m["ci_done"]
 
-        self._step("GitHub Actions — attente démarrage...")
+        self._step("GitHub Actions - attente démarrage...")
         self._p("\nSuivi GitHub Actions (attente démarrage)...")
         run_id = None
         for _ in range(30):
@@ -8981,7 +9023,7 @@ class ReleaseWorker(QObject):
             self._p("  ...")
 
         if not run_id:
-            self._warn(f"Workflow GitHub introuvable après 60 s — suivi abandonné.\n"
+            self._warn(f"Workflow GitHub introuvable après 60 s - suivi abandonné.\n"
                        f"    Suivi manuel : https://github.com/{GITHUB_REPO}/actions")
             return
 
@@ -9006,7 +9048,7 @@ class ReleaseWorker(QObject):
                 total      = max(len(jobs), 1)
                 ci_pct     = ci_start + int((ci_done - ci_start) * done_count / total)
                 self._prog(ci_pct)
-                self._step(f"GitHub Actions — {done_count}/{total} jobs terminés")
+                self._step(f"GitHub Actions - {done_count}/{total} jobs terminés")
                 lines = []
                 for job in jobs:
                     js   = job["status"]
@@ -9045,12 +9087,12 @@ class ReleaseWorker(QObject):
         """
         self._p("\n---------- DISCORD ----------")
         if not _RELEASE_OK:
-            self._warn("release.py non importable — annonce Discord impossible.")
+            self._warn("release.py non importable - annonce Discord impossible.")
             return
         try:
             from release import notify_discord_latest
         except Exception as exc:
-            self._warn(f"notify_discord_latest introuvable ({exc}) — canal inchangé.")
+            self._warn(f"notify_discord_latest introuvable ({exc}) - canal inchangé.")
             return
         ok, msg = notify_discord_latest(version)
         if ok:
@@ -9232,7 +9274,7 @@ class ReleaseDialog(QDialog):
         a_lay.addStretch()
         lay.addLayout(a_lay)
 
-        self._mac_note = QLabel("ℹ️  Mac : uniquement buildé par GitHub CI — impossible depuis Windows.")
+        self._mac_note = QLabel("ℹ️  Mac : uniquement buildé par GitHub CI - impossible depuis Windows.")
         self._mac_note.setStyleSheet("color: #555; font-size: 10px; padding-left: 2px;")
         self._mac_note.setVisible(False)
         lay.addWidget(self._mac_note)

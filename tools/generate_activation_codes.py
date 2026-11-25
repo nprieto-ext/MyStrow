@@ -36,7 +36,7 @@ import secrets
 import time
 from pathlib import Path
 
-# 31 symboles — sans 1, I, L, O, U.
+# 31 symboles - sans 1, I, L, O, U.
 ALPHABET = "023456789ABCDEFGHJKMNPQRSTVWXYZ"
 BODY_LEN = 11                     # caracteres tires au sort
 DEFAULT_OUT = Path.home() / "Desktop" / "Mystrow2" / "Boitier"
@@ -46,7 +46,7 @@ def check_char(body: str) -> str:
     """Caractere de controle : somme ponderee des positions, modulo 31.
 
     Attrape une faute de frappe isolee et toute inversion de deux caracteres
-    voisins — soit l'essentiel des erreurs de saisie humaine. La page
+    voisins - soit l'essentiel des erreurs de saisie humaine. La page
     d'activation rejoue le meme calcul en JavaScript pour dire "code invalide"
     avant meme d'appeler le serveur.
     """
@@ -120,19 +120,19 @@ def main() -> None:
             raise SystemExit(f"--months {args.months} contredit le lot "
                              f"{args.batch}, ecrit a {csv_months} mois")
         args.months = csv_months
-        print(f"lot {args.batch} relu depuis {csv_path.name} — "
+        print(f"lot {args.batch} relu depuis {csv_path.name} - "
               f"{len(codes)} codes, {args.months} mois")
         if not args.push:
             print("\nCe lot existe deja. Options :")
             print("  --push        l'envoyer dans Firestore (le rend activable)")
-            print("  --regenerate  en retirer un neuf — les etiquettes deja")
+            print("  --regenerate  en retirer un neuf - les etiquettes deja")
             print("                imprimees deviendraient invalides")
             return
     else:
         if args.months is None:
             args.months = 12
         if csv_path.exists():
-            print(f"!! {csv_path.name} ECRASE — les etiquettes deja imprimees "
+            print(f"!! {csv_path.name} ECRASE - les etiquettes deja imprimees "
                   "avec l'ancien lot ne fonctionneront plus")
         codes = []
         seen: set[str] = set()

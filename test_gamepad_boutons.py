@@ -1,5 +1,5 @@
 """
-test_gamepad_boutons.py — Verifications sans manette ni AKAI branches.
+test_gamepad_boutons.py - Verifications sans manette ni AKAI branches.
 
     python test_gamepad_boutons.py
 

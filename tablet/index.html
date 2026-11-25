@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>MyStrow — Tablette</title>
+  <title>MyStrow - Tablette</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#080807">
   <meta name="mobile-web-app-capable" content="yes">
@@ -167,7 +167,7 @@
     :root { --faders-h: clamp(120px, 22vh, 240px); }
     #grid { aspect-ratio: 1/1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); gap: var(--pad-gap); height: calc(100% - var(--faders-h) - 6px); width: auto; max-width: 100%; }
     /* 9e fader : sous la colonne de droite (boutons scène), là où il est sur
-       l'APC mini — et non serré sous la grille, au-dessous de la 8e colonne de pads. */
+       l'APC mini - et non serré sous la grille, au-dessous de la 8e colonne de pads. */
     #akai-ctrl { flex-shrink: 0; height: var(--faders-h); display: flex; }
     #akai-ctrl .fader-col { flex: 1; }
     /* REC / CLEAR : leur propre bloc, en bas à droite (la place du 9e fader est prise). */
@@ -432,10 +432,10 @@
     <div class="cp-head"><span class="cp-led"></span><b id="cp-state">Connexion…</b></div>
     <p id="cp-desc"></p>
     <dl class="cp-rows">
-      <div><dt>Adresse</dt><dd id="cp-host">—</dd></div>
-      <div id="cp-row-since"><dt id="cp-since-lbl">Connectée</dt><dd id="cp-since">—</dd></div>
-      <div id="cp-row-last"><dt>Dernière info reçue</dt><dd id="cp-last">—</dd></div>
-      <div id="cp-row-tries"><dt>Tentative</dt><dd id="cp-tries">—</dd></div>
+      <div><dt>Adresse</dt><dd id="cp-host">-</dd></div>
+      <div id="cp-row-since"><dt id="cp-since-lbl">Connectée</dt><dd id="cp-since">-</dd></div>
+      <div id="cp-row-last"><dt>Dernière info reçue</dt><dd id="cp-last">-</dd></div>
+      <div id="cp-row-tries"><dt>Tentative</dt><dd id="cp-tries">-</dd></div>
     </dl>
     <button id="cp-retry" type="button">Reconnecter maintenant</button>
     <button class="change-pc" id="cp-change-pc" type="button" hidden>Changer de PC</button>
@@ -488,15 +488,15 @@
       <button class="tr-btn" id="btn-next">⏭</button>
       <div id="now-playing">
         <div id="np-label">EN COURS</div>
-        <div id="np-title" class="idle">—</div>
+        <div id="np-title" class="idle">-</div>
       </div>
     </div>
     <div id="seq-list"></div>
     <div id="carts-area">
-      <button class="cart-btn" data-idx="0"><span class="cart-num">C1</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
-      <button class="cart-btn" data-idx="1"><span class="cart-num">C2</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
-      <button class="cart-btn" data-idx="2"><span class="cart-num">C3</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
-      <button class="cart-btn" data-idx="3"><span class="cart-num">C4</span><span class="cart-icon">🎵</span><span class="cart-title">—</span></button>
+      <button class="cart-btn" data-idx="0"><span class="cart-num">C1</span><span class="cart-icon">🎵</span><span class="cart-title">-</span></button>
+      <button class="cart-btn" data-idx="1"><span class="cart-num">C2</span><span class="cart-icon">🎵</span><span class="cart-title">-</span></button>
+      <button class="cart-btn" data-idx="2"><span class="cart-num">C3</span><span class="cart-icon">🎵</span><span class="cart-title">-</span></button>
+      <button class="cart-btn" data-idx="3"><span class="cart-num">C4</span><span class="cart-icon">🎵</span><span class="cart-title">-</span></button>
     </div>
   </div>
 
@@ -528,8 +528,8 @@
 <!-- Proj panel -->
 <div id="proj-overlay"></div>
 <div id="proj-panel">
-  <div id="proj-panel-name">—</div>
-  <div id="proj-panel-group">—</div>
+  <div id="proj-panel-name">-</div>
+  <div id="proj-panel-group">-</div>
   <div id="proj-colors"></div>
   <div id="proj-level-row">
     <span id="proj-level-lbl">DIM</span>
@@ -844,7 +844,7 @@ function buildSeqList(items,currentRow){
                  :`<span class="seq-badge" style="visibility:hidden"></span>`;
     div.innerHTML=`<span class="seq-num">${i+1}</span>`+
                   `<span class="seq-icon">${icon}</span>`+
-                  `<span class="seq-title">${escHtml(item.title||'—')}</span>`+
+                  `<span class="seq-title">${escHtml(item.title||'-')}</span>`+
                   `<span class="seq-dur">${escHtml(dur)}</span>`+
                   `<span class="seq-vol">${escHtml(vol)}</span>`+
                   badge;
@@ -856,8 +856,8 @@ function buildSeqList(items,currentRow){
 function updateSeqRow(row,playing){
   seqListEl.querySelectorAll('.seq-item').forEach((el,i)=>el.classList.toggle('current',i===row));
   scrollToRow(row);
-  if(row>=0&&_seqItems[row]){ npTitleEl.textContent=_seqItems[row].title||'—'; npTitleEl.classList.remove('idle'); }
-  else { npTitleEl.textContent='—'; npTitleEl.classList.add('idle'); }
+  if(row>=0&&_seqItems[row]){ npTitleEl.textContent=_seqItems[row].title||'-'; npTitleEl.classList.remove('idle'); }
+  else { npTitleEl.textContent='-'; npTitleEl.classList.add('idle'); }
   btnPlay.textContent=playing?'⏸':'▶'; btnPlay.classList.toggle('playing',playing);
 }
 function scrollToRow(row){ const el=seqListEl.querySelector(`.seq-item:nth-child(${row+1})`); if(el) el.scrollIntoView({block:'nearest',behavior:'smooth'}); }
@@ -869,7 +869,7 @@ function updateCart(idx,title,state){
   btn.classList.remove('playing','stopped');
   if(state===1) btn.classList.add('playing');
   if(state===2) btn.classList.add('stopped');
-  btn.querySelector('.cart-title').textContent=title||'—';
+  btn.querySelector('.cart-title').textContent=title||'-';
 }
 
 // ── Scène ─────────────────────────────────────────────────────────────────────
@@ -877,7 +877,7 @@ const GROUP_COLORS={'face':'#ff8844','contre':'#4488ff','douche1':'#44cc88','dou
   // Mode sans PC : groupes en lettres AKAI (A = face, B = latéraux, C = contre…), mêmes couleurs.
   'A':'#ff8844','B':'#aa55ff','C':'#4488ff','D':'#44cc88','E':'#ffcc44','F':'#ff4488','G':'#22ddcc','H':'#ff7722'};
 
-// Plateau : même fond que le plan de feu du PC (FixtureCanvas._paint) —
+// Plateau : même fond que le plan de feu du PC (FixtureCanvas._paint) -
 // scène arrondie, lueur bleue en fond (contre), ambre côté public (face),
 // quadrillage discret en quarts et repères CONTRE / FACE.
 function drawStageFloor(W,H){
@@ -901,7 +901,7 @@ function drawStageFloor(W,H){
   c.restore();
 }
 
-// Zoom du plan (centré) + affichage des noms — mémorisés sur CETTE tablette.
+// Zoom du plan (centré) + affichage des noms - mémorisés sur CETTE tablette.
 const STAGE_ZOOM_MIN=0.4, STAGE_ZOOM_MAX=1.6;
 let _stageZoom=1, _stageNames=true;
 try{ const s=JSON.parse(localStorage.getItem('mystrow.stage')||'{}');
@@ -1071,7 +1071,7 @@ function drawStrobe(px,py,R,color,isLit,gcolor){
 // Lyre / Moving Head : faisceau orienté (Pan→X, Tilt→profondeur, vers le bas)
 // + corps de lyre (barre truss, 2 bras, tête ronde). Modèle identique à
 // plan_de_feu._draw_fixture : le cône pointe vers +y (la scène) et pivote de
-// pan_angle = atan2(sin(pan), sin(tilt)) — c'est ce qui corrigeait le faisceau
+// pan_angle = atan2(sin(pan), sin(tilt)) - c'est ce qui corrigeait le faisceau
 // « à l'envers » de l'ancien rendu tablette.
 function drawLyre(px,py,R,color,isLit,gcolor,p){
   const r=R;
@@ -1177,11 +1177,11 @@ function applyProjColors(data){
   drawStage(_projectors);
 }
 
-// ── Scène — CLEAR / SELECT ALL ───────────────────────────────────────────────
+// ── Scène - CLEAR / SELECT ALL ───────────────────────────────────────────────
 document.getElementById('btn-scene-clear').addEventListener('click',()=>sendEvent({type:'scene_clear'}));
 // SELECT ALL remplit AUSSI la sélection locale : seul le plan du PC suivait,
 // si bien que le tap suivant repartait d'une sélection vide (= un seul projo),
-// et en mode sans PC personne ne traite scene_select_all — le bouton ne
+// et en mode sans PC personne ne traite scene_select_all - le bouton ne
 // faisait rien du tout.
 document.getElementById('btn-scene-select').addEventListener('click',()=>{
   _selection=_projectors.map((_,i)=>i);
@@ -1191,7 +1191,7 @@ document.getElementById('btn-scene-select').addEventListener('click',()=>{
   sendEvent({type:'scene_select_all'});
 });
 
-// ── Scène — zoom + noms ──────────────────────────────────────────────────────
+// ── Scène - zoom + noms ──────────────────────────────────────────────────────
 const zoomValEl=document.getElementById('scene-zoom-val');
 const namesBtn=document.getElementById('btn-scene-names');
 function _saveStageView(){ try{ localStorage.setItem('mystrow.stage',JSON.stringify({zoom:_stageZoom,names:_stageNames})); }catch(e){} }
@@ -1212,7 +1212,7 @@ zoomValEl.textContent=Math.round(_stageZoom*100)+' %';
 namesBtn.setAttribute('aria-pressed',String(_stageNames));
 stageCanvas.addEventListener('wheel',e=>{ e.preventDefault(); setStageZoom(_stageZoom*(e.deltaY<0?1.1:1/1.1)); },{passive:false});
 
-// ── Scène — long press → panel projecteur ────────────────────────────────────
+// ── Scène - long press → panel projecteur ────────────────────────────────────
 function projAtPoint(cx,cy){
   const {W,H}=_stageWorld();
   [cx,cy]=_toWorld(cx,cy);
@@ -1231,7 +1231,7 @@ function projAtPoint(cx,cy){
 //  • TAP sur un projecteur (peu de mouvement) = ajoute/retire de la sélection.
 //  • GLISSER un rectangle (lasso) = sélectionne tous les projos à l'intérieur.
 //  • TAP dans le vide = tout désélectionner.
-//  • Mode DÉPLACER : glisser un projecteur le déplace — toute la sélection
+//  • Mode DÉPLACER : glisser un projecteur le déplace - toute la sélection
 //    s'il en fait partie. Un mode et non un geste : sans lui, glisser depuis
 //    un projo trace déjà le lasso, et le doigt qui rate sa cible déplacerait
 //    le plan en plein show.
@@ -1249,7 +1249,7 @@ moveBtn.addEventListener('click',()=>{
 });
 // ALIGNER / RÉPARTIR : mêmes calculs que le clic droit du plan de feu au PC
 // (_align_row / _distribute de main_window), puis le même proj_move qu'un
-// glisser — le PC comme le mode sans PC l'enregistrent déjà.
+// glisser - le PC comme le mode sans PC l'enregistrent déjà.
 function _layoutSelection(btn, fn){
   const idxs=_selection.filter(i=>_projectors[i]);
   if(idxs.length<2){
@@ -1302,7 +1302,7 @@ function _moveDragTo(x,y){
   drawStage(_projectors);
 }
 // Glisser interrompu (2e doigt, appel système) : les projos reviennent où ils
-// étaient — rien n'a encore été envoyé.
+// étaient - rien n'a encore été envoyé.
 function _cancelMoveDrag(){
   if(_moveDrag && _moveDrag.moved) _moveDrag.idxs.forEach((i,k)=>{
     const p=_projectors[i]; if(p){ p.x=_moveDrag.starts[k][0]; p.y=_moveDrag.starts[k][1]; } });
@@ -1428,12 +1428,12 @@ function openProjPanel(idx){
 
 // ── Canaux avancés (Focus, Zoom, Prisme, Mode, canaux bruts…) ─────────────────
 // Même section que le menu du plan de feu au PC. La liste (`adv`) vient du
-// moteur — PC ou standalone — : [{k, label, v}], k = type ou n° de canal.
+// moteur - PC ou standalone - : [{k, label, v}], k = type ou n° de canal.
 // Repliée par défaut, ouverte d'office si un canal porte déjà une valeur :
 // un Zoom coincé qu'on ne voit plus, c'est une soirée de recherche.
 let _advOpen=null;   // choix de l'utilisateur, retenu d'un projecteur à l'autre
 // Cibles d'un canal : les projos sélectionnés qui ont CE canal (même clé et
-// même nom) — un n° de canal ne désigne pas la même chose d'un modèle à l'autre.
+// même nom) - un n° de canal ne désigne pas la même chose d'un modèle à l'autre.
 function _advTargets(c){
   return _selIdxs().filter(i=>{ const q=_projectors[i];
     return q && (q.adv||[]).some(a=>a.k===c.k && a.label===c.label); });
@@ -1707,7 +1707,7 @@ function renderConnPop(){
   const now=Date.now(), st=_conn.state;
   connPop.classList.remove('ok','err','connecting'); connPop.classList.add(st);
   const $=id=>document.getElementById(id);
-  $('cp-host').textContent=location.host||'—';
+  $('cp-host').textContent=location.host||'-';
   if(st==='ok'){
     $('cp-state').textContent='Connectée à MyStrow';
     $('cp-desc').textContent='Les pads, les faders et la playlist se mettent à jour en direct.';
@@ -1720,7 +1720,7 @@ function renderConnPop(){
     $('cp-state').textContent='Connexion en cours…';
     $('cp-desc').textContent='La tablette contacte MyStrow sur le PC.';
     $('cp-since-lbl').textContent='Hors ligne depuis';
-    $('cp-since').textContent=_conn.downSince?_fmtFor(now-_conn.downSince):'—';
+    $('cp-since').textContent=_conn.downSince?_fmtFor(now-_conn.downSince):'-';
     $('cp-row-since').hidden=!_conn.downSince;
     $('cp-row-last').hidden=true; $('cp-row-tries').hidden=false;
     $('cp-tries').textContent='n° '+Math.max(1,_conn.tries);
@@ -1731,10 +1731,10 @@ function renderConnPop(){
       ? 'Le Wi-Fi de la tablette est coupé. Reconnectez-la au même réseau que le PC.'
       : 'MyStrow ne répond pas. Vérifiez que l’application est ouverte sur le PC, que la tablette est sur le même Wi-Fi et que le PC n’est pas en veille.';
     $('cp-since-lbl').textContent='Hors ligne depuis';
-    $('cp-since').textContent=_conn.downSince?_fmtFor(now-_conn.downSince):'—';
+    $('cp-since').textContent=_conn.downSince?_fmtFor(now-_conn.downSince):'-';
     $('cp-row-since').hidden=false;
     $('cp-row-last').hidden=!_conn.lastMsg;
-    $('cp-last').textContent=_conn.lastMsg?_fmtAgo(now-_conn.lastMsg):'—';
+    $('cp-last').textContent=_conn.lastMsg?_fmtAgo(now-_conn.lastMsg):'-';
     $('cp-row-tries').hidden=false;
     const wait=Math.max(0,Math.ceil((_conn.retryAt-now)/1000));
     $('cp-tries').textContent='n° '+Math.max(1,_conn.tries)+(_conn.retryAt?(' · nouvel essai dans '+wait+' s'):'');

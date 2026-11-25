@@ -4,7 +4,7 @@
 le bouton DMX du plan de feu enclenche. Hors de ce cas le tampon reste a zero
 pour toujours : sans recalcul, la fenetre montrait un parc eteint alors que la
 lyre etait bien en blanc a l'ecran. Elle refait donc le calcul dans un tampon
-fantome — et surtout PAS dans le vrai, que la trame de maintien ENTTEC relit.
+fantome - et surtout PAS dans le vrai, que la trame de maintien ENTTEC relit.
 """
 import os
 import sys

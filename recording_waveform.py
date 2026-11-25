@@ -153,7 +153,7 @@ class RecordingWaveform(QWidget):
             painter.drawText(5, 15, "Timeline Lumiere")
             return
 
-        # Grille temporelle — pas adaptatif : ne jamais tracer plus de ~120 lignes.
+        # Grille temporelle - pas adaptatif : ne jamais tracer plus de ~120 lignes.
         # Sans ça, un show de 40 min dessinerait 2400 lignes à chaque repaint.
         total_sec = int(self.duration / 1000)
         if total_sec > 0:

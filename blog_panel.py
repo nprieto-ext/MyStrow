@@ -1,5 +1,5 @@
 """
-Blog IA — Génération et publication d'articles via Claude API + WordPress REST API.
+Blog IA - Génération et publication d'articles via Claude API + WordPress REST API.
 Intégré dans l'AdminPanel de MyStrow.
 """
 
@@ -172,7 +172,7 @@ class _PublishWorker(QObject):
             self.finished.emit(result.get("link", ""))
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="ignore")
-            self.error.emit(f"HTTP {e.code} — {body[:400]}")
+            self.error.emit(f"HTTP {e.code} - {body[:400]}")
         except Exception as e:
             self.error.emit(str(e))
 
@@ -221,7 +221,7 @@ class _DiscordWorker(QObject):
                 pass
             self.finished.emit()
         except urllib.error.HTTPError as e:
-            self.error.emit("HTTP %s — %s" % (e.code, e.read().decode(errors="ignore")[:200]))
+            self.error.emit("HTTP %s - %s" % (e.code, e.read().decode(errors="ignore")[:200]))
         except Exception as e:
             self.error.emit(str(e))
 
@@ -678,7 +678,7 @@ class BlogPanel(QWidget):
         self._editor.setPlainText(content)
         self._btn_gen.setEnabled(True)
         self._progress.setVisible(False)
-        self._set_status("Article généré — vérifiez et publiez !")
+        self._set_status("Article généré - vérifiez et publiez !")
 
     def _on_generate_error(self, err: str):
         self._btn_gen.setEnabled(True)
@@ -761,7 +761,7 @@ class BlogPanel(QWidget):
     def _on_discord_error(self, err: str):
         # L'article EST en ligne : on le dit, sans faire passer ca pour un echec
         # de publication.
-        self._set_status(f"Publié — mais l'annonce Discord a échoué : {err}",
+        self._set_status(f"Publié - mais l'annonce Discord a échoué : {err}",
                          error=True)
 
     def _on_publish_error(self, err: str):

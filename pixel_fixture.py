@@ -1,5 +1,5 @@
 """
-Fixtures à pixels (matrices & barres LED) — Phase 0 (fondation).
+Fixtures à pixels (matrices & barres LED) - Phase 0 (fondation).
 
 Un fixture à pixels (dalle 3x3, barre 1xN, panneau RxC…) est décrit par un
 `PixelFixtureSpec` et « déplié » en projecteurs MyStrow classiques via
@@ -98,7 +98,7 @@ class PixelFixtureSpec:
         geo = f"{self.rows}×{self.cols}"
         chans = "".join(c[0] for c in self.pixel_channels)  # ex. RGBW
         head = ("+" + "".join(g[0] for g in self.global_head)) if self.global_head else ""
-        return f"{self.name} — {geo} {chans}{head} ({self.total_channels} ch)"
+        return f"{self.name} - {geo} {chans}{head} ({self.total_channels} ch)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ def generate_matrix_projectors(spec: PixelFixtureSpec,
     Remarque : seuls les canaux globaux de TÊTE (`global_head`) sont pris en
     charge par le master (contigus depuis l'adresse de base). Les rares canaux
     globaux de fin (`global_tail`) ne sont pas encore gérés (ils tomberaient
-    après les pixels) — à traiter en Phase ultérieure si un modèle réel l'exige.
+    après les pixels) - à traiter en Phase ultérieure si un modèle réel l'exige.
     """
     if spec.pixel_count <= 0 or spec.pixel_len <= 0:
         raise ValueError("PixelFixtureSpec invalide : rows/cols/pixel_channels")

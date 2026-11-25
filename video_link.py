@@ -1,5 +1,5 @@
 """
-video_link.py — Base commune aux liaisons « regie video → lumiere ».
+video_link.py - Base commune aux liaisons « regie video → lumiere ».
 
 vMix et OBS posent exactement le meme probleme : un logiciel de regie signale
 qu'une source vient de passer A L'ANTENNE, et MyStrow doit declencher l'action
@@ -9,8 +9,8 @@ protocole et le nom du declencheur :
     vMix : une ENTREE passe au programme   (declencheur = numero d'entree)
     OBS  : une SCENE devient active        (declencheur = nom de scene)
 
-Tout le reste — vocabulaire d'actions, execution, persistance, dialogue de
-reglage — est identique. Ce module le porte une fois ; vmix_link.py et
+Tout le reste - vocabulaire d'actions, execution, persistance, dialogue de
+reglage - est identique. Ce module le porte une fois ; vmix_link.py et
 obs_link.py ne fournissent que leur client et la facon de nommer leurs
 declencheurs.
 
@@ -152,7 +152,7 @@ class VideoLink(QObject):
         w = self._window
 
         # Un nouveau plan passe a l'antenne : l'effet du plan precedent s'arrete,
-        # QUELLE QUE SOIT l'action de la nouvelle entree — y compris s'il n'y en
+        # QUELLE QUE SOIT l'action de la nouvelle entree - y compris s'il n'y en
         # a aucune. Sans ca, seules les actions Effet et Memoire coupaient
         # l'effet en cours (start_effect et _recompute_memory_mix le font
         # d'eux-memes) : une Cartouche ou une entree non mappee laissaient un
@@ -162,7 +162,7 @@ class VideoLink(QObject):
         # descendant : vMix renvoie l'etat complet en une seule trame, donc la
         # sortie de l'ancienne source et l'entree de la nouvelle arrivent
         # ensemble. Se caler sur l'arrivee evite d'avoir a garantir un ordre
-        # entre les deux — et donc de risquer de tuer l'effet qu'on vient de
+        # entre les deux - et donc de risquer de tuer l'effet qu'on vient de
         # lancer.
         if getattr(w, "active_effect", None):
             w.stop_effect()
@@ -203,7 +203,7 @@ class VideoLink(QObject):
 class _Sonde(QObject):
     """Execute une fonction reseau dans un thread : jusqu'a 4 s d'attente.
 
-    Dans le thread Qt, cette attente gelerait la fenetre — et surtout la trame
+    Dans le thread Qt, cette attente gelerait la fenetre - et surtout la trame
     DMX a 25 fps, qui tourne sur le meme timer.
     """
 
@@ -266,7 +266,7 @@ def detecter_regie(port: int, delai_scan: float = 0.35) -> str:
 
     Dans l'ordre : cette machine (boucle locale, puis ses adresses reseau),
     ensuite le reste du sous-reseau /24. Le sondage du sous-reseau est
-    parallelise — en serie, 254 adresses a 0,35 s feraient 90 s d'attente.
+    parallelise - en serie, 254 adresses a 0,35 s feraient 90 s d'attente.
 
     On teste 127.0.0.1 EN PREMIER a dessein : quand la regie tourne sur le
     meme PC, c'est l'adresse qui restera juste apres un changement de reseau
@@ -318,7 +318,7 @@ QDialog { background: #0f0f0f; }
 QLabel { color: #ddd; background: transparent; border: none; }
 /* `QAbstractSpinBox` et pas `QSpinBox` : un selecteur Qt couvre la classe et
    ses SOUS-classes, jamais ses cousines. `QDoubleSpinBox` descend de
-   QAbstractSpinBox, pas de QSpinBox — le champ « course complète en » de la
+   QAbstractSpinBox, pas de QSpinBox - le champ « course complète en » de la
    manette restait donc blanc sur noir au milieu d'un dialogue sombre. */
 QLineEdit, QAbstractSpinBox, QComboBox {
     background: #1a1a1a; color: #ddd; border: 1px solid #2a2a2a;
@@ -345,7 +345,7 @@ QHeaderView::section {
 /* Cases a cocher : sans regle explicite, Qt dessine une case CLAIRE, presque
    blanche, qui creve l'oeil sur un fond #0f0f0f et se lit mal cochee ou non.
    Meme convention que le reste de MyStrow : creux sombre, remplissage cyan
-   quand c'est coche — l'etat se lit d'un coup d'oeil a un metre. */
+   quand c'est coche - l'etat se lit d'un coup d'oeil a un metre. */
 QCheckBox { color: #ddd; background: transparent; spacing: 7px; }
 QCheckBox::indicator {
     width: 15px; height: 15px; border-radius: 3px;
@@ -376,7 +376,7 @@ class _ComboSansMolette(QComboBox):
 
     Ces combos vivent dans les cellules d'un tableau qui defile. Avec le
     comportement Qt par defaut, faire defiler la liste des declencheurs modifiait
-    silencieusement l'action de la ligne survolee — on croyait avoir juste fait
+    silencieusement l'action de la ligne survolee - on croyait avoir juste fait
     defiler, et le reglage avait change sans un mot. `ignore()` fait remonter
     l'evenement au tableau, qui defile normalement ; la valeur ne se change plus
     qu'au clic ou au clavier, deliberement.
@@ -435,8 +435,8 @@ class VideoDialog(QDialog):
         root.addWidget(sous)
 
         # Encart vers le guide, en HAUT comme celui de la sortie DMX : la moitie
-        # du reglage se joue dans OBS ou vMix — activer le serveur, relever le
-        # mot de passe — et aucun libelle de cette fenetre ne peut le montrer.
+        # du reglage se joue dans OBS ou vMix - activer le serveur, relever le
+        # mot de passe - et aucun libelle de cette fenetre ne peut le montrer.
         root.addWidget(guide_banner_encart(
             tr(self.CLE_TEASER), self.URL_GUIDE, tr("vlink_guide_link")))
 
@@ -615,7 +615,7 @@ class VideoDialog(QDialog):
                     continue
                 ident = f"{col + 1}.{row + 1}"
                 nom = mem.get("name") if isinstance(mem, dict) else None
-                out.append((ident, f"MEM {ident}" + (f" — {nom}" if nom else "")))
+                out.append((ident, f"MEM {ident}" + (f" - {nom}" if nom else "")))
         return out
 
     def _effets_disponibles(self) -> list:

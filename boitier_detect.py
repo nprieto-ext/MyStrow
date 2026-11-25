@@ -33,7 +33,7 @@ _FN_BASE = f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net"
 _DETECT_URL = f"{_FN_BASE}/boitier_detect"
 _ACTIVATE_URL = f"{_FN_BASE}/activate_code"
 _SCAN_MS = 10_000
-# Serveur injoignable : on retente, mais pas à chaque scan — la limite de débit
+# Serveur injoignable : on retente, mais pas à chaque scan - la limite de débit
 # de boitier_detect est partagée avec la page /activate (8 essais / 15 min).
 _RETRY_S = 300
 

@@ -1,5 +1,5 @@
 """
-« Quel boîtier avez-vous ? » — en tête de la fenêtre Sortie DMX.
+« Quel boîtier avez-vous ? » - en tête de la fenêtre Sortie DMX.
 
 Les deux boîtiers MyStrow ont le même profilé noir : la seule différence qu'un
 client voit au premier coup d'œil, c'est l'emplacement du logo.

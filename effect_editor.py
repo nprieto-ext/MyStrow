@@ -447,7 +447,7 @@ BUILTIN_EFFECTS = [
 
 # « Un par un » n'est pas une forme d'onde comme les autres : sa position vient
 # du RANG de la fixture, pas d'une courbe échantillonnée. C'est ce qui lui permet
-# de n'allumer qu'une fixture (ou qu'un paquet) à la fois — voir `core.chase_slot`.
+# de n'allumer qu'une fixture (ou qu'un paquet) à la fois - voir `core.chase_slot`.
 FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Un par un",
           "Aléatoire", "Fixe", "Off"]
 
@@ -461,8 +461,8 @@ FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Un par un",
 #
 # Le ratio se lit maintenant SUR LA FIXTURE (`core.pan_angular_ratio`), qui
 # rend `tilt_range / pan_range` : une lyre 360°/270° obtient 0,75 au lieu des
-# 0,5 figés d'avant, et son cercle devient enfin rond. Sur une 540°/270° — le
-# défaut — la valeur reste 0,5, donc la sortie DMX ne bouge pas.
+# 0,5 figés d'avant, et son cercle devient enfin rond. Sur une 540°/270° - le
+# défaut - la valeur reste 0,5, donc la sortie DMX ne bouge pas.
 #
 # ⚠️ Point UNIQUE : l'aperçu de l'éditeur et le moteur du show appellent tous
 # deux `core.pan_angular_ratio(proj)`. Les laisser diverger, c'est rejouer
@@ -479,7 +479,7 @@ PAN_TILT_SHAPES = {
     "libre":     {"label": tr("ee3_shape_libre"),      "pan": (None,       0,  1.0), "tilt": (None,        0, 1.0)},
 }
 # « libre » reste défini dans PAN_TILT_SHAPES (compat des anciens effets) mais
-# n'est plus proposé dans le menu — le défaut est désormais « cercle ».
+# n'est plus proposé dans le menu - le défaut est désormais « cercle ».
 _PT_SHAPE_ORDER = ["cercle", "huit", "infini", "balancier", "pendule", "carre"]
 
 # Migration des anciens noms (fichiers .tui sauvegardés avant la refonte)
@@ -617,12 +617,12 @@ class EffectLayer:
         self.target_preset = "Tous"
         self.target_groups = []
         # Cible « Sélection » : liste figée de projecteurs précis, identifiés par
-        # (groupe, index_local) — même convention que le plan de feu. Active quand
+        # (groupe, index_local) - même convention que le plan de feu. Active quand
         # target_preset == "Selection". Prime sur le groupe d'un clip en REC.
         self.target_selection = []
         self.speed     = 50    # vitesse du cycle 0-100
         self.size      = 100   # amplitude 0-100 (0-400 sur Pan/Tilt : cf.
-                               # LayerRow._AMP_MAX_PT — là, AMP est une largeur
+                               # LayerRow._AMP_MAX_PT - là, AMP est une largeur
                                # de mouvement et 100 ne vaut que 12,5 % de course)
         self.spread    = 0     # décalage de phase entre fixtures 0-100
         self.phase     = 0     # décalage global de phase 0-100 (0=no shift, 50=½ cycle, 100=full cycle)
@@ -641,7 +641,7 @@ class EffectLayer:
         self.sym_pan = False            # miroir pan sur la 2e moitié des fixtures
         self.sym_tilt = False           # miroir tilt, même partage que sym_pan
         # POSITION : point AUTOUR duquel tourne un mouvement Pan/Tilt. Sans elle,
-        # la trajectoire est centrée au milieu de la course (32768) — un cercle
+        # la trajectoire est centrée au milieu de la course (32768) - un cercle
         # « au centre du plateau ». Un preset de position donne à CHAQUE lyre son
         # propre centre, donc le cercle tourne autour de son point de visée.
         # None = pas de position choisie (centre par défaut). L'index suit la
@@ -649,6 +649,9 @@ class EffectLayer:
         # de presets a bougé.
         self.pos_preset_idx  = None
         self.pos_preset_name = ""
+        # Centre ENREGISTRÉ par lyre (mouvement capturé sur un pad) :
+        # {"groupe|index": [pan, tilt]}. Cf. core.layer_rec_centers.
+        self.centers = {}
         # Répartition du décalage entre fixtures (voir SPREAD_MODES) :
         # "lineaire" = chenillard 1,2,3… ; "miroir_in" = 1&8, 2&7, 3&6…
         self.spread_mode = "lineaire"
@@ -699,6 +702,8 @@ class EffectLayer:
             "block": self.block,
             "pos_preset_idx":  self.pos_preset_idx,
             "pos_preset_name": self.pos_preset_name,
+            **({"centers": {k: list(v) for k, v in self.centers.items()}}
+               if self.centers else {}),
             "channel_type":  self.channel_type,
             "channel_num":   self.channel_num,
             "channel_sig":   self.channel_sig,
@@ -740,6 +745,7 @@ class EffectLayer:
         layer.block = _norm_block(d.get("block"))
         layer.pos_preset_idx  = _norm_pos_idx(d.get("pos_preset_idx"))
         layer.pos_preset_name = d.get("pos_preset_name", "") or ""
+        layer.centers = dict(d.get("centers") or {})
         layer.channel_type  = d.get("channel_type", "") or ""
         try:
             layer.channel_num = int(d["channel_num"]) if d.get("channel_num") else None
@@ -781,6 +787,7 @@ class EffectLayer:
             layer.block = _norm_block(ld.get("block"))
             layer.pos_preset_idx  = _norm_pos_idx(ld.get("pos_preset_idx"))
             layer.pos_preset_name = ld.get("pos_preset_name", "") or ""
+            layer.centers = dict(ld.get("centers") or {})
             result.append(layer)
         return result
 
@@ -987,7 +994,7 @@ def _layer_wave(forme: str, x: float) -> float:
 
     « Un par un » n'a pas de courbe propre : sa position vient du rang de la
     fixture, pas de x (voir `core.chase_slot`). On rend ici une impulsion
-    étroite, qui est ce que la vignette du tableau doit montrer — et qui reste
+    étroite, qui est ce que la vignette du tableau doit montrer - et qui reste
     un repli lisible si un chemin oubliait le cas particulier.
     """
     if forme == "Sinus":      return (math.sin(2 * math.pi * x) + 1) / 2
@@ -1003,7 +1010,7 @@ def _layer_wave(forme: str, x: float) -> float:
 # ─── Waveform Canvas ──────────────────────────────────────────────────────────
 
 class WaveformCanvas(QWidget):
-    """Courbe animée (~110×30 px) pour une couche — mise à jour via set_time()."""
+    """Courbe animée (~110×30 px) pour une couche - mise à jour via set_time()."""
 
     _ATTR_COLORS = {
         "Dimmer": "#00d4ff", "Strobe": "#cccccc",
@@ -1030,7 +1037,7 @@ class WaveformCanvas(QWidget):
         """Partie élastique de la cellule FORME : la courbe s'étire ou se serre.
 
         La courbe est échantillonnée sur sa largeur en pixels, elle reste donc
-        juste à n'importe quelle taille — contrairement au nom de la forme, qui
+        juste à n'importe quelle taille - contrairement au nom de la forme, qui
         devient illisible dès qu'il est tronqué.
         """
         w = int(w)
@@ -1093,7 +1100,7 @@ class WaveformCanvas(QWidget):
 # ─── Trajectoire Lissajous Pan/Tilt ──────────────────────────────────────────
 
 class TrajectoryCanvas(QWidget):
-    """Aperçu Lissajous 34×34 px pour la couche Pan/Tilt — mis à jour via set_time()."""
+    """Aperçu Lissajous 34×34 px pour la couche Pan/Tilt - mis à jour via set_time()."""
 
     _COLOR = QColor(255, 153, 0)          # orange Pan/Tilt
 
@@ -1246,7 +1253,7 @@ LAYER_ROW_BORDER  = 3    # bordure d'accent à gauche de chaque ligne
 # mais Qt l'enlève de la zone de contenu au même titre que l'accent de gauche :
 # une ligne dispose donc de 1 px de MOINS que l'en-tête, qui n'a pas de cadre.
 # Non comptée, les colonnes réclamaient 1 px de plus que la place réelle et Qt
-# rognait une cellule au hasard — tout ce qui suivait se décalait, d'où des
+# rognait une cellule au hasard - tout ce qui suivait se décalait, d'où des
 # titres qui ne tombaient plus en face de leurs cases.
 LAYER_ROW_BORDER_R = 1
 LAYER_WAVE_W      = 44   # aperçu de courbe, dans la cellule FORME
@@ -1257,7 +1264,7 @@ LAYER_WAVE_MAX_W  = 88
 LAYER_WAVE_MIN_W  = 44
 
 # Largeur totale du tableau à sa taille CONFORTABLE : c'est le point d'équilibre
-# du calcul élastique — au-dessus les colonnes s'étirent, en dessous elles se
+# du calcul élastique - au-dessus les colonnes s'étirent, en dessous elles se
 # resserrent jusqu'à leur plancher.
 # La bordure d'accent est comptée ici et compensée par la marge de l'en-tête,
 # sans quoi les titres seraient décalés de 3 px par rapport aux cellules.
@@ -1289,7 +1296,7 @@ _LAYER_COL_FLOOR = {
 }
 
 # Largeur du tableau une fois TOUT resserré : en dessous, le défilement
-# horizontal reprend ses droits — il n'y a plus rien à gagner.
+# horizontal reprend ses droits - il n'y a plus rien à gagner.
 LAYER_TABLE_MIN_W = (sum(_LAYER_COL_FLOOR.get(c[0], c[2]) for c in LAYER_COLS)
                      + LAYER_COL_SPACING * (len(LAYER_COLS) - 1)
                      + 12 + LAYER_ROW_BORDER + LAYER_ROW_BORDER_R)
@@ -1298,7 +1305,7 @@ LAYER_TABLE_MIN_W = (sum(_LAYER_COL_FLOOR.get(c[0], c[2]) for c in LAYER_COLS)
 # plus large que le tableau. 0 = colonne figée : les boutons carrés (sens,
 # couleurs, ✕) ne gagnent rien à s'étirer, ils resteraient carrés au milieu
 # d'une cellule vide. Les listes déroulantes et les libellés, eux, profitent de
-# chaque pixel — c'est là que le texte est tronqué en fenêtre étroite.
+# chaque pixel - c'est là que le texte est tronqué en fenêtre étroite.
 LAYER_COL_FLEX = {
     "cible": 3, "canal": 3, "forme": 5,
     "vit": 2, "amp": 2, "min": 2, "max": 2, "dec": 2, "group": 2,
@@ -1310,7 +1317,7 @@ _LAYER_COL_MIN = {c[0]: c[2] for c in LAYER_COLS}
 
 # Ce qu'une colonne écrit dans une couche. Sert quand la colonne est
 # sélectionnée : régler une case recopie ces attributs dans toutes les lignes.
-# Une colonne peut porter plusieurs attributs — CIBLE en a deux (le préréglage
+# Une colonne peut porter plusieurs attributs - CIBLE en a deux (le préréglage
 # et la liste de groupes), et les recopier séparément donnerait des lignes
 # incohérentes.
 LAYER_COL_ATTRS = {
@@ -1346,7 +1353,7 @@ def layer_col_widths(dispo):
     horizontal reprend.
 
     Dans les deux sens, le reliquat entier va à la dernière colonne concernée
-    pour que la somme retombe EXACTEMENT sur la largeur demandée — sinon
+    pour que la somme retombe EXACTEMENT sur la largeur demandée - sinon
     l'en-tête et les lignes dérivent de quelques pixels l'un par rapport à
     l'autre, et l'alignement du tableau saute.
     """
@@ -1413,7 +1420,7 @@ class _ElasticBody(QWidget):
     On rapporte la largeur de la ZONE DE DÉFILEMENT, pas la sienne. Les lignes
     sont à largeur fixe : elles poussent la largeur minimale de ce conteneur:
     se mesurer soi-même revenait à lire la largeur qu'on vient d'imposer, donc
-    à ne jamais voir qu'on est à l'étroit — les colonnes ne se resserraient
+    à ne jamais voir qu'on est à l'étroit - les colonnes ne se resserraient
     jamais et le tableau débordait à droite, ✕ de suppression compris.
     """
 
@@ -1437,7 +1444,7 @@ class _ElasticScroll(QScrollArea):
     Indispensable en plus de `_ElasticBody` : quand la fenêtre rétrécit sous la
     largeur du tableau, le conteneur intérieur garde sa taille (ses lignes sont
     fixes) et ne reçoit donc aucun resizeEvent. Seule la zone de défilement voit
-    qu'elle a rapetissé — c'est elle qui doit demander le resserrement.
+    qu'elle a rapetissé - c'est elle qui doit demander le resserrement.
     """
 
     resized = Signal(int)
@@ -1462,8 +1469,8 @@ class _NumCell(QWidget):
     """
 
     # Signal(object) et non Signal(int) : la cellule pilote aussi des grandeurs
-    # décimales (cf. `decimals`). En mode entier — tous les usages historiques,
-    # dont le tableau du plan 3D — elle émet toujours un int, les branchements
+    # décimales (cf. `decimals`). En mode entier - tous les usages historiques,
+    # dont le tableau du plan 3D - elle émet toujours un int, les branchements
     # en place ne voient donc aucune différence.
     valueChanged = Signal(object)
 
@@ -1526,7 +1533,7 @@ class _NumCell(QWidget):
         La jauge de fond, la sensibilité du glisser et le pas de molette se
         lisent tous sur `_max` à chaque événement : il n'y a donc que la valeur
         courante à ramener dans les nouvelles bornes. **Aucun signal** n'est
-        émis — l'appelant vient de changer la plage, c'est à lui de répercuter
+        émis - l'appelant vient de changer la plage, c'est à lui de répercuter
         la valeur rabattue sur son modèle ; émettre ici rentrerait dans le
         `valueChanged` → `_sync_enabled_state` → plafond → `valueChanged` de
         l'éditeur d'effets.
@@ -1543,13 +1550,13 @@ class _NumCell(QWidget):
 
         Arrondir AVANT de comparer est ce qui rend `set_value` fiable en mode
         décimal : sans cela, deux gestes équivalents donneraient 29.8 et
-        29.799999999999997 — deux flottants différents pour le même chiffre
+        29.799999999999997 - deux flottants différents pour le même chiffre
         affiché, donc un signal de changement à chaque passage, et une couche
         marquée modifiée alors que rien n'a bougé à l'écran.
 
         Rend un int dès que la valeur n'a pas de partie fractionnaire, même sur
         une cellule décimale : sans cela, ouvrir l'éditeur suffirait à réécrire
-        « speed: 50 » en « speed: 50.0 » dans tous les shows enregistrés — même
+        « speed: 50 » en « speed: 50.0 » dans tous les shows enregistrés - même
         valeur, mais un fichier qui change sans qu'on ait rien touché.
         """
         try:
@@ -1624,7 +1631,7 @@ class _NumCell(QWidget):
             # Le pas reste ENTIER même sur une cellule décimale : le glisser est
             # le geste large, la molette le geste fin. Et comme le delta s'ajoute
             # à la valeur de DÉPART, une fraction posée à la molette traverse le
-            # glissement intacte — 29,8 monte à 34,8 puis revient à 29,8.
+            # glissement intacte - 29,8 monte à 34,8 puis revient à 29,8.
             delta = int((self._drag_y - e.globalPosition().y())
                         * (self._max - self._min) / 100.0)
             self._user_set(self._drag_v + delta)
@@ -1666,7 +1673,7 @@ class _NumCell(QWidget):
             "border-radius:4px;font-size:11px;font-weight:bold;padding:0;}")
         # La validation est liée à SON éditeur : editingFinished part aussi bien
         # sur Entrée que sur perte de focus, et éditer une seconde cellule fait
-        # perdre le focus à la première — sans ce lien, le signal tardif de
+        # perdre le focus à la première - sans ce lien, le signal tardif de
         # l'ancienne cellule viendrait fermer l'éditeur de la nouvelle.
         ed.editingFinished.connect(lambda e=ed: self._commit_edit(e))
         self._edit = ed
@@ -1681,7 +1688,7 @@ class _NumCell(QWidget):
         try:
             # Virgule ET point : le pavé numérique d'un clavier français tape
             # une virgule, la refuser rendrait la saisie décimale inutilisable.
-            # `_clamp` ramène ensuite sur la grille — une cellule entière à qui
+            # `_clamp` ramène ensuite sur la grille - une cellule entière à qui
             # on tape « 29,8 » retient 30 plutôt que de rejeter la saisie.
             self._user_set(float(ed.text().strip().replace(",", ".")) * self._disp)
         except ValueError:
@@ -1697,7 +1704,7 @@ class _NumCell(QWidget):
         live = self.isEnabled()
 
         # Fond + contour : sans contour, une cellule à 0 n'a plus de jauge et
-        # se confond avec la ligne — la grille disparaît là où tout est à zéro.
+        # se confond avec la ligne - la grille disparaît là où tout est à zéro.
         p.setPen(Qt.NoPen)
         p.setBrush(QColor("#0a0a0a" if live else "#080808"))
         p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 4, 4)
@@ -1722,7 +1729,7 @@ class _NumCell(QWidget):
         elif self._mixed:
             # Valeurs différentes d'une ligne à l'autre : aucun chiffre ne serait
             # vrai, on affiche un tiret jusqu'au premier geste.
-            col, txt = QColor("#555555"), "—"
+            col, txt = QColor("#555555"), "-"
         else:
             col = QColor("#dddddd") if self._value else QColor("#4a4a4a")
             txt = self._fmt(self._shown(self._value))
@@ -1740,7 +1747,7 @@ class _NumCell(QWidget):
 class _CiblePopup(QFrame):
     """Choix des fixtures visées : Tous / Pair / Impair, ou des groupes A-H.
 
-    Reprend les pastilles de l'ancienne carte — c'est la seule commande qui a
+    Reprend les pastilles de l'ancienne carte - c'est la seule commande qui a
     besoin de plus d'une cellule, donc elle s'ouvre par-dessus le tableau.
     """
 
@@ -1880,7 +1887,7 @@ class LayerTableHeader(QWidget):
     Cliquer un titre sélectionne la colonne entière : à partir de là, régler
     UNE cellule de cette colonne écrit la même valeur dans toutes les lignes.
     Sans colonne sélectionnée, chaque cellule ne touche que sa propre couche.
-    C'est donc l'utilisateur qui décide quand il travaille en masse — il n'y a
+    C'est donc l'utilisateur qui décide quand il travaille en masse - il n'y a
     pas de mode caché ni de ligne qui agirait toute seule.
     """
 
@@ -1959,7 +1966,7 @@ class LayerRow(QFrame):
 
     deleted          = Signal(object)
     changed          = Signal()
-    # (ligne, clé de colonne) — émis en plus de `changed` pour que le panneau
+    # (ligne, clé de colonne) - émis en plus de `changed` pour que le panneau
     # sache QUELLE colonne vient d'être touchée, et puisse la recopier partout
     # si elle est sélectionnée.
     cell_changed     = Signal(object, str)
@@ -1980,7 +1987,7 @@ class LayerRow(QFrame):
     # 0,05 + vit/100 × 7 Hz), donc toute la résolution est du côté rapide. Un
     # cran entier vaut 37 % de période à VIT 1 (8,3 s → 5,3 s) et 1 % à VIT 100
     # (1,4 ms) : la finesse manquait exactement là où on règle les mouvements
-    # lents. Le dixième est aussi ce qui permet de tomber sur un tempo — 128 BPM
+    # lents. Le dixième est aussi ce qui permet de tomber sur un tempo - 128 BPM
     # = VIT 29,8, entre deux crans entiers (29 = 125 BPM, 30 = 129 BPM).
     #
     # Rien à migrer : `layer_frequency` travaille déjà en flottant et `to_dict`
@@ -1991,15 +1998,15 @@ class LayerRow(QFrame):
     # « intensité ». Le moteur convertit AMP 100 en ±8192, soit 12,5 % de la
     # course DMX seulement (cf. main_window, ligne `(size / 100.0) * 8192`) :
     # sur une lyre 540°, AMP 100 ne balaie que 67,5° là où l'appareil sait
-    # faire 540. Le plafond de la colonne est donc porté à 400 sur ces canaux —
+    # faire 540. Le plafond de la colonne est donc porté à 400 sur ces canaux -
     # AMP 400 sature la course de tilt (et le pan suit, réduit par
     # `pan_angular_ratio` pour qu'un cercle reste rond : 270° sur une 540/270),
     # soit exactement ce que la 3.1.91 donnait à AMP 100 et que Christo avait
-    # trouvé juste — AU LIEU de toucher le facteur 8192 : toutes
+    # trouvé juste - AU LIEU de toucher le facteur 8192 : toutes
     # les couches déjà enregistrées (effets custom, configs de boutons, .lrec,
     # .tui) gardent ainsi exactement le rendu auquel elles ont été réglées.
     # Retour Christo, 11/09/2026 : « tu peux mettre à 100, ça va pas plus que
-    # je dirai 30 40 » — c'est ce plafond, mesuré à l'œil et juste.
+    # je dirai 30 40 » - c'est ce plafond, mesuré à l'œil et juste.
     _PT_ATTRS   = ("Pan", "Tilt", "Pan/Tilt")
     _AMP_MAX    = 100
     _AMP_MAX_PT = 400
@@ -2123,7 +2130,7 @@ class LayerRow(QFrame):
         contiennent un aperçu (courbe, trajectoire) rendent le surplus à leur
         liste déroulante : c'est le texte qui manque de place, pas le dessin.
         À l'inverse, quand la place manque, c'est l'aperçu de courbe qui cède
-        en premier — une courbe étroite reste lisible, un nom de forme tronqué
+        en premier - une courbe étroite reste lisible, un nom de forme tronqué
         à trois lettres ne l'est plus.
         """
         self.setFixedWidth(total)
@@ -2189,7 +2196,7 @@ class LayerRow(QFrame):
             if plan is not None and hasattr(plan, 'selected_lamps'):
                 # ORDRE de sélection, pas un ensemble. C'est lui qui donne son
                 # sens à un chenillard : « Sélection » doit déclencher les
-                # projecteurs dans l'ordre où on les a cliqués — c'est aussi
+                # projecteurs dans l'ordre où on les a cliqués - c'est aussi
                 # l'ordre des pastilles numérotées affichées sur le plan. Un set
                 # le perdait, et l'effet repartait dans l'ordre du patch.
                 def _ordonnee(pl=plan):
@@ -2340,14 +2347,14 @@ class LayerRow(QFrame):
 
         Une forme constante ne parcourt aucun cycle : la vitesse, le décalage,
         le départ, le sens et la répartition ne changent alors strictement rien
-        à la sortie. Sauf si le FONDU est ouvert — il mélange la forme vers un
+        à la sortie. Sauf si le FONDU est ouvert - il mélange la forme vers un
         sinus, et ce sinus dépend à nouveau du temps : tout se rallume. Le fondu
         reste donc toujours réglable, c'est la porte de sortie.
 
         « Un par un » est l'autre cas : il tire sa position du RANG de la
         fixture, pas d'une courbe parcourue. Le DÉCALAGE (qui déphase une
         courbe) et le FONDU (qui la mélange vers un sinus) n'ont alors plus
-        de prise — et le fondu rallumerait les voisins, ce qui détruirait
+        de prise - et le fondu rallumerait les voisins, ce qui détruirait
         justement l'exclusivité recherchée.
 
         Les couches Pan/Tilt sont hors sujet : leur mouvement vient de la
@@ -2381,7 +2388,7 @@ class LayerRow(QFrame):
         # déjà ensemble et la valeur ne change rien pour l'instant. Le tooltip
         # le dit, mais la cellule reste RÉGLABLE : la griser créait un
         # œuf-et-poule (« je ne peux pas grouper mes lyres ») où il fallait
-        # deviner qu'on doit ouvrir DÉC d'abord pour pouvoir grouper ensuite —
+        # deviner qu'on doit ouvrir DÉC d'abord pour pouvoir grouper ensuite -
         # or grouper est le geste que l'utilisateur a en tête, le décalage n'en
         # est que le corollaire.
         # « Un par un » est le cas où GROUPER agit même à DÉC 0 : il ignore le
@@ -2629,7 +2636,7 @@ class LayerRow(QFrame):
     _ATTRS_MOUVEMENT = ("Pan", "Tilt", "Pan/Tilt")
 
     def _mk_pos(self):
-        b = QPushButton("—")
+        b = QPushButton("-")
         b.setFixedSize(self._w["pos"], LAYER_CELL_H)
         b.setCursor(Qt.PointingHandCursor)
         b.setToolTip(self._tip["pos"])
@@ -2750,7 +2757,7 @@ class LayerRow(QFrame):
 
         Les positions vivent dans DEUX fichiers : celles créées depuis le plan
         de feu 2D (`~/.mystrow_moving_presets.json`) et les positions AKAI
-        (`~/.maestro_akai_config.json`). Ce menu ne listait que les secondes —
+        (`~/.maestro_akai_config.json`). Ce menu ne listait que les secondes -
         une position tout juste créée sur le plan de feu était donc
         introuvable ici, alors qu'elle existait bel et bien.
 
@@ -2848,14 +2855,14 @@ class LayerRow(QFrame):
         idx = getattr(self.layer, 'pos_preset_idx', None)
         nom = getattr(self.layer, 'pos_preset_name', '') or ''
         if idx is None:
-            btn.setText("—")
+            btn.setText("-")
             btn.setToolTip(self._tip["pos"])
             return
         presets = self._position_presets()
         trouve = find_position_preset(presets, idx, nom)
         if trouve is None:
             # Preset supprimé : le dire plutôt que d'afficher un nom qui ne
-            # correspond plus à rien — le moteur retombera sur le centre.
+            # correspond plus à rien - le moteur retombera sur le centre.
             btn.setText("⚠ " + (nom[:8] if nom else "?"))
             btn.setToolTip(tr("fx_f_pos_missing", nom=nom))
             return
@@ -2993,7 +3000,7 @@ class SimpleEffectPanel(QWidget):
         self._ll.addWidget(self._table_header, 0, Qt.AlignLeft)
         self._ll.addSpacing(3)
 
-        # Conteneur des LayerRow — une couche par ligne
+        # Conteneur des LayerRow - une couche par ligne
         self._layers_container = QWidget()
         self._layers_container.setStyleSheet("background: transparent;")
         self._layers_vl = QVBoxLayout(self._layers_container)
@@ -3124,7 +3131,7 @@ class SimpleEffectPanel(QWidget):
         assign_row.setSpacing(3)
         # 8 boutons, pas 9 : la colonne d'effets de la fenêtre principale en
         # compte 8. Un « E9 » stockait sa config sur un index qu'aucun bouton
-        # ne relit — assignation sans effet visible.
+        # ne relit - assignation sans effet visible.
         for i in range(8):
             btn = QPushButton(f"E{i + 1}")
             btn.setCheckable(True)
@@ -3231,7 +3238,7 @@ class SimpleEffectPanel(QWidget):
             self._layers_vl.addWidget(row)
             # La ligne naît SANS parent : dans son __init__, `_find_main_window`
             # ne trouve rien, la liste des positions est vide et une POSITION
-            # pourtant valide s'affichait « ⚠ Centre » — à chaque changement
+            # pourtant valide s'affichait « ⚠ Centre » - à chaque changement
             # d'effet ou réouverture. Seul l'affichage mentait (l'aperçu et le
             # moteur résolvent la position eux-mêmes). Maintenant qu'elle est
             # rattachée à l'éditeur, on relit.
@@ -3259,7 +3266,7 @@ class SimpleEffectPanel(QWidget):
         """Un réglage vient d'être fait dans une ligne.
 
         Si sa colonne est sélectionnée, on recopie la nouvelle valeur dans
-        toutes les autres couches — c'est tout ce que « sélectionner une
+        toutes les autres couches - c'est tout ce que « sélectionner une
         colonne » veut dire. Hors sélection, on ne touche à rien : la cellule
         n'a modifié que sa propre couche, comme n'importe quel tableau.
         """
@@ -3503,7 +3510,7 @@ def _ask_add_effect_mode(parent, has_layers: bool) -> str:
 
 class EffectEditorDialog(QDialog):
     """
-    Editeur d'effets — 3 colonnes :
+    Editeur d'effets - 3 colonnes :
       [Bibliothèque effets] | [Barre presets + Éditeur couches] | [Plan de Feu live]
     """
 
@@ -3532,7 +3539,7 @@ class EffectEditorDialog(QDialog):
         # Horloge de PHASE de l'aperçu : temps déformé par la vitesse, pour que
         # bouger le fader FX (ou la VITESSE d'une couche) change la cadence sans
         # faire sauter la position dans le cycle. Miroir de
-        # `MainWindow._effect_clock` — parité aperçu/show.
+        # `MainWindow._effect_clock` - parité aperçu/show.
         self._preview_clock    = 0.0
         self._preview_clock_ts = None
         # Pré-sélectionner : 1) initial_effect passé en param, 2) effet du clip, 3) premier builtin
@@ -3559,8 +3566,12 @@ class EffectEditorDialog(QDialog):
         # 260 (bibliothèque) + 300 (plan de feu) + séparateurs + LAYER_TABLE_W.
         # Le minimum reste bas : sur un petit écran les colonnes se resserrent
         # d'elles-mêmes, et replier la bibliothèque (◀) ou le plan de feu (▶)
-        # rend leurs 220 + 260 px au tableau — de quoi tout afficher même là.
+        # rend leurs 220 + 260 px au tableau - de quoi tout afficher même là.
         self.resize(LAYER_TABLE_W + 620, 800)
+        # Jamais plus grand que l'écran (barre des tâches déduite) : sur un portable
+        # en 1440 px de large (2880 à 200 %), les 1698 px demandés faisaient sortir
+        # la colonne de droite et « Sortie live » hors de l'écran.
+        self._fit_to_screen(parent)
         self.setStyleSheet(_DIALOG_STYLE)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
 
@@ -3575,6 +3586,23 @@ class EffectEditorDialog(QDialog):
         # Défiler la bibliothèque de gauche jusqu'à l'effet du clip (sinon on ne
         # voit pas quel effet est sélectionné si sa carte est plus bas).
         QTimer.singleShot(0, self._reveal_selected_card)
+
+    def _fit_to_screen(self, parent):
+        try:
+            from PySide6.QtGui import QGuiApplication
+            scr = (parent.screen() if parent is not None else None) or QGuiApplication.primaryScreen()
+            if scr is None:
+                return
+            avail = scr.availableGeometry()
+            # Cadre Windows : bordures (~16 px) et barre de titre (~40 px).
+            w = min(self.width(), avail.width() - 16)
+            h = min(self.height(), avail.height() - 40)
+            self.setMinimumSize(min(self.minimumWidth(), w), min(self.minimumHeight(), h))
+            self.resize(w, h)
+            self.move(avail.x() + (avail.width() - w - 16) // 2,
+                      avail.y() + (avail.height() - h - 40) // 2)
+        except Exception as exc:
+            print(f"[EffectEditor] ajustement à l'écran impossible : {exc}")
 
     def _reveal_selected_card(self):
         """Amène la carte de l'effet sélectionné dans la vue de la bibliothèque."""
@@ -3594,7 +3622,7 @@ class EffectEditorDialog(QDialog):
         bibliothèque débordant toujours (90 effets intégrés). On créait un effet
         et il ne se passait rien de visible.
 
-        ⚠️ Défiler une seule fois, même en différé, NE MARCHE PAS — et rallonger
+        ⚠️ Défiler une seule fois, même en différé, NE MARCHE PAS - et rallonger
         le délai ne corrige rien. La géométrie se stabilise en DEUX passes : à la
         première les cartes sont déjà placées, mais le conteneur porte encore sa
         hauteur d'avant, donc la barre s'arrête à un maximum périmé, juste
@@ -3611,7 +3639,7 @@ class EffectEditorDialog(QDialog):
         au lieu d'interroger quoi que ce soit. Chaque tour utilise le maximum du
         moment ; dès que la plage cesse de croître les tours suivants ne font
         plus rien. Le tout dure quelques millisecondes, invisible à l'œil, et se
-        termine toujours — il n'y a pas de condition à satisfaire.
+        termine toujours - il n'y a pas de condition à satisfaire.
         """
         sc = getattr(self, '_lib_scroll', None)
         if sc is None:
@@ -3796,7 +3824,7 @@ class EffectEditorDialog(QDialog):
         for cat in _EFFECT_CATEGORIES:
             _insert_category(cat, [e for e in BUILTIN_EFFECTS if e.get("category") == cat])
 
-        # Effets custom — header toujours visible avec bouton import
+        # Effets custom - header toujours visible avec bouton import
         mes_hdr_w = QWidget()
         mes_hdr_w.setStyleSheet("background: transparent;")
         mes_hdr_w.setFixedHeight(20)
@@ -4170,7 +4198,7 @@ class EffectEditorDialog(QDialog):
 
         Le ✕ de la carte fait 14 px et vit juste à côté du ✎ de renommage : un
         clic de travers effaçait un effet pour de bon, sans retour possible.
-        Point de passage unique du ✕ ET du menu contextuel — la confirmation
+        Point de passage unique du ✕ ET du menu contextuel - la confirmation
         est donc ici, pas dans les deux appelants.
         """
         from PySide6.QtWidgets import QMessageBox
@@ -4403,7 +4431,7 @@ class EffectEditorDialog(QDialog):
 
         # Ressort de queue : une fois le panneau replié, tout ce qui pouvait
         # s'étirer est masqué et la colonne n'a plus rien pour absorber sa
-        # hauteur — le bouton se retrouverait centré au milieu du vide au lieu
+        # hauteur - le bouton se retrouverait centré au milieu du vide au lieu
         # de rester en haut, en face de celui de la bibliothèque.
         pv.addStretch(0)
 
@@ -4414,7 +4442,7 @@ class EffectEditorDialog(QDialog):
 
         Le plan sert à composer la cible « Sélection » ; une fois la sélection
         figée dans les couches, il ne sert plus à rien pendant qu'on règle les
-        colonnes — d'où l'intérêt de lui rendre sa place.
+        colonnes - d'où l'intérêt de lui rendre sa place.
         """
         self._plan_collapsed = not self._plan_collapsed
         replie = self._plan_collapsed
@@ -4443,7 +4471,7 @@ class EffectEditorDialog(QDialog):
 
     def _autosave_on_close(self):
         """À la fermeture, sauvegarde automatiquement les couches éditées sur tous
-        les boutons déjà assignés à l'effet courant — plus besoin de cliquer E1-E8."""
+        les boutons déjà assignés à l'effet courant - plus besoin de cliquer E1-E8."""
         if not self._main_window or not self._selected_card or not self._layers:
             return
         cfg_map  = getattr(self._main_window, '_button_effect_configs', {})
@@ -4648,20 +4676,20 @@ class EffectEditorDialog(QDialog):
         return {}
 
     def _switch_to_effect(self, eff: dict):
-        """Changement d'effet depuis la bibliothèque — garde d'abord le travail
+        """Changement d'effet depuis la bibliothèque - garde d'abord le travail
         en cours.
 
         `_apply_preset` vide `self._layers` : sans ce passage, cliquer sur une
         autre carte pour la regarder JETAIT toutes les couches éditées de
         l'effet précédent. La machinerie pour les garder existait déjà et était
         complète (`_autosave_on_close` : boutons E1-E8, pads FX, bibliothèque
-        d'effets, fichier custom_effects) — elle n'était simplement branchée
+        d'effets, fichier custom_effects) - elle n'était simplement branchée
         que sur la fermeture de l'éditeur. Même contrat ici : on ne perd rien
         en naviguant, et revenir sur l'effet le retrouve tel qu'on l'a laissé.
 
         Volontairement PAS dans `_apply_preset` : la duplication, l'import et
         la sauvegarde sous un nouveau nom passent aussi par lui, mais après
-        avoir déjà déplacé `_selected_card` sur le nouvel effet — l'autosave y
+        avoir déjà déplacé `_selected_card` sur le nouvel effet - l'autosave y
         écrirait les couches courantes sous le nom du nouveau.
         """
         if eff.get("name", "") != self._selected_card:
@@ -4773,7 +4801,7 @@ class EffectEditorDialog(QDialog):
             pass    # fenêtre 3D déjà détruite côté C++
 
     def _release_live_dmx(self):
-        """Coupe la sortie live — à appeler sur toute sortie de l'éditeur."""
+        """Coupe la sortie live - à appeler sur toute sortie de l'éditeur."""
         mw = self._main_window
         if mw is not None:
             mw._editor_live_overrides = None
@@ -4909,7 +4937,7 @@ class EffectEditorDialog(QDialog):
         # patch. Idem moteur live, pour la parité aperçu/show.
         _layer_sel = {id(_l): layer_selection_ranks(_l) for _l in self._layers}
 
-        # Amplitude min/max par groupe (répliquée sur les couches) — parité moteur.
+        # Amplitude min/max par groupe (répliquée sur les couches) - parité moteur.
         _group_amp = {}
         for _l in self._layers:
             _gd = getattr(_l, 'group_amp', None)
@@ -4917,7 +4945,7 @@ class EffectEditorDialog(QDialog):
                 _group_amp.update(_gd)
 
         # POSITION : centre de la trajectoire, par couche et par lyre. Résolu sur
-        # TOUTES les lyres (pas la liste filtrée) — même règle que le moteur live,
+        # TOUTES les lyres (pas la liste filtrée) - même règle que le moteur live,
         # dont l'appariement de secours se fait par rang.
         _all_lyres = [p for p in _all_proj
                       if getattr(p, 'fixture_type', '') in ('Moving Head', 'Lyre', 'Laser')]
@@ -4931,11 +4959,15 @@ class EffectEditorDialog(QDialog):
                                        getattr(_l, 'pos_preset_name', ''))
             if _pr is not None:
                 _pos_centers[id(_l)] = position_preset_values(_pr, _all_lyres)
+            elif getattr(_l, 'centers', None):
+                # Mouvement enregistré sur un pad : son propre centre.
+                from core import layer_rec_centers
+                _pos_centers[id(_l)] = layer_rec_centers(_l, _all_proj)
 
         # SYM : quelles lyres partent en Pan miroir. Le partage se fait sur la
         # POSITION sur le plan (même règle que le bouton SYM du plan 2D), pas
         # sur l'index de la fixture dans l'effet : deux règles différentes pour
-        # le même mot, c'était intenable. Import différé — effect_editor est
+        # le même mot, c'était intenable. Import différé - effect_editor est
         # importé par plan_de_feu en amont.
         _sym_ids = {}
         if any(getattr(_l, 'sym_pan', False) or getattr(_l, 'sym_tilt', False)
@@ -4973,7 +5005,7 @@ class EffectEditorDialog(QDialog):
                 groups = list(getattr(layer, 'target_groups', []))
                 # Index d'étalement : par défaut la place dans le patch, mais sur
                 # une cible « Sélection » la place dans la SÉLECTION (ordre des
-                # clics sur le plan) — c'est ce qui rend le chenillard dirigeable.
+                # clics sur le plan) - c'est ce qui rend le chenillard dirigeable.
                 i_fx, n_fx = i, n
                 if preset == "Selection":
                     _ranks = _layer_sel.get(id(layer), {})
@@ -5016,7 +5048,7 @@ class EffectEditorDialog(QDialog):
                 if layer.forme == "Un par un":
                     # Chenillard exclusif : allumée uniquement quand c'est son
                     # tour. Position prise sur le RANG, pas sur la forme d'onde
-                    # (identique au moteur live — parité aperçu/show).
+                    # (identique au moteur live - parité aperçu/show).
                     raw = 1.0 if chase_slot(freq * t + phase, n_fx,
                                             direction) == i_fx else 0.0
                 elif layer.forme in ("Audio", "Aléatoire"):   # ancien nom + nouveau
@@ -5075,7 +5107,7 @@ class EffectEditorDialog(QDialog):
                     # Ce facteur ne bouge PLUS : c'est le plafond de la colonne
                     # AMP qui a ete porte a 400 pour ces canaux (LayerRow.
                     # _AMP_MAX_PT, 400 = course complete). Le relever ici
-                    # changerait le rendu de tous les shows deja enregistres —
+                    # changerait le rendu de tous les shows deja enregistres -
                     # c'est precisement ce que la 3.1.91 avait fait (x4) et que
                     # la 3.1.92 a du annuler.
                     amp = (layer.size / 100.0) * 8192 * pan_angular_ratio(proj)
@@ -5150,13 +5182,13 @@ class EffectEditorDialog(QDialog):
                 # Dimmer seul : oscille la couleur existante du projecteur
                 # level est déjà appliqué par _get_fill_color, on passe la couleur brute
                 # (la couleur de sa ROUE sur un spot sans RGB, qui n'a pas de
-                #  RGB à moduler — même règle que le moteur, et c'est bien la
+                #  RGB à moduler - même règle que le moteur, et c'est bien la
                 #  roue et non du blanc en dur : cf. core.effect_dim_base_color)
                 color = effect_dim_base_color(proj, QColor(proj.color))
             elif has_movement:
                 # Pan/Tilt seul : NE force PAS de couleur/intensité (parité avec la
                 # restitution réelle, qui laisse la lyre dans son état). L'effet ne
-                # fait que DÉPLACER la lyre — sa couleur vient d'un bloc/mémoire.
+                # fait que DÉPLACER la lyre - sa couleur vient d'un bloc/mémoire.
                 color = QColor(proj.color)
                 level = getattr(proj, 'level', 0) / 100.0
             else:
@@ -5176,7 +5208,7 @@ class EffectEditorDialog(QDialog):
     # ── Mode de lecture ───────────────────────────────────────────────────────
 
     def _compute_channel_preview(self, t: float) -> dict:
-        """Couches « Canal » de l'aperçu — même calcul que le show."""
+        """Couches « Canal » de l'aperçu - même calcul que le show."""
         if not any(l.attribute == "Canal" for l in self._layers):
             return {}
         return channel_layer_outputs(

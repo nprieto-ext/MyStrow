@@ -5,7 +5,7 @@
              couleur, gobo, prisme, lyres au centre, prises en main libérées),
              mais l'APC n'est pas touché : faders + pads restent, et le groupe
              tenu à la main est reposé aussitôt.
-- Enchaîné : d'un REC Lumière à un autre, aucun noir — seul l'effet du REC
+- Enchaîné : d'un REC Lumière à un autre, aucun noir - seul l'effet du REC
              sortant est coupé.
 """
 import os, sys

@@ -1,5 +1,5 @@
 /**
- * MyStrow Stream Deck Plugin — app.js
+ * MyStrow Stream Deck Plugin - app.js
  *
  * Communique avec MyStrow via HTTP REST sur http://127.0.0.1:8765/api/
  * Documentation API : streamdeck_api.py dans le projet MyStrow
@@ -22,7 +22,7 @@ var $SD = {
     lastState: null,
 };
 
-// ── Point d'entrée — appelé par le Stream Deck software ──────────────────────
+// ── Point d'entrée - appelé par le Stream Deck software ──────────────────────
 
 function connectElgatoStreamDeckSocket(port, pluginUUID, registerEvent, info) {
     $SD.pluginUUID    = pluginUUID;

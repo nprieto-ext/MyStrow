@@ -1,5 +1,5 @@
 """
-assistant_model.py — Téléchargement et mises à jour du modèle de l'assistant.
+assistant_model.py - Téléchargement et mises à jour du modèle de l'assistant.
 
 Le modèle (~400 Mo) n'est pas dans l'installeur : l'onglet Assistant propose
 de le télécharger, puis signale les nouvelles versions. Il est publié comme

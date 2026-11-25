@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diagnostic ENTTEC sur macOS — isole la sortie DMX de l'interface graphique.
+"""Diagnostic ENTTEC sur macOS - isole la sortie DMX de l'interface graphique.
 
 But : savoir si le crash « je clique Connecter, ça charge en boucle et ça
 plante » vient bien de DEUX threads writers sur le même port série.
@@ -15,7 +15,7 @@ d'avant correctif sur le vrai matériel : c'est l'expérience qui dit si ce
 doublon suffit à figer le port.
 
 ⚠️  Ce script envoie du vrai DMX : les projecteurs branchés vont réagir.
-Fichier temporaire de diagnostic — supprimable une fois le sujet clos.
+Fichier temporaire de diagnostic - supprimable une fois le sujet clos.
 """
 import argparse
 import platform
@@ -99,7 +99,7 @@ def main():
     # qui n'est pas la vôtre, on neutralise l'écriture par défaut.
     if not args.save_config:
         dmx._save_config = lambda *a, **k: None
-        print("\n(config non persistée — aucun fichier créé ; "
+        print("\n(config non persistée - aucun fichier créé ; "
               "--save-config pour l'autoriser)")
 
     # Un canal à fond pour voir quelque chose sortir.

@@ -1,5 +1,5 @@
 """
-Script de reparation — restaure `stripe_subscription_id` sur les licences
+Script de reparation - restaure `stripe_subscription_id` sur les licences
 recurrentes actives qui l'ont perdu.
 
 Contexte (12/08/2026) : `_on_invoice_paid` lisait `invoice["subscription"]`, un
@@ -121,7 +121,7 @@ def main() -> int:
     print("Chargement des licences…")
     clients = ap._query_all_licenses(id_token)
     cibles = anomalies(clients)
-    print(f"{len(clients)} licences — {len(cibles)} a reparer\n")
+    print(f"{len(clients)} licences - {len(cibles)} a reparer\n")
     if not cibles:
         print("Rien a faire.")
         return 0
@@ -145,11 +145,11 @@ def main() -> int:
         try:
             sub = active_subscription(c["stripe_customer_id"])
         except Exception as e:
-            print(f"  !! {email} — Stripe illisible : {e}")
+            print(f"  !! {email} - Stripe illisible : {e}")
             continue
         if not sub:
             introuvables.append(email)
-            print(f"  -- {email} — aucun abonnement vivant cote Stripe (a verifier)")
+            print(f"  -- {email} - aucun abonnement vivant cote Stripe (a verifier)")
             continue
 
         price_id = ""
@@ -169,7 +169,7 @@ def main() -> int:
 
     print(f"\n{len(a_ecrire)} document(s) a mettre a jour.")
     if introuvables:
-        print(f"{len(introuvables)} sans abonnement vivant — probablement resilies "
+        print(f"{len(introuvables)} sans abonnement vivant - probablement resilies "
               f"sans que le webhook l'ait enregistre : {', '.join(introuvables)}")
     if desaccords:
         print(f"{len(desaccords)} plan_type en desaccord avec Stripe (NON corrige ici) :")
@@ -177,7 +177,7 @@ def main() -> int:
             print(f"   {email} : base={base} Stripe={stripe}")
 
     if not APPLY:
-        print("\nMode DRY-RUN — aucune modification. Relancez avec --apply.")
+        print("\nMode DRY-RUN - aucune modification. Relancez avec --apply.")
         return 0
 
     print("\nApplication…")

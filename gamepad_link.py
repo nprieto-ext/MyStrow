@@ -1,5 +1,5 @@
 """
-gamepad_link.py — Ce que MyStrow FAIT des sticks de la manette, et son reglage.
+gamepad_link.py - Ce que MyStrow FAIT des sticks de la manette, et son reglage.
 
 gamepad_client.py lit le peripherique ; ce module decide de l'effet. Comme pour
 les regies video, la separation permet de tester toute la logique de mouvement
@@ -19,7 +19,7 @@ DEUX PIEGES QUI ONT DICTE LE CODE
 ----------------------------------
 1. **La zone morte est obligatoire.** Un stick use ne revient jamais exactement
    a zero. Sans zone morte, les lyres deriveraient lentement toute la soiree
-   sans que personne ne touche a rien — et le temps qu'on comprenne d'ou ca
+   sans que personne ne touche a rien - et le temps qu'on comprenne d'ou ca
    vient, le show est fini.
 2. **Il faut accumuler les fractions.** `p.pan` est un entier sur 16 bits. Au
    sondage (50 Hz) et en poussant doucement, le deplacement d'une image vaut
@@ -52,7 +52,7 @@ URL_GUIDE = "https://mystrow.fr/manette-jeu-lyres-mystrow"
 COURSE = 65535
 
 # Reglages par defaut.
-ZONE_MORTE_DEFAUT = 0.12      # 12 % — au-dela d'une usure normale de stick
+ZONE_MORTE_DEFAUT = 0.12      # 12 % - au-dela d'une usure normale de stick
 BALAYAGE_DEFAUT_S = 3.0       # secondes pour parcourir toute la course a fond
 RATIO_FIN = 8.0               # le stick droit est 8x plus lent que le gauche
 
@@ -114,7 +114,7 @@ def cible_valide(brut) -> str:
 
     Un groupe supprime depuis le dernier enregistrement reste accepte ici :
     `cibles()` renverra simplement une liste vide, ce qui est exactement le
-    comportement d'une selection vide. L'effacer d'office ferait pire — on
+    comportement d'une selection vide. L'effacer d'office ferait pire - on
     rouvrirait un show sur « sélection » sans que rien ne le dise.
     """
     if isinstance(brut, str):
@@ -156,7 +156,7 @@ def avancer(position: int, reste: float, delta: float, lo, hi) -> tuple:
         pour toujours des qu'on pousse doucement ;
       - la lyre est en butee et on pousse encore dessus : la position ne change
         pas non plus, mais il faut JETER le reste, sinon il grossit sans fin et
-        la lyre refuse de repartir quand on inverse le stick — il faudrait
+        la lyre refuse de repartir quand on inverse le stick - il faudrait
         d'abord « rembourser » tout ce qu'on a pousse dans le vide.
 
     Les distinguer sur « la position a-t-elle bouge ? » les confond, justement
@@ -192,7 +192,7 @@ class GamepadLink(QObject):
         self.cible       = CIBLE_SELECTION
 
         # Boutons : voir gamepad_boutons.py. Volontairement independant des
-        # sticks — on peut vouloir les raccourcis sans jamais bouger une lyre,
+        # sticks - on peut vouloir les raccourcis sans jamais bouger une lyre,
         # et l'inverse est vrai aussi.
         self.boutons_enabled = True
         self.pages = [{} for _ in range(gb.NB_PAGES)]
@@ -202,7 +202,7 @@ class GamepadLink(QObject):
         self.suspendu = False
 
         self._dernier_t = None
-        # {id(projecteur): [reste_pan, reste_tilt]} — voir le piege n°2 en tete
+        # {id(projecteur): [reste_pan, reste_tilt]} - voir le piege n°2 en tete
         # de module.
         self._restes = {}
 
@@ -248,7 +248,7 @@ class GamepadLink(QObject):
 
     def apply(self):
         """Le client tourne des que la liaison sert a quelque chose. Le
-        mouvement, lui, est en plus conditionne a `enabled` dans `_on_axes` —
+        mouvement, lui, est en plus conditionne a `enabled` dans `_on_axes` -
         ce qui permet au dialogue d'afficher les sticks en direct sans bouger
         les lyres.
 
@@ -266,7 +266,7 @@ class GamepadLink(QObject):
     # ── cibles ──────────────────────────────────────────────────────────────
 
     def groupes_de_lyres(self) -> list:
-        """[(nom_du_groupe, nombre_de_lyres)] — groupes proposables comme cible.
+        """[(nom_du_groupe, nombre_de_lyres)] - groupes proposables comme cible.
 
         Seuls les groupes qui contiennent AU MOINS UNE lyre : proposer « face »
         quand il n'y a que des PAR LED dedans donnerait une cible qui ne bouge
@@ -350,7 +350,7 @@ class GamepadLink(QObject):
         if self.invert_tilt:
             cmd_tilt = -cmd_tilt
 
-        # Sticks au repos : on ne touche a RIEN. Important — ecrire pan/tilt
+        # Sticks au repos : on ne touche a RIEN. Important - ecrire pan/tilt
         # 50x/s sans raison entrerait en concurrence avec les effets, les
         # memoires et le REC Lumiere, qui ecrivent les memes attributs.
         if cmd_pan == 0.0 and cmd_tilt == 0.0:
@@ -395,7 +395,7 @@ class GamepadLink(QObject):
     # ── boutons ─────────────────────────────────────────────────────────────
 
     def page_courante(self) -> int:
-        """Page d'assignations active — 2e page tant que le modificateur est
+        """Page d'assignations active - 2e page tant que le modificateur est
         tenu. On lit l'etat du modificateur AU MOMENT DE L'APPUI de l'autre
         touche, jamais un souvenir : c'est ce qui rend le geste « L2 + croix »
         insensible a l'ordre exact des deux fronts."""
@@ -448,7 +448,7 @@ class GamepadDialog(QDialog):
         racine.addWidget(titre)
 
         # Encart vers le guide, en HAUT comme pour la regie video : le sujet
-        # deborde de cette fenetre — quelle manette acheter, et le cas de la
+        # deborde de cette fenetre - quelle manette acheter, et le cas de la
         # PS3 qui demande un pilote Windows. Aucun libelle d'ici ne peut le dire.
         racine.addWidget(guide_banner_encart(
             tr("gp_guide_teaser"), URL_GUIDE, tr("vlink_guide_link")))
@@ -549,9 +549,9 @@ class GamepadDialog(QDialog):
         self._cible = QComboBox()
         self._cible.addItem(tr("gp_target_selection"), CIBLE_SELECTION)
         self._cible.addItem(tr("gp_target_all"), CIBLE_TOUTES)
-        # Un groupe par entree : c'est le cas le plus courant en vrai — « les
+        # Un groupe par entree : c'est le cas le plus courant en vrai - « les
         # deux lyres de contre au stick, et je ne veux surtout pas toucher aux
-        # autres » — et ca evite d'avoir a re-selectionner dans le plan de feu
+        # autres » - et ca evite d'avoir a re-selectionner dans le plan de feu
         # a chaque fois qu'on a cliqué ailleurs.
         for nom, n in link.groupes_de_lyres():
             self._cible.addItem(tr("gp_target_group", g=nom, n=n), CIBLE_GROUPE + nom)
@@ -714,7 +714,7 @@ class GamepadDialog(QDialog):
     def _on_bouton_presse(self, bid: str):
         """Un appui physique DESIGNE la touche dans le dessin.
 
-        C'est le geste naturel — « celle-la, la, sous mon pouce » — et il evite
+        C'est le geste naturel - « celle-la, la, sous mon pouce » - et il evite
         d'avoir a reconnaitre L1 de R1 sur une image. Il n'ouvre pas le menu :
         un menu qui s'ouvre tout seul volerait le clavier et la souris."""
         self._manette.set_presse(bid, True)

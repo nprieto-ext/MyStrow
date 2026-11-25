@@ -1,5 +1,5 @@
 """
-Editeur de fixture DMX — MyStrow
+Editeur de fixture DMX - MyStrow
 Interface simple : Mes projecteurs + formulaire d'édition.
 """
 import copy
@@ -90,10 +90,10 @@ ALL_CHANNEL_TYPES = [
     # Ces sept-là étaient déjà entièrement traités par le moteur mais ne
     # figuraient dans AUCUNE liste de l'éditeur : impossible de les choisir, et
     # les canaux concernés finissaient en « Mode » ou en « Unused ».
-    #   C/M/Y  : trichromie — soustractive sur un spot à drapeaux, additive sur
+    #   C/M/Y  : trichromie - soustractive sur un spot à drapeaux, additive sur
     #            une LED à émetteurs. Le moteur tranche sur la présence de R/G/B.
     #   Lime   : émetteur additif supplémentaire (curseur manuel).
-    #   CTO/CTB: correcteurs de température de couleur, canaux à part entière —
+    #   CTO/CTB: correcteurs de température de couleur, canaux à part entière -
     #            les confondre avec la roue de couleurs la faisait tourner.
     #   Iris   : diaphragme.
     "C", "M", "Y", "Lime", "CTO", "CTB", "Iris",
@@ -106,7 +106,7 @@ ALL_CHANNEL_TYPES = [
     #
     # Couleur, niveau et strobe de la couronne SUIVENT le projecteur : une lyre
     # à couronne s'allume d'un bloc, effets compris (`artnet_dmx`, bloc
-    # « Couronne LED »). Réglable par projecteur — bouton « Couronne : suit le
+    # « Couronne LED »). Réglable par projecteur - bouton « Couronne : suit le
     # show » sur n'importe lequel de ses canaux, dans l'éditeur de patch.
     # RingFX et RingSpeed restent manuels dans tous les cas : ce sont les
     # programmes internes de l'appareil, pas du rendu.
@@ -131,14 +131,14 @@ ALL_CHANNEL_TYPES = [
     # C'est ce qui manquait : `Gobo1` et `ColorWheel` etaient les deux seuls
     # types a offrir des presets, et tous deux dessinent quelque chose. Qui
     # voulait des presets sur un canal de programme declarait donc son canal en
-    # « Gobo » puis le renommait — et son PAR LED se couvrait de motifs.
+    # « Gobo » puis le renommait - et son PAR LED se couvrait de motifs.
     #
     # Quatre canaux distincts parce que les canaux de meme type sont GANGES : un
     # appareil qui a plusieurs canaux de programme (laser : FIXTUREMODE + MACRO
     # + CONTROL) doit pouvoir les regler separement.
     "Preset1", "Preset2", "Preset3", "Preset4",
     # « Unused » : le canal existe dans le protocole mais MyStrow n'y touche
-    # pas — il sort 0, toujours. C'est ce que reçoit un canal dont on ne sait
+    # pas - il sort 0, toujours. C'est ce que reçoit un canal dont on ne sait
     # rien à l'import, et il occupe sa place pour que les canaux SUIVANTS
     # gardent le bon numéro. Sans lui, le repli était « Mode », qui pilote les
     # programmes internes de l'appareil.
@@ -163,7 +163,7 @@ CHANNEL_COLORS = {
     "CTO": "#ffbb66", "CTB": "#88bbff", "Iris": "#8899aa",
     # Couronne : la teinte de l'émetteur correspondant, éclaircie. On lit d'un
     # coup d'œil qu'un RingR est un rouge, sans le confondre avec le R du
-    # faisceau — ce sont deux sources différentes sur le même appareil.
+    # faisceau - ce sont deux sources différentes sur le même appareil.
     "RingDim": "#ccbb44", "RingR": "#ff6655", "RingG": "#66dd66",
     "RingB": "#6699ff", "RingW": "#dddddd", "RingStrobe": "#ffcc66",
     "RingFX": "#dd88ff", "RingSpeed": "#99ffaa",
@@ -210,7 +210,7 @@ _PRESETS_BY_TYPE = {
         ("Beam 7ch",  ["Pan", "Tilt", "ColorWheel", "Gobo1", "Shutter", "Dim", "Speed"]),
     ],
     # Laser : le motif en `Gobo1`, la position en `Pan`/`Tilt`, le canal 1
-    # (extinction + mode) en `Preset1` — cf. artnet_dmx.DMX_PROFILES.
+    # (extinction + mode) en `Preset1` - cf. artnet_dmx.DMX_PROFILES.
     "Laser": [
         ("Laser 5ch", ["Preset1", "Gobo1", "Pan", "Tilt", "Speed"]),
         ("Laser 8ch", ["Preset1", "Gobo1", "Gobo1Rot", "Pan", "Tilt", "Zoom", "ColorWheel", "Speed"]),
@@ -237,7 +237,7 @@ _PRESETS_BY_TYPE = {
         ("Brouillard 2ch", ["Smoke", "Fan"]),
     ],
     # Machines à effet : profils GÉNÉRIQUES. Les fabricants n'ont aucune
-    # convention commune — une machine à étincelles va de 1 à 3 canaux selon le
+    # convention commune - une machine à étincelles va de 1 à 3 canaux selon le
     # modèle, un lance-flamme place parfois une sécurité en tête. Un appareil
     # précis se décrit canal par canal ici même, ou s'importe en GDTF / QLC+.
     # Une sécurité à valeur fixe se pose en `channel_defaults`.
@@ -263,7 +263,7 @@ def _mode_defaults(mode: dict) -> list:
     if isinstance(mode.get("defaults"), list):
         return list(mode["defaults"])
     # Format admin panel / Firestore : des entiers, où 0 ne veut pas dire
-    # « forcer à 0 » mais « rien d'imposé » — c'est la valeur de remplissage.
+    # « forcer à 0 » mais « rien d'imposé » - c'est la valeur de remplissage.
     return [v if isinstance(v, int) and v > 0 else None
             for v in (mode.get("default_values") or [])]
 
@@ -340,7 +340,7 @@ def register_channel_search_aliases(mapping: dict):
 # Le nom du type suffit à retrouver la plupart des canaux (« gob » → Gobo1…),
 # mais pas quand le mot français ou le mot du constructeur n'a rien du nom
 # anglais : personne ne tape « Ring » pour chercher une couronne. Ces alias-là
-# sont livrés avec l'app — la grosse table de vocabulaire, elle, reste côté
+# sont livrés avec l'app - la grosse table de vocabulaire, elle, reste côté
 # admin et s'ajoute par register_channel_search_aliases.
 register_channel_search_aliases({
     "couronne": "RingDim", "couronne dim": "RingDim", "anneau": "RingDim",
@@ -399,7 +399,7 @@ class ChannelTypeCombo(_NoScrollCombo):
     Éditable uniquement pour saisir un filtre : la valeur retenue est toujours
     un élément de ALL_CHANNEL_TYPES (insertion désactivée, et toute saisie non
     résolue revient au type courant). D'où le signal `type_changed`, qui ne part
-    que sur un type valide — `currentTextChanged` partirait à chaque frappe.
+    que sur un type valide - `currentTextChanged` partirait à chaque frappe.
     """
 
     type_changed = Signal(str)
@@ -465,7 +465,7 @@ class ChannelTypeCombo(_NoScrollCombo):
     # ── API ───────────────────────────────────────────────────────────────────
 
     def current_type(self) -> str:
-        """Type retenu — jamais le texte de recherche en cours de frappe."""
+        """Type retenu - jamais le texte de recherche en cours de frappe."""
         return self._type
 
     def open_search(self):
@@ -593,8 +593,8 @@ class ChannelRowWidget(QWidget):
     """Une ligne de canal : n° coloré, type cherchable, et actions ▲ ▼ ✕.
 
     `show_default` ajoute la case de valeur fixe DMX. Elle descend à -1, affiché
-    « — » : c'est l'état « aucune valeur imposée », qu'un simple 0-255 ne saurait
-    pas dire — or 0 sur un Dim, c'est un projecteur éteint, pas une absence de
+    « - » : c'est l'état « aucune valeur imposée », qu'un simple 0-255 ne saurait
+    pas dire - or 0 sur un Dim, c'est un projecteur éteint, pas une absence de
     consigne.
     """
     remove_requested  = Signal(object)
@@ -631,7 +631,7 @@ class ChannelRowWidget(QWidget):
         # Nom du canal. Rempli à l'import depuis le fichier constructeur
         # (« LaserGroupSelect », « Rotation Z »), et modifiable : c'est souvent
         # la SEULE chose qui distingue deux canaux ramenés au même type, et sur
-        # un laser la seule information tout court — la moitié des canaux
+        # un laser la seule information tout court - la moitié des canaux
         # n'ayant pas de type connu, la colonne de gauche n'affiche qu'une
         # colonne de « Unused » indiscernables.
         self._label_edit = QLineEdit(label or "")
@@ -650,7 +650,7 @@ class ChannelRowWidget(QWidget):
         if show_default:
             self._default_spin = QSpinBox()
             self._default_spin.setRange(-1, 255)
-            self._default_spin.setSpecialValueText("—")
+            self._default_spin.setSpecialValueText("-")
             self._default_spin.setValue(-1 if default_val is None else int(default_val))
             self._default_spin.setFixedSize(58, 26)
             self._default_spin.setAlignment(Qt.AlignCenter)
@@ -715,7 +715,7 @@ class ChannelRowWidget(QWidget):
     def get_label(self): return self._label_edit.text().strip()
 
     def get_default(self):
-        """Valeur fixe DMX, ou None si la case est sur « — »."""
+        """Valeur fixe DMX, ou None si la case est sur « - »."""
         if self._default_spin is None:
             return None
         v = self._default_spin.value()
@@ -770,7 +770,7 @@ class FixtureEditorDialog(QDialog):
         self.last_saved   = None        # dernière fixture enregistrée
 
         # Provenance de ce qui remplit ACTUELLEMENT le formulaire. Seul "perso"
-        # — un profil tapé de zéro ici — part automatiquement à la bibliothèque
+        # - un profil tapé de zéro ici - part automatiquement à la bibliothèque
         # commune. Tout le reste garde le dialogue de partage à l'import, où la
         # provenance est déclarée par l'utilisateur et non devinée.
         self._form_origin = "perso"
@@ -1111,7 +1111,7 @@ class FixtureEditorDialog(QDialog):
         # Ni titre « PROFIL DMX » ni titre « MODES DMX » : les onglets de modes
         # et la rangée de canaux se désignent d'eux-mêmes, et deux intertitres
         # de plus ne faisaient que pousser la zone utile vers le bas. Le
-        # compteur de canaux, lui, reste — c'est la seule information de la
+        # compteur de canaux, lui, reste - c'est la seule information de la
         # ligne qu'on ne peut pas lire ailleurs.
         ch_hdr = QHBoxLayout()
         self._ch_count_lbl = QLabel(tr("fe_zero_channel"))
@@ -1126,7 +1126,7 @@ class FixtureEditorDialog(QDialog):
         # dans UNE fixture à plusieurs modes, plutôt qu'une fixture par mode,
         # c'est ce que sait déjà lire le sélecteur de mode de la bibliothèque.
         # La rangée ne sert qu'à CHOISIR entre eux : tant qu'il n'y en a qu'un,
-        # elle reste cachée — son onglet ne ferait que répéter le nom du mode
+        # elle reste cachée - son onglet ne ferait que répéter le nom du mode
         # saisi juste au-dessus et le compteur de canaux affiché à droite.
         self._mode_tab_row = QWidget()
         self._mode_tab_row.setStyleSheet("QWidget{background:transparent;}")
@@ -1156,7 +1156,7 @@ class FixtureEditorDialog(QDialog):
         # DMX retirée : elle répétait en carrés illisibles ce que la liste de
         # canaux dit déjà en toutes lettres, juste en dessous.
 
-        # Lignes de canaux — sans intertitre : la liste se désigne d'elle-même,
+        # Lignes de canaux - sans intertitre : la liste se désigne d'elle-même,
         # et la recherche s'explique par le champ (« Rechercher un canal… »).
         self._ch_scroll = QScrollArea()
         self._ch_scroll.setWidgetResizable(True)
@@ -1315,7 +1315,7 @@ class FixtureEditorDialog(QDialog):
             self._refresh_mode_tab_label()
 
     # Pas de « + Mode » : on crée une fixture par protocole. Les modes multiples
-    # restent lisibles et modifiables — ils arrivent de l'import (OFL, QLC+, MA)
+    # restent lisibles et modifiables - ils arrivent de l'import (OFL, QLC+, MA)
     # et la rangée d'onglets s'affiche alors d'elle-même.
 
     def _del_mode(self):
@@ -1387,7 +1387,7 @@ class FixtureEditorDialog(QDialog):
         self._on_channels_changed()
         # Le maximum de la barre ne tient compte de la nouvelle ligne qu'une
         # fois le layout repassé : en deux temps différés, sinon on descend au
-        # bas d'AVANT l'ajout et le canal créé reste hors champ — et le popup
+        # bas d'AVANT l'ajout et le canal créé reste hors champ - et le popup
         # de recherche s'ouvrirait à la position qu'occupait alors la ligne.
         QTimer.singleShot(0, lambda: self._scroll_to_new_row(row, open_search))
 
@@ -1587,7 +1587,7 @@ class FixtureEditorDialog(QDialog):
         btn_row.addWidget(btn_ok)
         vl.addLayout(btn_row)
 
-        # Builtins + bundle OFL + bundle custom (admin panel) — dédupliqués
+        # Builtins + bundle OFL + bundle custom (admin panel) - dédupliqués
         _seen = {(fx["name"], fx.get("manufacturer", "")) for fx in BUILTIN_FIXTURES}
         ofl_extra = [
             fx for fx in _load_ofl_bundle()
@@ -1618,7 +1618,7 @@ class FixtureEditorDialog(QDialog):
                 nch = len(fx.get("profile", []))
                 lbl = f"{n}  ({nch}ch)"
                 if mfr:
-                    lbl += f"   — {mfr}"
+                    lbl += f"   - {mfr}"
                 item = QListWidgetItem(lbl)
                 item.setData(Qt.UserRole, fx)
                 lst.addItem(item)
@@ -1702,7 +1702,7 @@ class FixtureEditorDialog(QDialog):
                 entry["defaults"] = list(m["defaults"])
             # Noms de canaux : écrits seulement s'ils cadrent avec le profil et
             # qu'au moins un est renseigné. Une liste désalignée décalerait les
-            # noms d'un canal sur l'autre — mieux vaut ne rien écrire.
+            # noms d'un canal sur l'autre - mieux vaut ne rien écrire.
             _lb = list(m.get("labels") or [])
             if len(_lb) == len(m["profile"]) and any(x for x in _lb):
                 entry["labels"] = _lb
@@ -1783,7 +1783,7 @@ class FixtureEditorDialog(QDialog):
         self._save_fixtures()
         self._rebuild_list()
         # Signaux bloqués : laisser partir currentRowChanged rechargerait la
-        # fixture qu'on vient d'écrire et ramènerait l'affichage au mode 1 —
+        # fixture qu'on vient d'écrire et ramènerait l'affichage au mode 1 -
         # on repartirait du mauvais onglet après chaque enregistrement.
         self._my_list.blockSignals(True)
         self._my_list.setCurrentRow(self._current_idx)
@@ -1903,7 +1903,7 @@ class FixtureEditorDialog(QDialog):
             return
 
         # Tout nouveau projecteur arrive dans le groupe A (« face »), quel que
-        # soit son type — lyre, barre, strobo ou machine a fumee. Un groupe qui
+        # soit son type - lyre, barre, strobo ou machine a fumee. Un groupe qui
         # n'a ni fader ni pad A-H rendait la machine impilotable a l'arrivee.
         DEFAULT_GROUP = "face"
         existing = {f["name"] for f in self._fixtures}
@@ -1921,7 +1921,7 @@ class FixtureEditorDialog(QDialog):
                     ftype = ofl_fx.get("fixture_type", "PAR LED")
                     candidates = [{
                         "name": ofl_fx.get("name", Path(path).stem)
-                                + (f" — {m['name']}" if len(modes) > 1 else ""),
+                                + (f" - {m['name']}" if len(modes) > 1 else ""),
                         "manufacturer": ofl_fx.get("manufacturer", "Générique"),
                         "fixture_type": ftype,
                         "group": DEFAULT_GROUP,

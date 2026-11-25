@@ -1,8 +1,8 @@
 """
-test_plan2d_override_htp.py — Le plan 2D peignait NOIR une memoire levee.
+test_plan2d_override_htp.py - Le plan 2D peignait NOIR une memoire levee.
 
 Signale le 20/09/2026 : « quand je monte progressivement ma memoire 98.1, ca
-fait strobber les projecteurs et ca les eteint — seulement dans le plan 2D,
+fait strobber les projecteurs et ca les eteint - seulement dans le plan 2D,
 la 3D et le DMX vont bien ».
 
 `_compute_htp_overrides` stocke `(niveau, couleur EMISE, couleur de base)`, ou
@@ -10,7 +10,7 @@ la couleur emise vaut deja `base x niveau / 100`. `_get_fill_color` la
 remultipliait par `niveau` (0-100, pas 0-1) : hors de 0-255, QColor rend une
 couleur INVALIDE, c'est-a-dire noire.
 
-Il fallait juste qu'un override existe — et il en apparait un des que la
+Il fallait juste qu'un override existe - et il en apparait un des que la
 memoire depasse le modele d'un cran. Ca arrive tout le temps : le mix additif
 reconstruit `proj.level` depuis les couleurs et y perd un point d'arrondi. Sur
 la memoire reelle du signalement (3 PAR RVB magenta a 83 %), environ une

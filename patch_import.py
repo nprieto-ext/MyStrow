@@ -1,15 +1,15 @@
 """
-Import d'un patch venu d'un AUTRE logiciel — MyStrow
+Import d'un patch venu d'un AUTRE logiciel - MyStrow
 
 Deux portes d'entree, sans Qt (ce module est du calcul pur, testable seul) :
 
-  * `parse_qlcplus_workspace()` — un espace de travail QLC+ (.qxw). C'est du XML
+  * `parse_qlcplus_workspace()` - un espace de travail QLC+ (.qxw). C'est du XML
     en clair : chaque `<Fixture>` porte Manufacturer / Model / Mode / Universe /
     Address / Channels. Le fichier ne contient PAS la definition des canaux, il
     ne fait que citer la fixture par son nom : c'est la bibliotheque locale qui
     doit la retrouver (voir `match_entry`).
 
-  * `parse_table()` — un tableau CSV / TSV / XLSX. C'est la porte universelle :
+  * `parse_table()` - un tableau CSV / TSV / XLSX. C'est la porte universelle :
     Sunlite, Daslight, Chamsys, Onyx... ne publient pas leur format, mais tous
     savent sortir (ou faire recopier) un tableau « nom / univers / adresse /
     canaux ». C'est aussi la symetrie de `patch_export.export_patch_xlsx`.
@@ -165,7 +165,7 @@ def _int(v, default=None):
 
 
 def type_from_profile(profile) -> str:
-    """Devine le type a partir des canaux — dernier recours."""
+    """Devine le type a partir des canaux - dernier recours."""
     s = set(profile or [])
     if {"Pan", "Tilt"} & s:
         return "Moving Head"
@@ -245,7 +245,7 @@ def parse_profile_cell(raw):
         parts = [p for p in s.split() if p]
     known = _known_channels()
     # Correspondance insensible a la casse : un tableau tape a la main ecrit
-    # « dim », « STROBE », « Pan ». Un nom inconnu devient « Unused » — le canal
+    # « dim », « STROBE », « Pan ». Un nom inconnu devient « Unused » - le canal
     # garde sa place, donc l'appareil suivant reste a la bonne adresse.
     lookup = {_norm(k): k for k in known}
     out = []
@@ -256,7 +256,7 @@ def parse_profile_cell(raw):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Bibliotheque locale — index de correspondance
+# Bibliotheque locale - index de correspondance
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _iter_library_records():
@@ -267,7 +267,7 @@ def _iter_library_records():
     celle qui donnera la correspondance exacte), puis les profils integres,
     puis ce que l'utilisateur a cree ou telecharge.
     """
-    # 1) Base QLC+ — {manufacturer, model, fixture_type, modes:[{name, channels}]}
+    # 1) Base QLC+ - {manufacturer, model, fixture_type, modes:[{name, channels}]}
     for fx in (_load_json(_res("fixtures_qlcplus.json")) or []):
         mfr = fx.get("manufacturer", "")
         model = fx.get("model", "")
@@ -281,7 +281,7 @@ def _iter_library_records():
                    "fixture_type": normalize_type(ftype, chans),
                    "source": "qlcplus"}
 
-    # 2) Profils integres — un seul mode, le nom porte deja le nombre de canaux
+    # 2) Profils integres - un seul mode, le nom porte deja le nombre de canaux
     try:
         from builtin_fixtures import BUILTIN_FIXTURES
     except Exception:
@@ -339,7 +339,7 @@ def build_index(force=False) -> dict:
         rec["profile"] = [_CH_ALIASES.get(c, c) for c in rec["profile"]]
         label = " ".join(x for x in (rec["mfr"], rec["model"]) if x)
         if rec["mode"]:
-            label += f" — {rec['mode']}"
+            label += f" - {rec['mode']}"
         rec["_label"] = label
         by_pair.setdefault((nm, nmo), []).append(rec)
         by_model.setdefault(nmo, []).append(rec)
@@ -349,7 +349,7 @@ def build_index(force=False) -> dict:
 
 
 def _pick(cands, channels, mode):
-    """Parmi des candidats, celui dont le mode colle — sinon le nombre de canaux."""
+    """Parmi des candidats, celui dont le mode colle - sinon le nombre de canaux."""
     if not cands:
         return None, None
     nmode = _norm(mode)
@@ -391,10 +391,10 @@ def match_entry(entry, index=None) -> dict:
     """Cherche le profil MyStrow d'une entree de patch.
 
     Quatre niveaux, du plus sur au plus approximatif :
-      exact   — marque + modele + mode identiques ;
-      good    — marque + modele, mode retrouve par le nombre de canaux ;
-      approx  — modele seul, ou orthographe voisine ;
-      generic — rien trouve : profil deduit du nombre de canaux.
+      exact   - marque + modele + mode identiques ;
+      good    - marque + modele, mode retrouve par le nombre de canaux ;
+      approx  - modele seul, ou orthographe voisine ;
+      generic - rien trouve : profil deduit du nombre de canaux.
     """
     idx = index or build_index()
     mfr = entry.get("manufacturer", "")
@@ -432,7 +432,7 @@ def match_entry(entry, index=None) -> dict:
     prof = list(rec["profile"])
     # Le fichier source fait foi sur l'ENCOMBREMENT : si le profil trouve n'a pas
     # le meme nombre de canaux, la fixture suivante serait decalee. On aligne, et
-    # on retrograde la confiance — c'est exactement le cas a faire relire.
+    # on retrograde la confiance - c'est exactement le cas a faire relire.
     if chans and len(prof) != chans:
         prof = (prof + ["Unused"] * chans)[:chans]
         conf = "approx"
@@ -470,7 +470,7 @@ def parse_qlcplus_workspace(path):
         engine = root
 
     # Groupes QLC+ : le seul indice pour retrouver un groupe MyStrow. Le tag
-    # « Head » a change de forme entre les versions (attribut ou texte) — on
+    # « Head » a change de forme entre les versions (attribut ou texte) - on
     # ramasse le premier entier qu'on trouve, quelle que soit la forme.
     group_of = {}
     for grp in engine.iter("FixtureGroup"):
@@ -508,7 +508,7 @@ def parse_qlcplus_workspace(path):
 
         # Gradateur generique QLC+ : une fixture « Generic/Generic » de N canaux,
         # ce sont N gradateurs INDEPENDANTS. La garder d'un bloc les ferait tous
-        # bouger ensemble — on la deplie.
+        # bouger ensemble - on la deplie.
         if _norm(mfr) == "generic" and _norm(model) == "generic" and (chans or 0) > 1:
             for k in range(chans):
                 entries.append({
@@ -584,7 +584,7 @@ def _map_columns(header):
 def _parse_address(raw):
     """Rend (univers|None, adresse|None).
 
-    Accepte « 45 », « 1.045 », « 2/12 », « U2 CH 45 » — les ecritures qu'on
+    Accepte « 45 », « 1.045 », « 2/12 », « U2 CH 45 » - les ecritures qu'on
     trouve dans un export MA, Chamsys ou une feuille tapee a la main. Sur la
     forme combinee, l'univers est compte a partir de 1 (convention humaine).
     """
@@ -751,7 +751,7 @@ def resolve(entries):
         row["include"] = not row["blocking"]
         rows.append(row)
 
-    # Chevauchements d'adresses — le vrai piege d'un patch importe d'ailleurs,
+    # Chevauchements d'adresses - le vrai piege d'un patch importe d'ailleurs,
     # ou une fixture a pu etre patchee a la main par-dessus une autre.
     occupied = {}
     for i, r in enumerate(rows):
@@ -768,7 +768,7 @@ def resolve(entries):
 
 
 def summarize(rows) -> dict:
-    """Compte par niveau de confiance — le resume affiche en tete du dialogue."""
+    """Compte par niveau de confiance - le resume affiche en tete du dialogue."""
     out = {"total": len(rows), "exact": 0, "good": 0, "approx": 0,
            "generic": 0, "blocking": 0}
     for r in rows:

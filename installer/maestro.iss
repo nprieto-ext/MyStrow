@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=3.2.20
+AppVersion=3.2.21
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -22,11 +22,26 @@ RestartApplications=no
 
 ; --- Langues ---------------------------------------------------------------
 ; Sans section [Languages], Inno n'embarque que l'anglais : un utilisateur
-; francais voyait donc les messages de Setup — dont celui des applications
-; ouvertes — en anglais. L'updater passe /LANG= pour choisir la meme langue
+; francais voyait donc les messages de Setup - dont celui des applications
+; ouvertes - en anglais. L'updater passe /LANG= pour choisir la meme langue
 ; que l'application ; ShowLanguageDialog=no evite de la demander a quelqu'un
 ; qui lance l'installeur a la main.
 ShowLanguageDialog=no
+
+; --- Signature (CI GitHub uniquement : ISCC /DSIGN /Ssslcom=...) ------------
+; Inno signe lui-meme l'installeur ET sa copie temporaire setup.tmp (qui sert
+; aussi de desinstalleur). Signer l'installeur APRES coup, comme avant,
+; laissait setup.tmp non signe : le Controle intelligent des applications de
+; Windows 11 le bloquait (« Erreur 4551 », client du 23/11/2026).
+; Le delai de 31 s entre deux essais couvre un code TOTP eSigner deja
+; consomme par la signature precedente (fenetre de 30 s).
+; Build local (release.py) : SIGN non defini → rien ne change.
+#ifdef SIGN
+SignTool=sslcom
+SignedUninstaller=yes
+SignToolRetryCount=3
+SignToolRetryDelay=31000
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -46,7 +61,7 @@ Name: "{group}\MyStrow"; Filename: "{app}\MyStrow.exe"
 Name: "{commondesktop}\MyStrow"; Filename: "{app}\MyStrow.exe"
 
 [Run]
-; Règle firewall Windows — autorise MyStrow à envoyer/recevoir UDP Art-Net (port 6454)
+; Règle firewall Windows - autorise MyStrow à envoyer/recevoir UDP Art-Net (port 6454)
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""MyStrow Art-Net"""; \
     Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""MyStrow Art-Net"" dir=in action=allow protocol=UDP localport=6454 program=""{app}\MyStrow.exe"" enable=yes"; \

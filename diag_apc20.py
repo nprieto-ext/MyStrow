@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Diagnostic AKAI APC20 — mapping des boutons et pilotage des LEDs.
+"""Diagnostic AKAI APC20 - mapping des boutons et pilotage des LEDs.
 
 Autonome : n'importe RIEN de MyStrow, pour qu'un souci de l'application ne
 fausse pas le resultat. ⚠ FERMER MyStrow avant de lancer ce script : sous
@@ -8,15 +8,15 @@ Windows un port MIDI ne peut etre ouvert que par UNE application a la fois.
 
 Deux choses a verifier :
 
-1. LED — a la mise sous tension l'APC20 demarre en « Generic Mode » (0x40) ou
+1. LED - a la mise sous tension l'APC20 demarre en « Generic Mode » (0x40) ou
    il allume SES PROPRES LEDs et ignore les Note On de l'hote. Le SysEx
    d'introduction (product ID 0x7B, mode 0x41 « Ableton Live Mode ») rend la
    main a l'hote. Le test allume la grille AVANT puis APRES ce SysEx : si
    seule la 2e phase allume les pads de clips, le diagnostic est confirme.
 
-2. ENTREE — le script affiche chaque message recu, decode selon le layout
+2. ENTREE - le script affiche chaque message recu, decode selon le layout
    APC20 (ligne/colonne MyStrow). Appuyer sur les boutons qui « ne repondent
-   pas » dit exactement ce qu'ils envoient — ou s'ils n'envoient rien.
+   pas » dit exactement ce qu'ils envoient - ou s'ils n'envoient rien.
 
 Usage (remplacer `python3` par `python` sous Windows) :
 
@@ -171,7 +171,7 @@ def main():
     # ── 1. Test LED ──────────────────────────────────────────────────────────
     if mo and not ecoute_seule:
         print("=" * 72)
-        print("  TEST LED — REGARDER LE BOITIER")
+        print("  TEST LED - REGARDER LE BOITIER")
         print("=" * 72)
         # On force l'etat de mise sous tension, sinon un 2e passage du script
         # heriterait du mode Ableton laisse par le 1er et la phase 1 mentirait.
@@ -180,7 +180,7 @@ def main():
         eteindre_tout(mo)
         time.sleep(0.3)
 
-        print("\nPHASE 1 (8 s) — SANS SysEx, tel que le boitier demarre.")
+        print("\nPHASE 1 (8 s) - SANS SysEx, tel que le boitier demarre.")
         print("  On demande : grille de clips en VERT + boutons de piste allumes.")
         allumer_tout(mo, 1, 1)
         for s in range(8, 0, -1):
@@ -191,7 +191,7 @@ def main():
         eteindre_tout(mo)
         time.sleep(0.3)
 
-        print("\nPHASE 2 (8 s) — APRES le SysEx d'introduction (mode 0x41).")
+        print("\nPHASE 2 (8 s) - APRES le SysEx d'introduction (mode 0x41).")
         mo.send_message(SYSEX_ABLETON)
         time.sleep(0.05)
         print("  On demande : grille de clips en ROUGE + boutons de piste allumes.")
@@ -206,7 +206,7 @@ def main():
 
     # ── 2. Ecoute ────────────────────────────────────────────────────────────
     print("=" * 72)
-    print("  ECOUTE — APPUYER SUR LES BOUTONS")
+    print("  ECOUTE - APPUYER SUR LES BOUTONS")
     print("=" * 72)
     print(f"  Port : {nom_in}")
     print("  Appuyer en particulier sur les boutons qui NE REPONDENT PAS")
@@ -228,7 +228,7 @@ def main():
         pass
 
     print("\n" + "=" * 72)
-    print("  RECAPITULATIF — messages distincts recus")
+    print("  RECAPITULATIF - messages distincts recus")
     print("=" * 72)
     if not vus:
         print("   AUCUN message recu : le boitier n'emet rien sur ce port.")

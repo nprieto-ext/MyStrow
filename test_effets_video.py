@@ -1,5 +1,5 @@
 """
-test_effets_video.py — Effets sur la sortie video (calque + dimmer + colonne VIDEO).
+test_effets_video.py - Effets sur la sortie video (calque + dimmer + colonne VIDEO).
 
 Six effets, tous de la meme famille : un calque de couleur uni pose par-dessus
 la sortie, dont seule l'opacite varie. Aucun traitement par image, donc rien qui
@@ -7,14 +7,14 @@ vienne disputer le thread GUI au timer DMX 25 fps.
 
 Ce que ces tests verrouillent :
 
-  * la COMPOSITION effet + dimmer est exacte — le calque unique rend
+  * la COMPOSITION effet + dimmer est exacte - le calque unique rend
     pixel pour pixel ce que rendraient deux calques empiles (c'est ce qui
     permet de repiquer la couleur telle quelle sur la dalle LED du plan 3D) ;
   * le fader d'une colonne VIDEO est un NIVEAU DE SORTIE, pas un niveau de
     projecteur : `_startup_faders_down()` et `_clear_akai_state()` ne doivent
     jamais le baisser, sinon l'ecran de la salle part au noir au lancement et a
     chaque CLEAR sans que rien ne l'explique (meme piege que la colonne FX) ;
-  * les effets ne se SUPERPOSENT pas — armer le second desarme le premier ;
+  * les effets ne se SUPERPOSENT pas - armer le second desarme le premier ;
   * la coupure est un noir FRANC, qu'aucun effet ne vient eclaircir ;
   * un effet a opacite constante ARRETE son timer de repaint ;
   * un effet a UN COUP (coup de blanc, coup de noir) se desarme tout seul, et un
@@ -795,7 +795,7 @@ class TestPopupDeSlot(unittest.TestCase):
     """Le popup qui s'ouvre sous l'etiquette du fader liste ses sections EN DUR.
 
     Ajouter une entree a `_AKAI_SLOT_OPTIONS` ne suffit donc PAS a la rendre
-    assignable : le gros editeur de layout la voit, ce popup non — alors que
+    assignable : le gros editeur de layout la voit, ce popup non - alors que
     c'est le chemin normal. VIDEO et VFX etaient dans ce cas.
     """
 

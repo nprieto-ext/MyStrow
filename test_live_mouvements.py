@@ -1,5 +1,5 @@
 """
-test_live_mouvements.py — mouvements de lyres calés sur le tempo + tuile AUTO.
+test_live_mouvements.py - mouvements de lyres calés sur le tempo + tuile AUTO.
 
 Retour client (20/10/2026, location « plug and play » sans contrôleur) : « les
 motifs de lyres se répètent trop vite et ne se calent pas sur le beat ».

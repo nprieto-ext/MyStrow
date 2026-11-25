@@ -1,8 +1,8 @@
 """
-test_cloud_sync.py — patch et effets qui suivent le compte (façon iCloud).
+test_cloud_sync.py - patch et effets qui suivent le compte (façon iCloud).
 
 Demande du 13/10/2026 : « à la Apple, pas de complication : j'ai fait un patch
-sur mon compte, hop ça l'enregistre sur mon compte » — et « si y a pas de
+sur mon compte, hop ça l'enregistre sur mon compte » - et « si y a pas de
 connexion, faut pas que ça plante et que ça mouline ».
 
 Le réseau est simulé : aucun appel réel, aucun fichier de l'utilisateur touché
@@ -314,7 +314,7 @@ class Envoi(Base):
 
 
 class Sobriete(Base):
-    """« Ça va pas coûter cher ? » — lire la date seule, compresser."""
+    """« Ça va pas coûter cher ? » - lire la date seule, compresser."""
 
     def test_compression_aller_retour_et_gain(self):
         vrai_patch = Path.home() / ".maestro_dmx_patch.json"

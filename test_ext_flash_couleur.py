@@ -1,5 +1,5 @@
 """
-test_ext_flash_couleur.py — FLASH d'un pad couleur de la fenetre EXT.
+test_ext_flash_couleur.py - FLASH d'un pad couleur de la fenetre EXT.
 
 Scenario reel (signale le 28/08/2026) : les groupes A B C D sont montes et
 tiennent le BLANC (4 pads couleur allumes). Un pad ROUGE cible le seul groupe D
@@ -7,15 +7,15 @@ et il est en « mode flash (momentane) ».
 
 Ce qui doit se passer, a l'appui puis au relache :
 
-  * appui   — le rouge part sur D, le pad ROUGE s'allume, le pad BLANC de D
+  * appui   - le rouge part sur D, le pad ROUGE s'allume, le pad BLANC de D
               s'eteint ; les pads BLANC de A, B et C ne bougent pas (leurs
               projecteurs non plus) ;
-  * relache — D redevient EXACTEMENT ce qu'il etait : couleur, niveau, mais
+  * relache - D redevient EXACTEMENT ce qu'il etait : couleur, niveau, mais
               aussi les canaux hors RVB (UV, ambre, roue de couleurs) ; le pad
               BLANC de D se rallume et le pad ROUGE s'eteint.
 
 Le retour « au bit pres » est le coeur du test : restaurer base_color/color/
-level ne suffisait pas — clear_special_blocks avait eteint l'UV et la roue
+level ne suffisait pas - clear_special_blocks avait eteint l'UV et la roue
 restait sur le slot du flash, la lampe sortait encore rouge sur le fil DMX.
 
     python test_ext_flash_couleur.py

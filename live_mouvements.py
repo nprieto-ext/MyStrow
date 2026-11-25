@@ -1,5 +1,5 @@
 """
-Mouvements de lyres du moteur IA (LIVE et IA Lumière) — calcul pur, sans Qt.
+Mouvements de lyres du moteur IA (LIVE et IA Lumière) - calcul pur, sans Qt.
 
 ── Pourquoi ce module (retour client, 20/10/2026) ──────────────────────────────
 « Les motifs de lyres se répètent trop vite et ne se calent pas sur le beat. »
@@ -119,7 +119,7 @@ def recaler_phase(phase: float, section: str, mult: float,
 
     Sur un beat, la phase « devrait » tomber sur un multiple du pas d'un temps.
     On ne la colle pas : un saut se verrait sur la lyre. On corrige une fraction
-    de l'écart à chaque temps — en 3-4 temps le motif est calé.
+    de l'écart à chaque temps - en 3-4 temps le motif est calé.
     """
     if mult <= 0:
         return phase
@@ -129,7 +129,7 @@ def recaler_phase(phase: float, section: str, mult: float,
 
 
 def choisir_auto(section: str, precedent: str, rnd: random.Random) -> str:
-    """Motif suivant pour la tuile AUTO — jamais deux fois le même d'affilée."""
+    """Motif suivant pour la tuile AUTO - jamais deux fois le même d'affilée."""
     famille = [m for m in FAMILLES_AUTO.get(section, FAMILLES_AUTO['verse'])
                if m != precedent]
     if not famille:
@@ -157,7 +157,7 @@ def doit_changer(temps_depuis: int, section: str, section_au_changement: str,
                  phrase: int) -> bool:
     """Faut-il changer de motif sur CE beat ?
 
-    Oui sur une phrase entière, ou sur un changement de section — mais pas
+    Oui sur une phrase entière, ou sur un changement de section - mais pas
     avant `TENUE_MIN_TEMPS` dans ce second cas.
     """
     if temps_depuis >= phrase:

@@ -1,5 +1,5 @@
 """
-assistant_support.py — Dépannage : les problèmes que les clients nous signalent par mail.
+assistant_support.py - Dépannage : les problèmes que les clients nous signalent par mail.
 
 Chaque sujet = des motifs reconnus sur la phrase normalisée (assistant_nlu.normalize)
 et une réponse écrite à la main dans les 6 langues. Rien n'est inventé par le modèle :

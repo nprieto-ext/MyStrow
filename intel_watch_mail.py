@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mail de suivi du build Mac Intel — appele par intel_watch.sh.
+Mail de suivi du build Mac Intel - appele par intel_watch.sh.
 
     python3 intel_watch_mail.py debut  v3.1.96 --essai 2/3
     python3 intel_watch_mail.py ok     v3.1.96 --taille 238
@@ -9,7 +9,7 @@ Mail de suivi du build Mac Intel — appele par intel_watch.sh.
 Ne leve JAMAIS : un mail qui ne part pas ne doit pas faire echouer un build.
 Le script imprime une ligne de statut, que le veilleur ecrit dans son journal.
 
-CONFIGURATION (une seule fois sur le Mac) — ~/.mystrow_intel_watch/mail.conf :
+CONFIGURATION (une seule fois sur le Mac) - ~/.mystrow_intel_watch/mail.conf :
 
     TO=ton@mail.fr
     SMTP_HOST=smtp.hostinger.com
@@ -51,7 +51,7 @@ def lire_config():
 
 
 def fin_du_log(chemin, lignes=25):
-    """Les dernieres lignes du journal de build — c'est ce qu'on veut lire dans
+    """Les dernieres lignes du journal de build - c'est ce qu'on veut lire dans
     le mail d'echec, sans avoir a ouvrir le Mac."""
     try:
         contenu = Path(chemin).read_text(encoding="utf-8", errors="replace")
@@ -65,7 +65,7 @@ def corps(evenement, tag, args):
     lien = REPO_URL + tag
 
     if evenement == "debut":
-        sujet = f"MyStrow {tag} — build Mac Intel demarre"
+        sujet = f"MyStrow {tag} - build Mac Intel demarre"
         texte = [f"Le Mac Intel construit le DMG de {tag}."]
         if args.essai:
             texte.append(f"Essai {args.essai}.")
@@ -74,7 +74,7 @@ def corps(evenement, tag, args):
         texte.append("Un second mail suivra, succes ou echec.")
 
     elif evenement == "ok":
-        sujet = f"MyStrow {tag} — DMG Intel publie"
+        sujet = f"MyStrow {tag} - DMG Intel publie"
         texte = [f"MyStrow_intel.dmg est en ligne sur la release {tag}."]
         if args.taille:
             texte.append(f"Taille : {args.taille} Mo.")
@@ -84,7 +84,7 @@ def corps(evenement, tag, args):
         texte.append("Rien a faire : il est signe, notarise et deja uploade.")
 
     else:  # echec
-        sujet = f"MyStrow {tag} — build Mac Intel EN ECHEC"
+        sujet = f"MyStrow {tag} - build Mac Intel EN ECHEC"
         texte = [f"Le build du DMG Intel de {tag} a echoue."]
         if args.essai:
             texte.append(f"Essai {args.essai}.")
@@ -113,7 +113,7 @@ def main():
     conf = lire_config()
     manquant = [c for c in ("TO", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD") if not conf.get(c)]
     if manquant:
-        print(f"mail non envoye — {CONF} absent ou incomplet ({', '.join(manquant)})")
+        print(f"mail non envoye - {CONF} absent ou incomplet ({', '.join(manquant)})")
         return 0
 
     sujet, texte = corps(args.evenement, args.tag, args)
@@ -138,7 +138,7 @@ def main():
                 s.login(conf["SMTP_USER"], conf["SMTP_PASSWORD"])
                 s.send_message(msg)
     except Exception as e:
-        print(f"mail non envoye — {type(e).__name__}: {e}")
+        print(f"mail non envoye - {type(e).__name__}: {e}")
         return 0
 
     print(f"mail '{args.evenement}' envoye a {conf['TO']}")

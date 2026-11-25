@@ -199,7 +199,7 @@ class ForgotPasswordDialog(QDialog):
             # quoi qu'il arrive, on annonçait donc « email envoyé » même quand
             # rien ne partait. Repli sur le natif seulement si la CF est
             # injoignable (réseau/déploiement), jamais si elle répond une erreur
-            # — cette erreur-là est justement ce qu'on veut montrer.
+            # - cette erreur-là est justement ce qu'on veut montrer.
             try:
                 fc.send_credentials_email(email)
             except fc.CloudFunctionUnreachable:
@@ -252,7 +252,7 @@ _BTN_GREEN = """
 
 class LicenseBanner(QWidget):
     """
-    Banniere licence sous les cartouches — design soigné avec icône et dégradé.
+    Banniere licence sous les cartouches - design soigné avec icône et dégradé.
     """
 
     activate_clicked = Signal()
@@ -388,10 +388,10 @@ class ActivationDialog(QDialog):
     Dialogue de connexion / gestion compte / achat MyStrow.
 
     Pages :
-      0 — Formulaire login (email + mdp)
-      1 — Succes connexion
-      2 — Compte connecte
-      3 — Acheter une licence (3 plans Stripe)
+      0 - Formulaire login (email + mdp)
+      1 - Succes connexion
+      2 - Compte connecte
+      3 - Acheter une licence (3 plans Stripe)
     """
 
     activation_success = Signal()
@@ -840,7 +840,7 @@ class ActivationDialog(QDialog):
             self._machine_dots.append(dot)
         bar_lay.addStretch()
 
-        self._acct_machines_lbl = QLabel("— / — PC")
+        self._acct_machines_lbl = QLabel("- / - PC")
         self._acct_machines_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self._acct_machines_lbl.setStyleSheet("color: #aaa; background: transparent; border: none;")
 
@@ -1296,7 +1296,7 @@ class ActivationDialog(QDialog):
 
     def _refresh_account_page(self, license_result: LicenseResult):
         info = get_license_info()
-        email = info.get("email", "—")
+        email = info.get("email", "-")
 
         if license_result.state == LicenseState.LICENSE_ACTIVE:
             if license_result.days_remaining:

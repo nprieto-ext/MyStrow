@@ -415,7 +415,7 @@ class _FlowAnimation(QWidget):
     Une fenêtre de discussion générique (aucune marque) : le curseur colle le
     prompt, glisse le tableau DMX du manuel dans la conversation, envoie ;
     l'IA répond par un bloc de code, on le copie et il part vers MyStrow.
-    Le tableau est l'étape qu'on oublie — l'IA invente alors la fixture — d'où
+    Le tableau est l'étape qu'on oublie - l'IA invente alors la fixture - d'où
     sa couleur dorée, la même que la consigne en gras sous l'animation.
     """
 

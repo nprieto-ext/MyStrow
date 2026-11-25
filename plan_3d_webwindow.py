@@ -1,5 +1,5 @@
 """
-Plan de feu 3D — rendu Three.js via QWebEngineView.
+Plan de feu 3D - rendu Three.js via QWebEngineView.
 Remplace Plan3DWindow avec une API identique : init_scene(), refresh().
 """
 import base64
@@ -29,7 +29,7 @@ from PySide6.QtGui import QColor, QBrush, QPainter, QPen, QImage, QPolygonF, QFo
 from core import (ComboSansMolette, color_wheel_display_color,
                   fixture_machine_kind,
                   emitted_brightness, fixture_projects_gobo, media_icon,
-                  pan_tilt_ranges, pan_to_front)
+                  pan_tilt_ranges, pan_to_front, fixture_motor_only)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer
@@ -60,7 +60,7 @@ def _pos3d_from_canvas(cx, cy):
 
     Les DEUX axes sont inversés, et pour la même raison : la vue de référence
     est celle du PUBLIC. Une caméra placée en salle regarde vers les Z
-    croissants, ce qui met les X croissants à sa gauche — côté jardin. Sans le
+    croissants, ce qui met les X croissants à sa gauche - côté jardin. Sans le
     signe sur X, le plan 2D et la 3D se lisaient en miroir : deux lyres posées à
     jardin sortaient à cour (remontée du 10/08/2026).
     """
@@ -78,7 +78,7 @@ def repartir_canvas(projs, horizontal: bool, a: float, b: float):
 
     Le pendant de la répartition du tableau 3D, pour l'onglet « Plan de feu »
     du Patch DMX : le premier appareil prend la borne de départ, le dernier la
-    borne d'arrivée, les autres tombent à intervalle constant — la convention
+    borne d'arrivée, les autres tombent à intervalle constant - la convention
     `thru` des pupitres. `a` et `b` sont en MÈTRES, dans le repère du plateau,
     celui des colonnes X / Z du tableau 3D : les deux vues décrivent le même
     plateau, deux repères pour un seul plan finiraient par diverger.
@@ -87,7 +87,7 @@ def repartir_canvas(projs, horizontal: bool, a: float, b: float):
     déduite plus tard par `_sync_pos3d_with_canvas`, qui sait, lui, distinguer
     ce qui vient du plan de ce qui a été posé à la main dans le tableau.
 
-    L'ordre est celui de la liste reçue — l'ordre du patch. Une sélection sur
+    L'ordre est celui de la liste reçue - l'ordre du patch. Une sélection sur
     le plan est un ENSEMBLE, elle ne retient aucun ordre de clic ; le patch est
     donc le seul ordre que l'utilisateur puisse prévoir avant de cliquer.
     """
@@ -109,7 +109,7 @@ def _set_pos3d_auto(proj, cx, cy):
 
     `_pos3d_src` retient le point 2D d'où vient la position. Il distingue une
     position simplement recopiée du plan de feu d'une position réglée à la main
-    dans le tableau 3D — sans lui, les deux sont indiscernables, et c'est ce qui
+    dans le tableau 3D - sans lui, les deux sont indiscernables, et c'est ce qui
     débranchait le plan 2D : le tableau initialise `pos_3d_*` pour TOUS les
     projecteurs dès sa première ouverture, or `pos_3d_*` prime sur le 2D. Une
     lyre déplacée ensuite sur le plan de feu ne bougeait plus jamais en 3D
@@ -122,7 +122,7 @@ def _set_pos3d_auto(proj, cx, cy):
 def _val_or(p, attr, dflt):
     """Valeur d'un attribut, ou `dflt` s'il est ABSENT (None).
 
-    ⚠️ Pas de `getattr(p, attr, dflt) or dflt` : 0 est une valeur légitime —
+    ⚠️ Pas de `getattr(p, attr, dflt) or dflt` : 0 est une valeur légitime -
     une hauteur de 0 m, c'est un projecteur posé au sol, et `or` la faisait
     retomber à 7 m.
     """
@@ -144,7 +144,7 @@ def _sync_pos3d_with_canvas(proj, cx, cy):
     if not hasattr(proj, '_pos3d_src'):
         # Show enregistré avant l'existence de `_pos3d_src` : si la position 3D
         # est exactement celle que le plan 2D produirait, c'est qu'elle en a été
-        # déduite — on la rebranche. Sinon elle a été posée à la main, on la
+        # déduite - on la rebranche. Sinon elle a été posée à la main, on la
         # laisse. Vrai tant que rien n'a bougé depuis le chargement, d'où cette
         # migration au tout premier passage.
         p3 = (getattr(proj, 'pos_3d_x', None), getattr(proj, 'pos_3d_z', None))
@@ -172,7 +172,7 @@ def _sync_pos3d_with_canvas(proj, cx, cy):
 _SCENE_PRESETS = {
     'vide': {
         # Scène nue : ni truss ni accessoires. Utile quand le décor vient d'un
-        # modèle importé (GLTF/GLB) — sinon le rig du preset reste dessous.
+        # modèle importé (GLTF/GLB) - sinon le rig du preset reste dessous.
         'label': tr("p3w3_002"),
         'trusses': [],
     },
@@ -395,7 +395,7 @@ def _vignette_proj(vue: str, x: float, y: float, z: float):
     """Monde → plan de la vignette (v vers le bas).
 
     Mêmes points de vue que `CAM_PRESETS` (plan_3d_web.html), vus du PUBLIC
-    (z négatif) : les X croissants — jardin — tombent donc à GAUCHE.
+    (z négatif) : les X croissants - jardin - tombent donc à GAUCHE.
     """
     if vue == 'front':
         return -x, -y
@@ -845,7 +845,7 @@ class _TrussRow(QFrame):
 
 
 class TrussEditorDialog(QDialog):
-    """Éditeur de trusses 3D — ajout, suppression, réglages live."""
+    """Éditeur de trusses 3D - ajout, suppression, réglages live."""
 
     trusses_changed = Signal(list)
 
@@ -955,7 +955,7 @@ class TrussEditorDialog(QDialog):
 
 
 class ProjectorTableDialog(QDialog):
-    """Tableau de positionnement 3D — édition X/Y/Z/RotXYZ, multi-sélection."""
+    """Tableau de positionnement 3D - édition X/Y/Z/RotXYZ, multi-sélection."""
 
     # En-tête de la colonne des cases : cliquable pour tout cocher d'un coup.
     # Une colonne vide ne disait pas qu'on pouvait sélectionner plusieurs
@@ -1132,7 +1132,7 @@ class ProjectorTableDialog(QDialog):
         self._busy = True
 
         # Init pos_3d pour TOUS les projecteurs (y compris les pixels d'une barre
-        # non affichés) — sinon déplacer une barre casserait sur un pos None.
+        # non affichés) - sinon déplacer une barre casserait sur un pos None.
         for i, p in enumerate(projectors):
             cx, cy = self._npos(projectors, i)
             if getattr(p, 'pos_3d_x', None) is None:
@@ -1174,14 +1174,14 @@ class ProjectorTableDialog(QDialog):
             cz3 = sum(getattr(projectors[m], 'pos_3d_z', 0.0) or 0.0
                       for m in members) / len(members)
 
-            # Col 0 — checkbox
+            # Col 0 - checkbox
             if not self._tbl.item(row, 0):
                 chk = QTableWidgetItem()
                 chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                 chk.setCheckState(Qt.Unchecked)
                 self._tbl.setItem(row, 0, chk)
 
-            # Col 1 — nom de l'appareil, coloré selon le groupe
+            # Col 1 - nom de l'appareil, coloré selon le groupe
             grp  = rd['group']
             nm_item = self._tbl.item(row, 1)
             if nm_item is None:
@@ -1191,7 +1191,7 @@ class ProjectorTableDialog(QDialog):
             nm_item.setText(rd['name'])
             nm_item.setForeground(QBrush(QColor(self._GRP_COLOR.get(grp, '#666688'))))
 
-            # Cols 2-7 — spinboxes
+            # Cols 2-7 - spinboxes
             vals = [
                 cx3,
                 getattr(p, 'fixture_height', 7.0),
@@ -1320,7 +1320,7 @@ def _diag_note(txt: str):
     """Journalise une ligne de diagnostic 3D : terminal ET fichier.
 
     Le fichier compte autant que la sortie standard : le glitch dure un quart
-    de seconde et l'application est lancée au clic la plupart du temps —
+    de seconde et l'application est lancée au clic la plupart du temps -
     demander de guetter un terminal ne tient pas. Le fichier, lui, s'envoie.
     """
     global _diag_fh
@@ -1345,8 +1345,8 @@ def _diag_note(txt: str):
 class _LoggingPage(QWebEnginePage):
     """Page qui fait remonter les messages de diagnostic de la scène 3D.
 
-    QWebEngine avale les `console.*` par défaut. Or c'est la page — et elle
-    seule — qui voit passer une perte de contexte WebGL, une image anormalement
+    QWebEngine avale les `console.*` par défaut. Or c'est la page - et elle
+    seule - qui voit passer une perte de contexte WebGL, une image anormalement
     longue ou un changement de qualité. Sans ce relais, l'enquête sur le
     clignotement noir se faisait à l'aveugle.
 
@@ -1361,7 +1361,7 @@ class _LoggingPage(QWebEnginePage):
 
 
 class _Bridge(QObject):
-    """Pont QWebChannel — reçoit les clics sur les fixtures depuis Three.js."""
+    """Pont QWebChannel - reçoit les clics sur les fixtures depuis Three.js."""
 
     def __init__(self, win):
         super().__init__()
@@ -1394,7 +1394,7 @@ class _Bridge(QObject):
 
 
 class _P3Cell(_NumCell):
-    """Cellule chiffrée du tableau 3D — celle de l'éditeur d'effets.
+    """Cellule chiffrée du tableau 3D - celle de l'éditeur d'effets.
 
     Même geste et même rendu que dans l'éditeur : glisser vers le haut/bas
     règle la valeur, la molette l'affine, un double-clic permet de la taper, et
@@ -1417,7 +1417,7 @@ class _P3Cell(_NumCell):
         """Rendu normal, plus un liseré cyan quand la ligne est sélectionnée.
 
         On repeint par-dessus au lieu de dupliquer le dessin de la cellule :
-        la feuille de style, elle, n'a aucun effet ici — la cellule se peint
+        la feuille de style, elle, n'a aucun effet ici - la cellule se peint
         entièrement au QPainter, c'est pourquoi l'ancien surlignage restait
         invisible sur ces colonnes.
         """
@@ -1439,7 +1439,7 @@ class _P3Cell(_NumCell):
         Dans l'éditeur d'effets la liste tient à l'écran, la molette peut donc
         affiner une valeur sans ambiguïté. Ici le tableau défile : molette sur
         une cellule en cherchant la ligne du bas, et on déréglait un projecteur
-        au passage — sans le voir, puisqu'on regardait ailleurs.
+        au passage - sans le voir, puisqu'on regardait ailleurs.
         On laisse l'événement remonter à la zone de défilement.
         """
         event.ignore()
@@ -1477,7 +1477,7 @@ class Plan3DWebWindow(QMainWindow):
         self._view = QWebEngineView()
         # Sans cette page, les `console.*` de la scène 3D ne vont NULLE PART :
         # QWebEngine les avale en silence. C'est ce qui rendait le clignotement
-        # noir introuvable — tout ce que la page savait du problème restait
+        # noir introuvable - tout ce que la page savait du problème restait
         # enfermé dedans. On ne remonte que ce qui est diagnostique.
         self._view.setPage(_LoggingPage(self._view))
         s = self._view.settings()
@@ -1489,7 +1489,7 @@ class Plan3DWebWindow(QMainWindow):
         # 3.2.4, premières builds CI en PySide6 6.12.0). Explicite désormais.
         s.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
 
-        # QWebChannel — communication JS → Python (clic sur fixture)
+        # QWebChannel - communication JS → Python (clic sur fixture)
         self._channel = QWebChannel()
         self._bridge  = _Bridge(self)
         self._channel.registerObject('bridge', self._bridge)
@@ -1504,13 +1504,13 @@ class Plan3DWebWindow(QMainWindow):
 
         # État interne AVANT _build_right_panel() : l'onglet Cam. lit
         # self._quality pour positionner son combo. Défini après, il levait
-        # AttributeError en pleine construction de MainWindow — MyStrow
+        # AttributeError en pleine construction de MainWindow - MyStrow
         # mourait juste après le splash, sans fenêtre ni message.
         self._projectors      = []
         self._last_projectors = []
         self._pending         = None
         self._ready           = False
-        # Sortie live de l'éditeur d'effets — cf. set_fx_overrides()
+        # Sortie live de l'éditeur d'effets - cf. set_fx_overrides()
         self._fx_overrides    = None
         self._placement_dlg   = None
         self._truss_editor    = None
@@ -1534,7 +1534,7 @@ class Plan3DWebWindow(QMainWindow):
         # mémorisée : c'était un réglage à refaire à chaque ouverture.
         self._ambience = 160
         # Brouillard dans les faisceaux : ses réglages ont été retirés du panneau
-        # (15/09/2026). Forcé à 0 et plus relu du patch — une valeur enregistrée
+        # (15/09/2026). Forcé à 0 et plus relu du patch - une valeur enregistrée
         # serait restée active sans plus aucun moyen de la couper.
         self._fog = 0
         self._fog_scale = 55
@@ -1554,7 +1554,7 @@ class Plan3DWebWindow(QMainWindow):
                     self._scene_preset_code = _s3d['preset']
                 # `in` et non truthiness : une liste VIDE est fausse en Python.
                 # Avec l'ancien test, « aucune structure » ne se relisait jamais
-                # — le patch enregistrait bien [], mais au chargement on gardait
+                # - le patch enregistrait bien [], mais au chargement on gardait
                 # les deux trusses par défaut. D'où un décor qui réapparaissait
                 # à chaque démarrage sans qu'on puisse s'en débarrasser.
                 # Scène retirée depuis (Live, Club, Totems… le 14/09/2026) : ses
@@ -1702,7 +1702,7 @@ class Plan3DWebWindow(QMainWindow):
         `setWindowFlags()` masque la fenêtre et impose un `show()` derrière :
         chaque bascule (y compris les désépinglages automatiques ci-dessous,
         déclenchés par le moindre dialogue modal) ré-affiche donc le plan 3D et
-        lui redonne le premier plan — au milieu d'une séquence de fermeture,
+        lui redonne le premier plan - au milieu d'une séquence de fermeture,
         c'est tout sauf souhaitable.
 
         Sous Windows, SetWindowPos bascule le style WS_EX_TOPMOST sur la
@@ -1743,14 +1743,14 @@ class Plan3DWebWindow(QMainWindow):
         """Désépingle temporairement quand un dialogue modal s'ouvre.
 
         Une fenêtre épinglée reste au-dessus de TOUT, y compris d'un dialogue
-        modal — lequel bloque en retour toutes les autres fenêtres. Résultat :
+        modal - lequel bloque en retour toutes les autres fenêtres. Résultat :
         le plan 3D masquait le patch DMX tout en refusant le moindre clic, sa
         croix de fermeture comprise. Plus aucun moyen de s'en sortir sans tuer
         l'application.
 
         Qt prévient les fenêtres concernées par WindowBlocked / WindowUnblocked :
         on retire l'épinglage le temps du dialogue, et on le remet après. Le
-        bouton reste coché — du point de vue de l'utilisateur, rien n'a changé.
+        bouton reste coché - du point de vue de l'utilisateur, rien n'a changé.
         """
         t = e.type()
         if t == QEvent.WindowBlocked and getattr(self, '_pinned', False):
@@ -2017,7 +2017,7 @@ class Plan3DWebWindow(QMainWindow):
         "QScrollBar::handle:vertical{background:#262626;border-radius:3px;}"
         # Ascenseur HORIZONTAL volontairement plus visible que le vertical :
         # les colonnes font 486 px dans un panneau qui descend à 160 px, donc
-        # RZ, Faisc. et Taille sont hors cadre — et rien ne le laissait
+        # RZ, Faisc. et Taille sont hors cadre - et rien ne le laissait
         # deviner. Le débordement vertical, lui, se devine au nombre de lignes.
         "QScrollBar:horizontal{background:#111118;height:11px;border:none;margin:0;}"
         "QScrollBar::handle:horizontal{background:#3d3d5c;border-radius:5px;min-width:36px;}"
@@ -2043,7 +2043,7 @@ class Plan3DWebWindow(QMainWindow):
     # Taille. Attribut de classe et non variable locale : la bande « Répartir »
     # taille ses cellules dessus pour tomber à l'aplomb des colonnes X / Z / H.
     # En la lisant sur le tableau déjà construit, elle dépendait de l'ordre des
-    # appels — et prenait 100 px, la largeur par défaut, partout ailleurs.
+    # appels - et prenait 100 px, la largeur par défaut, partout ailleurs.
     _MINI_CW = (78, 44, 44, 44, 44, 44, 44, 48, 48, 48)
 
     def _build_placement_tab(self) -> QWidget:
@@ -2059,7 +2059,7 @@ class Plan3DWebWindow(QMainWindow):
         # traite qu'un projecteur à la fois.
         self._mini_tbl = QTableWidget(0, 10)
         # X/Z/H/RX/RY/RZ restent tels quels : ce sont des symboles d'axes, pas
-        # des mots — les traduire ne ferait que les rendre méconnaissables.
+        # des mots - les traduire ne ferait que les rendre méconnaissables.
         self._mini_tbl.setHorizontalHeaderLabels(
             [tr("p3w_col_fixture"), 'X', 'Z', 'H', 'RX', 'RY', 'RZ',
              tr("p3w_col_beam"), tr("p3w_col_angle"), tr("p3w_col_size")])
@@ -2085,8 +2085,8 @@ class Plan3DWebWindow(QMainWindow):
         self._mini_tbl.cellClicked.connect(self._on_mini_tbl_clicked)
         lay.addWidget(self._mini_tbl, 1)
 
-        # La sélection multiple existait — Ctrl+clic, et toute valeur modifiée
-        # part sur toutes les lignes retenues — mais RIEN ne l'annonçait : ni
+        # La sélection multiple existait - Ctrl+clic, et toute valeur modifiée
+        # part sur toutes les lignes retenues - mais RIEN ne l'annonçait : ni
         # case à cocher, ni libellé, ni raccourci listé. Fonction invisible =
         # fonction absente. Ce bandeau l'énonce et sert de compteur vivant.
         lay.addWidget(self._build_repartir_bar())
@@ -2099,7 +2099,7 @@ class Plan3DWebWindow(QMainWindow):
         lay.addWidget(self._lbl_multi)
 
         # Jog pad : construit mais NON affiché. Le tableau ci-dessus expose
-        # désormais toutes ses valeurs — position, orientation, faisceau — ligne
+        # désormais toutes ses valeurs - position, orientation, faisceau - ligne
         # par ligne, ce que le pad ne faisait que pour un projecteur à la fois.
         # On le garde vivant plutôt que de le supprimer : sept méthodes
         # (_jog_spin_changed, _jog_move, _jog_flip, _sync_ry_state, l'annulation…)
@@ -2121,7 +2121,7 @@ class Plan3DWebWindow(QMainWindow):
 
     # Habillage : celui du TABLEAU juste au-dessus, et pas celui d'une barre
     # d'outils posée en dessous. Cette bande règle les MÊMES grandeurs que les
-    # colonnes X / Z / H — même fond noir, mêmes libellés d'en-tête gris qui
+    # colonnes X / Z / H - même fond noir, mêmes libellés d'en-tête gris qui
     # passent au cyan au survol, et surtout les mêmes cellules chiffrées : on
     # donne une borne du geste d'une valeur du tableau (glisser, molette,
     # double-clic pour taper), pas d'un champ de formulaire.
@@ -2161,7 +2161,7 @@ class Plan3DWebWindow(QMainWindow):
         # DEUX rangs, et non une bande d'un seul tenant : le panneau s'ouvre à
         # 240 px et descend à 160, alors que la bande en réclamait plus de 300.
         # Le bouton était le seul élément élastique, il encaissait donc tout le
-        # manque — et se retrouvait rogné, lui qui est justement la seule partie
+        # manque - et se retrouvait rogné, lui qui est justement la seule partie
         # qu'on ne peut pas deviner. Les bornes tiennent le premier rang, à la
         # largeur des colonnes du tableau ; l'action prend tout le second.
         h = QHBoxLayout()
@@ -2199,7 +2199,7 @@ class Plan3DWebWindow(QMainWindow):
         # Le bouton porte le mot « Répartir » : le libellé qui ouvrait la bande
         # le répétait à l'identique, à trois centimètres de là. En le retirant,
         # l'action reprend toute la largeur et ne peut plus être rognée, quelle
-        # que soit la langue — l'allemand « Verteilen » est le plus long.
+        # que soit la langue - l'allemand « Verteilen » est le plus long.
         self._rep_btn = QPushButton(tr("p3w_rep_apply"))
         self._rep_btn.setCursor(Qt.PointingHandCursor)
         self._rep_btn.setToolTip(tr("p3w_rep_tip"))
@@ -2215,7 +2215,7 @@ class Plan3DWebWindow(QMainWindow):
         """Étale la sélection régulièrement entre les deux bornes.
 
         Le premier de la sélection prend la borne de départ, le dernier la borne
-        d'arrivée, les autres se répartissent à intervalle constant — la
+        d'arrivée, les autres se répartissent à intervalle constant - la
         convention `thru` des pupitres. L'ordre est celui du TABLEAU, donc celui
         du patch : c'est le seul qui soit prévisible et que l'utilisateur voit.
         """
@@ -2318,7 +2318,7 @@ class Plan3DWebWindow(QMainWindow):
             value = float(value) / 100.0
         # Une barre = sa ligne représentante : la valeur est posée UNE fois par
         # barre (`_set_attr_group` décale ses pixels), jamais pixel par pixel
-        # — sinon un X identique pour tous écrasait la barre en un point.
+        # - sinon un X identique pour tous écrasait la barre en un point.
         _done = set()
         for r in rows:
             rr = self._row_rep(r)
@@ -2348,7 +2348,7 @@ class Plan3DWebWindow(QMainWindow):
 
     # ── Barres / matrices : UNE ligne par appareil ──────────────────────────
     # Une barre à pixels est patchée en N projecteurs (master + pixels). Le
-    # tableau en affichait N lignes identiques — « Pixel Line I » ×9 —, chacune
+    # tableau en affichait N lignes identiques - « Pixel Line I » ×9 -, chacune
     # réglant un seul pixel. Les lignes des autres membres sont désormais
     # MASQUÉES (la correspondance ligne ↔ index de projecteur, dont dépendent
     # sélection, repérage 3D et Ctrl+Z, reste intacte) et la ligne visible
@@ -2382,7 +2382,7 @@ class Plan3DWebWindow(QMainWindow):
 
     def _set_attr_group(self, row, attr, value):
         """Pose `attr = value` sur la ligne `row` ; si c'est une barre, sur
-        toute la barre — par DÉCALAGE pour les positions, sinon à l'identique.
+        toute la barre - par DÉCALAGE pour les positions, sinon à l'identique.
         Rend les lignes touchées."""
         projs = self._last_projectors
         rr = self._row_rep(row)
@@ -2396,7 +2396,7 @@ class Plan3DWebWindow(QMainWindow):
                     q.pos_3d_x, q.pos_3d_z = _pos3d_from_canvas(cx, cy)
         if attr == 'body_rotation' and len(members) > 1:
             # RY d'une barre à pixels : la 3D lit son orientation dans la
-            # POSITION de ses pixels (pas dans RY) — changer RY seul ne
+            # POSITION de ses pixels (pas dans RY) - changer RY seul ne
             # faisait donc rien. On fait pivoter les pixels autour du centre
             # de la barre, du même angle et dans le même sens que le RY d'un
             # PAR (rotation.y de Three.js : x' = x·cos + z·sin).
@@ -2432,6 +2432,17 @@ class Plan3DWebWindow(QMainWindow):
         else:
             for r in members:
                 setattr(projs[r], attr, value)
+            # Barre LED SIMPLE : le plan 2D la dessine désormais tournée de son
+            # RY (plan_de_feu._bar_angle_2d). Une barre à pixels se redessinait
+            # via _sync_canvas_pos ; ici rien ne demandait de repeindre le 2D,
+            # qui ne suivait donc plus la 3D (retour utilisateur 23/11/2026).
+            if attr == 'body_rotation':
+                mw = self._parent_mw
+                pdf = getattr(mw, 'plan_de_feu', None) if mw else None
+                if pdf is not None:
+                    pdf.update()
+                    if getattr(pdf, 'canvas', None) is not None:
+                        pdf.canvas.update()
         return members
 
     def _undo_with_positions(self, steps, attr):
@@ -2461,14 +2472,14 @@ class Plan3DWebWindow(QMainWindow):
                 # `_set_pos3d_auto` et non une écriture brute : le tableau ne
                 # fait ici que RECOPIER le plan de feu, et sans la provenance
                 # cette position devenait indiscernable d'un placement manuel.
-                # Ouvrir la 3D suffisait alors à figer le rig — les fixtures ne
+                # Ouvrir la 3D suffisait alors à figer le rig - les fixtures ne
                 # suivaient plus jamais un déplacement fait en 2D.
                 _set_pos3d_auto(p, cx, cy)
 
             # Le nom et sa couleur sont RÉÉCRITS à chaque passage, et pas
             # seulement à la création de la cellule : une ligne réutilisée
             # gardait sinon le nom du projecteur qui l'occupait avant. Après
-            # une suppression, tout le tableau glisse d'un cran — les lignes
+            # une suppression, tout le tableau glisse d'un cran - les lignes
             # annonçaient « Lyre TEST 17 » en réglant un PROJECTEUR (remontée
             # du 27/08/2026). Cf. aussi `refresh()`, qui décide QUAND repeupler.
             grp  = getattr(p, 'group', '')
@@ -2485,7 +2496,7 @@ class Plan3DWebWindow(QMainWindow):
                 name = name.split(' · ')[0]
                 _npx = sum(1 for r in _mem
                            if getattr(projectors[r], 'matrix_role', None) == 'pixel')
-                _tip = f"{name} — {_npx} px"
+                _tip = f"{name} - {_npx} px"
             else:
                 _tip = name
             nm.setText(name[:12])
@@ -2567,7 +2578,7 @@ class Plan3DWebWindow(QMainWindow):
         lay.setSpacing(4)
 
         # Nom du projecteur sélectionné
-        self._jog_name = QLabel("—")
+        self._jog_name = QLabel("-")
         self._jog_name.setStyleSheet(
             "color:#00d4ff;font-size:10px;font-weight:700;"
             "background:transparent;border:none;padding-bottom:1px;"
@@ -2656,7 +2667,7 @@ class Plan3DWebWindow(QMainWindow):
         sep2.setStyleSheet("border:none;border-top:1px solid #151515;margin:1px 0;")
         lay.addWidget(sep2)
 
-        # Ligne RX — rotation du corps (retournement)
+        # Ligne RX - rotation du corps (retournement)
         rx_row = QHBoxLayout()
         rx_row.setSpacing(3)
         lbl_rx = QLabel("RX")
@@ -2885,11 +2896,11 @@ class Plan3DWebWindow(QMainWindow):
     # Correspondance attribut ↔ colonne du tableau, et attributs affichés en
     # centimètres. Défini une seule fois : trois méthodes synchronisent le
     # tableau (jog pad, déplacement au clavier, annulation) et elles doivent
-    # rester d'accord — c'est en les laissant diverger qu'une colonne cessait
+    # rester d'accord - c'est en les laissant diverger qu'une colonne cessait
     # d'être rafraîchie.
     # Hauteur des cellules du tableau. Volontairement plus compacte que dans
-    # l'éditeur d'effets (42 px) : ici les lignes sont nombreuses — un
-    # projecteur chacune — et c'est le nombre de lignes visibles d'un coup qui
+    # l'éditeur d'effets (42 px) : ici les lignes sont nombreuses - un
+    # projecteur chacune - et c'est le nombre de lignes visibles d'un coup qui
     # compte, pas la place pour un aperçu graphique.
     _CELL_H = 24
 
@@ -2955,7 +2966,7 @@ class Plan3DWebWindow(QMainWindow):
         self._save_patch()
 
     def eventFilter(self, obj, event):
-        # La vue web avale les touches dès qu'elle a le focus — c'est-à-dire dès
+        # La vue web avale les touches dès qu'elle a le focus - c'est-à-dire dès
         # qu'on a orbité dans la 3D, donc la plupart du temps. Tout raccourci
         # doit être traité ICI en plus de keyPressEvent, sinon il ne répond
         # qu'une fois sur deux selon l'endroit où on a cliqué en dernier.
@@ -2974,11 +2985,11 @@ class Plan3DWebWindow(QMainWindow):
             self._undo()
         elif event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_A:
             # Tout sélectionner. Il fallait jusqu'ici Ctrl+cliquer chaque ligne
-            # une par une — sur un rig de 40 projecteurs, la sélection multiple
+            # une par une - sur un rig de 40 projecteurs, la sélection multiple
             # était théorique.
             self._select_all_rows()
         elif event.key() == Qt.Key_Escape:
-            # Échap éteint le repérage — la touche ne servait à rien jusqu'ici
+            # Échap éteint le repérage - la touche ne servait à rien jusqu'ici
             # (QMainWindow, donc pas de reject() comme sur un QDialog).
             self.clear_selection()
         else:
@@ -2993,7 +3004,7 @@ class Plan3DWebWindow(QMainWindow):
 
     # Emprise du plan de feu 2D, en mètres : il couvre 18 m en X et 10 m en Z
     # (cf. `_pos3d_from_canvas`). Au-delà, une position 3D n'a plus d'équivalent
-    # sur le plan — c'est le cas d'une tour latérale ou d'un retour de salle.
+    # sur le plan - c'est le cas d'une tour latérale ou d'un retour de salle.
     _PLAN_X_M = 9.0
     _PLAN_Z_M = 5.0
 
@@ -3003,7 +3014,7 @@ class Plan3DWebWindow(QMainWindow):
         ⚠️ Une position hors de l'emprise du plan 2D est marquée MANUELLE.
         `_canvas_from_pos3d` borne à 0-1, et cette valeur bornée repartait vers
         la 3D au tick suivant (`_sync_pos3d_with_canvas`) : demander X = 15 m
-        rendait 9 m, sans un mot. La saisie était silencieusement détruite —
+        rendait 9 m, sans un mot. La saisie était silencieusement détruite -
         et une répartition « de -15 à 15 » s'écrasait sur les bords du plan.
         On garde donc l'icône 2D au bord, meilleure représentation disponible,
         mais on coupe le retour : la position 3D vraie est conservée.
@@ -3026,7 +3037,7 @@ class Plan3DWebWindow(QMainWindow):
 
         Le nom prend un fond cyan sombre, et CHAQUE cellule chiffrée reçoit un
         liseré cyan. L'ancienne version ne traitait que les colonnes 1 à 3 et
-        passait par une feuille de style — sans effet sur des cellules peintes
+        passait par une feuille de style - sans effet sur des cellules peintes
         au QPainter : la sélection ne se voyait donc quasiment pas.
         """
         it = self._mini_tbl.item(row, 0)
@@ -3081,8 +3092,8 @@ class Plan3DWebWindow(QMainWindow):
         """Éteint le repérage : plus aucun projecteur surligné, en 3D ni au tableau.
 
         Il n'existait aucun moyen d'en sortir. Une fois un faisceau repéré, il
-        le restait : quitter l'onglet Plan masquait le tableau — donc le seul
-        endroit d'où désélectionner — et Échap n'était traité nulle part (ni
+        le restait : quitter l'onglet Plan masquait le tableau - donc le seul
+        endroit d'où désélectionner - et Échap n'était traité nulle part (ni
         `keyPressEvent`, qui ne connaissait que Ctrl+Z, ni la page web). Le
         repérage restait donc allumé en travers du plan de feu, sans issue."""
         if not self._selected_rows and self._highlighted_row < 0:
@@ -3174,7 +3185,7 @@ class Plan3DWebWindow(QMainWindow):
     def _push_selection_3d(self):
         """Envoie la sélection complète à la vue 3D.
 
-        `highlightProjo` ne connaît qu'un projecteur — le primaire, celui dont
+        `highlightProjo` ne connaît qu'un projecteur - le primaire, celui dont
         le corps est surligné. Il faut donc lui adjoindre l'ensemble, sinon un
         Ctrl+clic n'allumait en blanc que le dernier cliqué.
         L'ordre compte : highlightProjo réduit la sélection à ce seul index.
@@ -3189,7 +3200,7 @@ class Plan3DWebWindow(QMainWindow):
         idx   = self._highlighted_row
         projs = self._last_projectors
         if idx < 0 or not projs or idx >= len(projs):
-            self._jog_name.setText("—")
+            self._jog_name.setText("-")
             for sp in self._jog_spins.values():
                 sp.blockSignals(True); sp.setValue(0.0); sp.blockSignals(False)
             return
@@ -3218,7 +3229,7 @@ class Plan3DWebWindow(QMainWindow):
         légitime), on dit juste pourquoi il ne se passe rien.
 
         Cas de la lyre : RY oriente le PIED (l'accroche), et le Pan DMX balaie
-        par-dessus — les deux angles s'additionnent sur mhGrp.rotation.y. Elle
+        par-dessus - les deux angles s'additionnent sur mhGrp.rotation.y. Elle
         n'est donc plus inerte. Seule subsiste la réserve du faisceau vertical :
         tilt au nadir, la tache ne bouge pas même si le corps pivote.
         """
@@ -3263,7 +3274,7 @@ class Plan3DWebWindow(QMainWindow):
 
         projs = self._last_projectors
         if index < 0 or not projs or index >= len(projs):
-            self._jog_name.setText("—")
+            self._jog_name.setText("-")
             return
 
         self._right_tabs.setCurrentIndex(1)
@@ -3575,7 +3586,7 @@ class Plan3DWebWindow(QMainWindow):
         self._video_retour = bool(on)
         self._js('window.setVideoReturn && '
                  f'window.setVideoReturn({str(self._video_retour).lower()})')
-        # Réactivé : l'image fixe éventuelle doit être reposée — le relais la
+        # Réactivé : l'image fixe éventuelle doit être reposée - le relais la
         # croyait encore à l'écran et ne l'aurait jamais renvoyée.
         self._video_still = None
         self._save_patch()
@@ -3604,7 +3615,7 @@ class Plan3DWebWindow(QMainWindow):
         return True
 
     def _clear_import(self):
-        """Efface le décor importé — définitivement.
+        """Efface le décor importé - définitivement.
 
         Le bouton ne vidait que le groupe 3D de la page. Le chemin restait
         dans `_imported_path`, donc réécrit dans le patch, et
@@ -3731,14 +3742,14 @@ class Plan3DWebWindow(QMainWindow):
         """Appelé quand le process de rendu WebEngine crashe ou est tué.
 
         La page était rechargée en silence : à l'écran, le plan 3D disparaît
-        puis revient — un « glitch » inexplicable et introuvable dans les logs.
+        puis revient - un « glitch » inexplicable et introuvable dans les logs.
         On le trace désormais, avec un compteur : un incident isolé est bénin,
         des plantages répétés désignent le pilote graphique ou la scène.
         """
         self._ready = False
         Plan3DWebWindow._render_crashes += 1
         _diag_note(f"Le rendu 3D a planté (statut={status}, code={exit_code}) "
-                   f"— rechargement automatique. Incident n°{self._render_crashes} "
+                   f"- rechargement automatique. Incident n°{self._render_crashes} "
                    f"depuis le lancement.")
         if self._render_crashes >= 3:
             _diag_note("Plantages répétés : pilote graphique probablement en cause. "
@@ -3806,8 +3817,8 @@ class Plan3DWebWindow(QMainWindow):
 
         Un projecteur sans `fixture_height` explicite retombait toujours sur
         `TRUSS_Y` (7 m), la hauteur des trusses dessinés par les presets. Sur un
-        décor livré en modèle 3D, le grill est là où le modèle l'a mis — celui de
-        la scène de concert est à 9,3 m — et tout le rig flottait 2 m en dessous
+        décor livré en modèle 3D, le grill est là où le modèle l'a mis - celui de
+        la scène de concert est à 9,3 m - et tout le rig flottait 2 m en dessous
         au lieu d'être accroché. La valeur reste surchargeable projecteur par
         projecteur : elle ne sert que de défaut.
         """
@@ -3839,7 +3850,7 @@ class Plan3DWebWindow(QMainWindow):
             ov   = fx.get(id(p))
             # Canaux couleur repris à la main dans la vue « Curseurs » du plan
             # de feu : ils ne passent plus par `p.color`, et sur un PAR sans
-            # canal Dim le niveau du modèle reste à 0 — la fixture serait restée
+            # canal Dim le niveau du modèle reste à 0 - la fixture serait restée
             # noire ici alors qu'elle éclaire. Même recomposition qu'en 2D
             # (`PlanDeFeuCanvas._get_fill_color`). La sortie live de l'éditeur
             # d'effets garde la priorité, et une fixture mutée ne sort rien.
@@ -3858,14 +3869,14 @@ class Plan3DWebWindow(QMainWindow):
             g = col.green() if col else 0
             b = col.blue()  if col else 0
             # Lyre à roue de couleurs : la teinte vient de la POSITION DE LA
-            # ROUE, pas de `p.color` — qui n'est qu'une fiction sur un profil
+            # ROUE, pas de `p.color` - qui n'est qu'une fiction sur un profil
             # sans R/G/B, et que le moteur pousse au BLANC dès qu'un effet
             # Dimmer seul module la fixture (cf. `core.effect_dim_base_color`).
             # La 3D affichait donc une lyre blanche là où la 2D, qui passe par
             # le même helper, montrait bien le rouge de la roue. Même rang de
             # priorité qu'en 2D : après les overrides (mémoires HTP / sortie
             # live de l'éditeur) et les canaux repris à la main, avant le
-            # strobe — diverger de cet ordre, c'est refaire diverger les deux
+            # strobe - diverger de cet ordre, c'est refaire diverger les deux
             # plans. L'intensité n'est PAS multipliée ici : la 3D la reçoit à
             # part, dans `level`.
             _roue = False
@@ -3970,6 +3981,16 @@ class Plan3DWebWindow(QMainWindow):
                 # l'appareil sans moyen de le récupérer depuis la 3D.
                 'fixture_scale':  max(0.1, float(getattr(p, 'fixture_scale', 100.0) or 100.0) / 100.0),
                 'rot3d_z':        getattr(p, 'rot3d_z', 0.0),
+                # Barre LED à Tilt MOTORISÉ (retour Hypno Mat, 20/11/2026 :
+                # « les barres LED ne bougent toujours pas sur la 3D ») :
+                # inclinaison en degrés autour de l'axe de la barre, même
+                # convention que le tilt des lyres. None = pas de moteur.
+                # Sur une barre à pixels, c'est le MASTER qui la porte ;
+                # elle est recopiée sur toute la barre plus bas.
+                'motor_tilt':     ((32768 - tilt_v) / 32768.0 * _pt_ranges[1] / 2.0
+                                   if fixture_motor_only(p)
+                                   and 'Tilt' in (getattr(p, 'dmx_profile', None) or [])
+                                   else None),
                 'name':           getattr(p, 'name', ''),
                 'group':          getattr(p, 'group', ''),
                 'gobo':           int(effect_channel_value(p, 'Gobo1', getattr(p, 'gobo', 0)) or 0),
@@ -3978,7 +3999,7 @@ class Plan3DWebWindow(QMainWindow):
                 'gobo_slot':      gobo_display_slot(p, effect_channel_value(p, 'Gobo1', getattr(p, 'gobo', 0)) or 0),
                 'gobo_rotation':  int(effect_channel_value(p, 'Gobo1Rot', getattr(p, 'gobo_rotation', 0)) or 0),
                 # Optique de projection : sans elle, pas de motif. Même logique
-                # que `has_zoom`/`has_focus` — la valeur du canal ne suffit pas
+                # que `has_zoom`/`has_focus` - la valeur du canal ne suffit pas
                 # à décider du rendu. Cf. `core.fixture_projects_gobo` pour le
                 # pourquoi (canal `Gobo1` détourné en canal de programme).
                 'has_gobo':       fixture_projects_gobo(p),
@@ -3993,7 +4014,7 @@ class Plan3DWebWindow(QMainWindow):
                 # Zoom : largeur de faisceau pilotée par DMX. `has_zoom` évite
                 # de rétrécir les projos SANS canal zoom (dont zoom=0 en
                 # permanence). Le zoom manuel passe par channel_extras['Zoom']
-                # (canal avancé), pas proj.zoom — mêmes priorités que l'Art-Net,
+                # (canal avancé), pas proj.zoom - mêmes priorités que l'Art-Net,
                 # sinon un changement de zoom manuel ne se voyait pas en 3D.
                 'zoom':           int(effect_channel_value(p, 'Zoom', (getattr(p, 'channel_extras', None) or {}).get(
                                        'Zoom', getattr(p, 'zoom', 0))) or 0),
@@ -4025,6 +4046,15 @@ class Plan3DWebWindow(QMainWindow):
             if mid is not None:
                 groups.setdefault(mid, []).append(i)
 
+        # Tilt motorisé d'une barre à pixels : porté par le master, appliqué
+        # à toute la barre (boîtier, LED, faisceaux tournent ensemble).
+        for idxs in groups.values():
+            mt = next((out[i]['motor_tilt'] for i in idxs
+                       if out[i].get('motor_tilt') is not None), None)
+            if mt is not None:
+                for i in idxs:
+                    out[i]['motor_tilt'] = mt
+
         # Boîtier physique de l'appareil : sans lui, les pixels flottants se
         # lisent comme un « rectangle coloré » abstrait, pas comme une barre.
         # On attache au représentant (1er membre) la géométrie d'une réglette
@@ -4051,8 +4081,8 @@ class Plan3DWebWindow(QMainWindow):
     # ── Retour vidéo sur l'écran LED ─────────────────────────────────────────
     # Les images affichées sur la dalle 3D sont les frames DÉJÀ DÉCODÉES par le
     # lecteur du séquenceur (son QVideoSink), et non un second décodeur ouvert
-    # sur le même fichier : rouvrir la vidéo ici doublerait la charge CPU — sur
-    # un fichier 4K, de quoi faire tomber la cadence DMX — et les deux lectures
+    # sur le même fichier : rouvrir la vidéo ici doublerait la charge CPU - sur
+    # un fichier 4K, de quoi faire tomber la cadence DMX - et les deux lectures
     # dériveraient l'une de l'autre au fil du morceau. En repiquant le flux
     # existant, ce qu'on voit en 3D est à la frame près ce qui part sur la
     # sortie vidéo, sans rien à resynchroniser.
@@ -4084,7 +4114,7 @@ class Plan3DWebWindow(QMainWindow):
         self._video_attached = True
 
     def _on_video_frame(self, frame):
-        """Une frame du lecteur — décimée à VIDEO_FPS puis poussée dans la page.
+        """Une frame du lecteur - décimée à VIDEO_FPS puis poussée dans la page.
 
         Le décompte se fait AVANT `toImage()` : c'est la conversion qui coûte,
         pas la réception. Décimer après, c'est payer les 60 images/s d'une
@@ -4119,7 +4149,7 @@ class Plan3DWebWindow(QMainWindow):
             img = img.scaledToWidth(self.VIDEO_WIDTH, Qt.SmoothTransformation)
         # Effet vidéo : la dalle montre ce que voit la salle, sinon le plan 3D
         # afficherait une image propre pendant que la sortie est au blanc. Peint
-        # APRÈS la réduction — un aplat sur 480 px de large ne coûte rien, sur
+        # APRÈS la réduction - un aplat sur 480 px de large ne coûte rien, sur
         # du 4K si.
         fx = self._video_fx_color()
         if fx is not None:
@@ -4140,7 +4170,7 @@ class Plan3DWebWindow(QMainWindow):
 
         `videoFrameChanged` ne parle que pendant qu'une vidéo tourne. Sans ce
         relais, la dalle gardait la dernière image de la vidéo précédente
-        pendant tout le morceau audio suivant — un écran resté allumé sur un
+        pendant tout le morceau audio suivant - un écran resté allumé sur un
         show fini.
         """
         if not self._ready or not self.isVisible() or not self._video_retour:
@@ -4168,7 +4198,7 @@ class Plan3DWebWindow(QMainWindow):
         if kind == 'image':
             # La couleur du calque entre dans la CLÉ de cache : sans elle, une
             # photo posée sur la dalle ignorait tout changement d'effet ou de
-            # dimmer — l'image était déjà à l'écran, donc on ne la repoussait
+            # dimmer - l'image était déjà à l'écran, donc on ne la repoussait
             # jamais. Un JPEG de 480 px toutes les 400 ms ne coûte rien.
             fx = self._video_fx_color()
             key = ('image', path, fx.rgba() if fx is not None else 0)
@@ -4253,14 +4283,14 @@ class Plan3DWebWindow(QMainWindow):
         self._update_strobe_timer(projectors)
         # Le patch a changé pendant que la 3D était ouverte : le tableau de
         # placement n'était repeuplé qu'à l'OUVERTURE de la fenêtre. Après une
-        # suppression il gardait ses anciennes lignes — noms d'appareils
+        # suppression il gardait ses anciennes lignes - noms d'appareils
         # disparus, et surtout des cellules câblées sur des index qui ont
         # glissé, donc réglant un AUTRE projecteur que celui affiché.
         #
         # Le nombre de lignes ne suffit pas à détecter le changement : remplacer
         # quatre lyres par quatre projecteurs, ou simplement renommer un
         # appareil, laisse le compte identique. On compare l'identité ET le nom
-        # de chaque projecteur — négligeable devant `_to_data()`, qui reconstruit
+        # de chaque projecteur - négligeable devant `_to_data()`, qui reconstruit
         # une trentaine de clés par appareil au même rythme.
         if getattr(self, '_mini_tbl', None) is not None:
             if self._mini_signature(projectors) != getattr(self, '_mini_sig', None):
@@ -4277,7 +4307,7 @@ class Plan3DWebWindow(QMainWindow):
 
         Passée en DONNÉE, et surtout pas en appliquant les valeurs sur les
         projecteurs : `refresh()` ne fait qu'armer un timer de 40 ms, et
-        `_to_data()` relit les objets à l'expiration — bien après que la boucle
+        `_to_data()` relit les objets à l'expiration - bien après que la boucle
         DMX ait restauré leur état. Une frame appliquée puis restaurée autour de
         `refresh()` n'arriverait donc jamais jusqu'ici.
 
@@ -4299,7 +4329,7 @@ class Plan3DWebWindow(QMainWindow):
 
         La fenêtre n'a pas de parent Qt (cf. __init__) et son closeEvent se
         contente de masquer : à l'arrêt de MyStrow elle restait donc affichée,
-        épinglée par-dessus tout, et maintenait le processus en vie —
+        épinglée par-dessus tout, et maintenait le processus en vie -
         `quitOnLastWindowClosed` ne se déclenche que sur une vraie fermeture,
         jamais sur un hide().
         """

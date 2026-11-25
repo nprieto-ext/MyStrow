@@ -68,9 +68,9 @@ D2XX_PREFIX = "D2XX:"
 def d2xx_devices():
     """Liste les puces FTDI visibles par le driver D2XX -> [(index, serial, description)].
 
-    Une puce dont le port COM/VCP n'existe pas — pilote VCP décoché dans le
+    Une puce dont le port COM/VCP n'existe pas - pilote VCP décoché dans le
     gestionnaire de périphériques, ou puce DÉJÀ OUVERTE en D2XX par un autre
-    process (QLC+, une instance de MyStrow restée en fond…) — ne figure PAS
+    process (QLC+, une instance de MyStrow restée en fond…) - ne figure PAS
     dans `comports()`. C'est la seule façon de la voir, et sans ça l'assistant
     affiche « aucun port » alors que le boîtier est bien branché."""
     if not FTD2XX_AVAILABLE or ftd2xx is None:
@@ -214,7 +214,7 @@ class _ConnectWorker(QThread):
     `serial.Serial()` et l'ouverture D2XX sont des appels système bloquants,
     sans borne de temps quand le boîtier ne répond pas (typique sur macOS quand
     la puce FTDI est déjà réservée par un autre driver) : exécutés sur le thread
-    GUI, ils gelaient toute l'application — seul un « Forcer à quitter » en
+    GUI, ils gelaient toute l'application - seul un « Forcer à quitter » en
     sortait. Ici l'UI reste vivante et le dialogue peut abandonner.
     """
 
@@ -390,7 +390,7 @@ class DmxSetupDialog(QDialog):
         lay.setSpacing(0)
 
         # Nom + info produit
-        self.lbl_name = QLabel("—")
+        self.lbl_name = QLabel("-")
         self.lbl_name.setFont(QFont("Segoe UI", 12, QFont.Bold))
         self.lbl_name.setStyleSheet("color: white;")
         lay.addWidget(self.lbl_name)
@@ -452,7 +452,7 @@ class DmxSetupDialog(QDialog):
         btn_row.addWidget(self.btn_test100)
 
         # Balayage RTS/DTR : sert quand le boîtier passif reste muet alors que
-        # tout le diagnostic est vert (émetteur RS485 inhibé — cf. artnet_dmx).
+        # tout le diagnostic est vert (émetteur RS485 inhibé - cf. artnet_dmx).
         self.btn_lines = QPushButton(tr("ent_test_rtsdtr"))
         self.btn_lines.setFixedSize(120, 28)
         self.btn_lines.setToolTip(
@@ -699,12 +699,12 @@ class DmxSetupDialog(QDialog):
         for p in enttec:
             self.port_combo.addItem(f"{p.device}  ★  {p.description}", userData=p.device)
         for p in others:
-            self.port_combo.addItem(f"{p.device}  —  {p.description}", userData=p.device)
+            self.port_combo.addItem(f"{p.device}  -  {p.description}", userData=p.device)
 
         # Puces FTDI vues UNIQUEMENT par le D2XX (aucun port COM en face) :
-        # sans elles, un Open DMX dont le VCP n'est pas chargé — ou dont la puce
+        # sans elles, un Open DMX dont le VCP n'est pas chargé - ou dont la puce
         # est déjà ouverte par un autre process, ce qui fait disparaître le port
-        # COM de Windows — n'apparaissait nulle part dans l'assistant.
+        # COM de Windows - n'apparaissait nulle part dans l'assistant.
         com_serials = [(getattr(p, 'serial_number', '') or '') for p in enttec]
         d2xx_only = []
         for idx, sn, desc in d2xx_devices():
@@ -752,7 +752,7 @@ class DmxSetupDialog(QDialog):
         méthode de break par plateforme compris. Un test qui n'utilise pas la
         même séquence que la sortie live ne prouve rien : sur macOS,
         `send_break` réussit sans lever d'exception mais ne produit aucun break
-        électrique valide — le Test 100 % s'en servait, il pouvait donc annoncer
+        électrique valide - le Test 100 % s'en servait, il pouvait donc annoncer
         « frames envoyées sans erreur » sur une ligne DMX totalement silencieuse.
         """
         import time as _time
@@ -774,7 +774,7 @@ class DmxSetupDialog(QDialog):
         À utiliser quand un boîtier passif (Open DMX) reste muet alors que tout
         le diagnostic est vert : sur ce matériel la broche Driver Enable du
         transceiver RS485 peut être câblée sur RTS ou DTR, et pyserial les
-        asserte à l'ouverture — l'émetteur reste alors désactivé, sans la
+        asserte à l'ouverture - l'émetteur reste alors désactivé, sans la
         moindre erreur côté PC (cf. SERIAL_LINES_MODES dans artnet_dmx.py).
         L'état qui allume les projecteurs est mémorisé dans ~/.mystrow_dmx.json,
         donc trouvé une fois, il s'applique à toutes les connexions suivantes.
@@ -787,7 +787,7 @@ class DmxSetupDialog(QDialog):
         # désactivé pendant le diagnostic ET pendant le Test 100 %. Deux writers
         # simultanés sur la même puce FTDI = port refermé en pleine séquence.
         if not self.btn_diag.isEnabled():
-            self._log_line("  ⏳  Un test est déjà en cours — attendez la fin.", warn)
+            self._log_line("  ⏳  Un test est déjà en cours - attendez la fin.", warn)
             return
 
         self._log.clear()
@@ -839,7 +839,7 @@ class DmxSetupDialog(QDialog):
                 self._lines_test_done()
                 return
         else:
-            self._log_line("  ✗  Aucun port disponible — connectez d'abord le boîtier", err)
+            self._log_line("  ✗  Aucun port disponible - connectez d'abord le boîtier", err)
             self._lines_test_done()
             return
 
@@ -880,7 +880,7 @@ class DmxSetupDialog(QDialog):
                     state["errors"] += 1
                     if state["errors"] > 10:
                         _timer.stop()
-                        self._log_line(f"  ✗  Erreurs répétées — test arrêté : {ex}", err)
+                        self._log_line(f"  ✗  Erreurs répétées - test arrêté : {ex}", err)
                         _cleanup(None)
             except Exception as ex:
                 _timer.stop()
@@ -897,7 +897,7 @@ class DmxSetupDialog(QDialog):
             )
             buttons = {}
             for i, mode in enumerate(modes):
-                buttons[box.addButton(f"{i + 1} — {SERIAL_LINES_LABELS[mode]}",
+                buttons[box.addButton(f"{i + 1} - {SERIAL_LINES_LABELS[mode]}",
                                       QMessageBox.AcceptRole)] = mode
             btn_none = box.addButton(tr("ent_none"), QMessageBox.RejectRole)
             box.exec()
@@ -910,7 +910,7 @@ class DmxSetupDialog(QDialog):
                 self._dmx._save_config()
                 self._log_line(f"  ✓  Réglage mémorisé : {SERIAL_LINES_LABELS[chosen]}", ok)
             else:
-                self._log_line("  ⚠  Aucune séquence retenue — réglage inchangé "
+                self._log_line("  ⚠  Aucune séquence retenue - réglage inchangé "
                                f"({SERIAL_LINES_LABELS.get(getattr(self._dmx, 'serial_lines', 'clear'), '?')})", warn)
                 self._log_line("      Le problème est alors ailleurs : câble XLR, adresse DMX,", dim)
                 self._log_line("      ou boîtier exigeant le driver D2XX.", dim)
@@ -948,7 +948,7 @@ class DmxSetupDialog(QDialog):
         self._log.clear()
 
         ok   = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; cyan = "#00d4ff"
-        self._log_line("═══ TEST DMX — TOUS CANAUX À 100% (255) ═══", cyan)
+        self._log_line("═══ TEST DMX - TOUS CANAUX À 100% (255) ═══", cyan)
 
         port = self.port_combo.currentData()
 
@@ -1005,7 +1005,7 @@ class DmxSetupDialog(QDialog):
                 self.btn_diag.setEnabled(True)
                 return
         else:
-            self._log_line("  ✗  Aucun port disponible — connectez d'abord le boîtier", err)
+            self._log_line("  ✗  Aucun port disponible - connectez d'abord le boîtier", err)
             self.btn_test100.setEnabled(True)
             self.btn_diag.setEnabled(True)
             return
@@ -1019,7 +1019,7 @@ class DmxSetupDialog(QDialog):
         errors = [0]
 
         self._log_line("")
-        self._log_line(f"  Envoi de {total_frames} frames ({DURATION_S} s) — "
+        self._log_line(f"  Envoi de {total_frames} frames ({DURATION_S} s) - "
                        f"tous les canaux = 255…", "#cccccc")
         self._log_line("  Si vos appareils ne réagissent pas, vérifiez :", warn)
         self._log_line("   • Câble DMX branché sur le boîtier (sortie XLR)", "#888888")
@@ -1040,7 +1040,7 @@ class DmxSetupDialog(QDialog):
                 errors[0] += 1
                 if errors[0] > 5:
                     _timer.stop()
-                    self._log_line(f"  ✗  Erreurs répétées — test arrêté : {ex}", err)
+                    self._log_line(f"  ✗  Erreurs répétées - test arrêté : {ex}", err)
                     _cleanup()
 
         def _finish():
@@ -1071,7 +1071,7 @@ class DmxSetupDialog(QDialog):
         import time as _time
 
         ok = "#4CAF50"; warn = "#ff9800"; err = "#f44336"
-        self._log_line("  (pilote D2XX direct — comme QLC+)", "#888888")
+        self._log_line("  (pilote D2XX direct - comme QLC+)", "#888888")
 
         dev = None
         opened_here = False
@@ -1089,7 +1089,7 @@ class DmxSetupDialog(QDialog):
                 _time.sleep(0.01)
             dev = getattr(self._dmx, '_d2xx', None)   # relire après la pause
             if dev is None:
-                self._log_line("  ✗  Connexion live active mais handle indisponible — réessayez", err)
+                self._log_line("  ✗  Connexion live active mais handle indisponible - réessayez", err)
                 self._dmx._d2xx_pause = False
                 self.btn_test100.setEnabled(True)
                 self.btn_diag.setEnabled(True)
@@ -1123,7 +1123,7 @@ class DmxSetupDialog(QDialog):
         sent = [0]; errors = [0]
 
         self._log_line("")
-        self._log_line(f"  Envoi de {total_frames} frames ({DURATION_S} s) — tous canaux = 255…", "#cccccc")
+        self._log_line(f"  Envoi de {total_frames} frames ({DURATION_S} s) - tous canaux = 255…", "#cccccc")
         self._log_line("  Si rien ne réagit : câble XLR, adresse DMX (CH1=001), mode du projo.", warn)
 
         def _send_frame():
@@ -1140,7 +1140,7 @@ class DmxSetupDialog(QDialog):
                 errors[0] += 1
                 if errors[0] > 5:
                     _timer.stop()
-                    self._log_line(f"  ✗  Erreurs répétées — test arrêté : {ex}", err)
+                    self._log_line(f"  ✗  Erreurs répétées - test arrêté : {ex}", err)
                     _cleanup()
 
         def _finish():
@@ -1190,7 +1190,7 @@ class DmxSetupDialog(QDialog):
         try:
             import platform as _plat
             from core import APP_NAME, VERSION
-            self._log_line(f"  {APP_NAME} v{VERSION}  —  {_plat.system()} {_plat.release()}", "#888888")
+            self._log_line(f"  {APP_NAME} v{VERSION}  -  {_plat.system()} {_plat.release()}", "#888888")
         except Exception:
             pass
 
@@ -1228,7 +1228,7 @@ class DmxSetupDialog(QDialog):
             self._log_line("  • Pilote FTDI non installé (Windows)", dim)
             self._log_line("    → Ouvrez le Gestionnaire de périphériques (Win+X)", dim)
             self._log_line("    → Si vous voyez un ⚠ sous 'Autres périphériques'", dim)
-            self._log_line("       le pilote est manquant — téléchargez-le :", dim)
+            self._log_line("       le pilote est manquant - téléchargez-le :", dim)
             self._log_line("       ftdichip.com  →  Drivers  →  VCP Drivers  →  Windows", warn)
             self._log_line("    → Après installation, débranchez / rebranchez le boîtier", dim)
             self._log_line("  • Si le port apparaît en COM mais ne fonctionne pas :", dim)
@@ -1246,7 +1246,7 @@ class DmxSetupDialog(QDialog):
                 marker = "★ FTDI" if is_ftdi else "  "
                 color = ok if is_ftdi else dim
                 self._log_line(
-                    f"  {marker}  {p.device}  —  {desc}  [{vid_str} {pid_str}]  {mfg}",
+                    f"  {marker}  {p.device}  -  {desc}  [{vid_str} {pid_str}]  {mfg}",
                     color
                 )
         QApplication.processEvents()
@@ -1272,10 +1272,10 @@ class DmxSetupDialog(QDialog):
                     self._log_line(f"      Puce FTDI détectée (VID:0403 PID:{pid_hw:04X})", ok)
                     self._log_line("      Compatible ENTTEC Open DMX / DMXKing", ok)
                 elif vid is not None:
-                    self._log_line(f"      VID:{vid:04X} PID:{pid_hw:04X} — non-FTDI", warn)
+                    self._log_line(f"      VID:{vid:04X} PID:{pid_hw:04X} - non-FTDI", warn)
                     self._log_line("      Peut fonctionner avec un clone CH340 ou CP210x", warn)
                 else:
-                    self._log_line("      VID/PID inconnu — vérifiez le pilote", warn)
+                    self._log_line("      VID/PID inconnu - vérifiez le pilote", warn)
         except Exception:
             pass
 
@@ -1290,7 +1290,7 @@ class DmxSetupDialog(QDialog):
             # Interface ENTTEC Pro : protocole à paquets, le boîtier génère le
             # break lui-même → le D2XX/VCP ne le concerne pas.
             self._log_line("      →  Mode retenu : ENTTEC Pro (protocole à paquets)", ok)
-            self._log_line("         Le boîtier gère le break DMX lui-même —", dim)
+            self._log_line("         Le boîtier gère le break DMX lui-même -", dim)
             self._log_line("         aucun pilote D2XX nécessaire.", dim)
         else:
             resolved = resolve_usb_transport(port)[0]
@@ -1326,7 +1326,7 @@ class DmxSetupDialog(QDialog):
         # exactement comme le Test 100%. Relâché après l'étape 6 (et sur chaque
         # sortie anticipée). closeEvent() relâche aussi en garde-fou.
         # L'ENTTEC Pro a exactement le même problème : son thread (_pro_loop)
-        # écrit à 25 fps sur le tty. Il n'était pas suspendu — d'où le crash de
+        # écrit à 25 fps sur le tty. Il n'était pas suspendu - d'où le crash de
         # l'appli au lancement du diagnostic avec une Pro connectée, puis une
         # sortie DMX morte (LED qui cesse de clignoter, fixtures en autonome).
         _paused_live = False
@@ -1364,7 +1364,7 @@ class DmxSetupDialog(QDialog):
         if dmx_serial and dmx_serial.is_open and getattr(dmx_serial, 'port', None) == port:
             # Le thread live vient d'être suspendu juste au-dessus : on peut
             # emprunter SON handle au lieu de sauter les tests. Avant, les étapes
-            # 5 et 6 étaient « ignorées » dès que la sortie était connectée —
+            # 5 et 6 étaient « ignorées » dès que la sortie était connectée -
             # c'est-à-dire précisément quand l'utilisateur cherche pourquoi ses
             # projecteurs ne répondent pas. Le diagnostic ne testait alors plus
             # rien et concluait quand même « opérationnel ».
@@ -1392,7 +1392,7 @@ class DmxSetupDialog(QDialog):
                     self._log_line("      → Port utilisé par une autre application", warn)
                     self._log_line("        Fermez tous les logiciels DMX et relancez", warn)
                 elif "could not open" in msg.lower() or "no such" in msg.lower():
-                    self._log_line("      → Port introuvable — rebranchez le boîtier", warn)
+                    self._log_line("      → Port introuvable - rebranchez le boîtier", warn)
                 _unpause_live()
                 self.btn_diag.setEnabled(True)
                 return
@@ -1406,11 +1406,11 @@ class DmxSetupDialog(QDialog):
         self._log_line("")
         self._log_line("[ 5 ] Signal Break DMX", cyan)
         _break_ok = False
-        _break_method_used = "—"
+        _break_method_used = "-"
         if ser and sys.platform == 'darwin':
             # macOS : on teste la MÊME méthode que la sortie live (_enttec_loop).
             # `break_condition` y réussit sans lever d'exception tout en ne
-            # produisant aucun break électrique valide — le tester ici afficherait
+            # produisant aucun break électrique valide - le tester ici afficherait
             # un « ✓ » mensonger alors que les projecteurs ignorent tout.
             try:
                 # Pas de reset_output_buffer() : il bloque ~1 s par appel sur
@@ -1422,7 +1422,7 @@ class DmxSetupDialog(QDialog):
                 ser.flush()
                 _time.sleep(0.0015)
                 ser.baudrate = 250000
-                self._log_line(f"  ✓  Baud-rate trick OK — break ≈ {BREAK_US:.0f} µs", ok)
+                self._log_line(f"  ✓  Baud-rate trick OK - break ≈ {BREAK_US:.0f} µs", ok)
                 self._log_line("      (méthode utilisée par la sortie live sur macOS)", dim)
                 _break_ok = True
                 _break_method_used = "baud-rate trick"
@@ -1490,18 +1490,18 @@ class DmxSetupDialog(QDialog):
                 _time.sleep(0.04)
 
             if ok_count == 10:
-                self._log_line(f"  ✓  10/10 frames envoyées — DMX opérationnel", ok)
+                self._log_line(f"  ✓  10/10 frames envoyées - DMX opérationnel", ok)
                 self._log_line("      Si les projecteurs ne répondent pas → vérifiez le patch", warn)
             elif ok_count > 0:
-                self._log_line(f"  ⚠  {ok_count}/10 frames OK — connexion instable", warn)
+                self._log_line(f"  ⚠  {ok_count}/10 frames OK - connexion instable", warn)
                 if last_err:
                     self._log_line(f"      Dernière erreur : {last_err[:60]}", err)
             else:
-                self._log_line(f"  ✗  0/10 frames — envoi impossible", err)
+                self._log_line(f"  ✗  0/10 frames - envoi impossible", err)
                 if last_err:
                     self._log_line(f"      Erreur : {last_err[:70]}", err)
         elif ser and not _break_ok:
-            self._log_line("  –   Test ignoré — signal break non fonctionnel", dim)
+            self._log_line("  –   Test ignoré - signal break non fonctionnel", dim)
 
         try:
             if ser and not port_already_open:
@@ -1519,14 +1519,14 @@ class DmxSetupDialog(QDialog):
 
     def _diag_live_state(self):
         """Étape 7 du diagnostic : état de la sortie DMX live (agnostique au
-        transport — utilisée par le diagnostic série ET D2XX)."""
+        transport - utilisée par le diagnostic série ET D2XX)."""
         ok = "#4CAF50"; warn = "#ff9800"; err = "#f44336"; dim = "#555555"; cyan = "#00d4ff"
         self._log_line("")
         self._log_line("[ 7 ] État DMX live MyStrow", cyan)
         dmx = self._dmx
         transport_str = getattr(dmx, 'transport', '?')
         connected_str = "OUI" if getattr(dmx, 'connected', False) else "NON"
-        com_str = getattr(dmx, 'com_port', None) or "—"
+        com_str = getattr(dmx, 'com_port', None) or "-"
         conn_color = ok if getattr(dmx, 'connected', False) else err
         self._log_line(f"  Transport : {transport_str}", "#cccccc")
         self._log_line(f"  Port configuré : {com_str}", "#cccccc")
@@ -1543,12 +1543,12 @@ class DmxSetupDialog(QDialog):
         # Cet assistant ne propose QUE des interfaces USB/série. Si la sortie
         # live est encore en Art-Net (le défaut), MyStrow n'envoie rien sur le
         # boîtier USB testé ci-dessus : le DMX part sur le réseau. C'est la
-        # cause n°1 de « le diagnostic passe mais le parc ne réagit pas » —
+        # cause n°1 de « le diagnostic passe mais le parc ne réagit pas » -
         # les étapes [4]–[6] ouvrent le port COM en direct et réussissent, ce
         # qui masque le fait que la sortie live n'est pas branchée dessus.
         prod = self._current_product()
         # enttec (série VCP) ET enttec_d2xx (FTDI direct) sont deux transports
-        # USB valides pour ces boîtiers — seul un transport réseau (Art-Net) ou
+        # USB valides pour ces boîtiers - seul un transport réseau (Art-Net) ou
         # Pro signale que la sortie live n'est pas branchée sur l'USB testé.
         usb_transports = (TRANSPORT_ENTTEC, TRANSPORT_ENTTEC_D2XX)
         if transport_str not in usb_transports:
@@ -1563,7 +1563,7 @@ class DmxSetupDialog(QDialog):
             self._log_line("      ✅  SOLUTION : à l'ÉTAPE 3 ci-dessous, cliquez « Connecter »", ok)
             self._log_line("          pour basculer la sortie DMX sur votre boîtier USB.", ok)
 
-        # Timer DMX — on lit la CADENCE RÉELLE, pas un texte en dur : le timer
+        # Timer DMX - on lit la CADENCE RÉELLE, pas un texte en dur : le timer
         # a déjà été relancé à une période dégradée par un autre écran, et un
         # diagnostic qui annonce « 25 fps » sans mesurer ne peut pas le voir.
         timer_ok = False
@@ -1613,7 +1613,7 @@ class DmxSetupDialog(QDialog):
         try:
             n_patched = len(dmx.projector_channels)
             if n_patched == 0:
-                self._log_line("  ⚠  Aucun projecteur patché — le patch DMX n'est pas configuré", warn)
+                self._log_line("  ⚠  Aucun projecteur patché - le patch DMX n'est pas configuré", warn)
                 self._log_line("      → Ouvrez Paramètres › Patch DMX pour assigner les adresses", warn)
             else:
                 self._log_line(f"  ✓  {n_patched} projecteur(s) patché(s)", ok)
@@ -1665,7 +1665,7 @@ class DmxSetupDialog(QDialog):
             return
         for i, sn in enumerate(devices):
             sn_s = sn.decode(errors="ignore") if isinstance(sn, bytes) else str(sn)
-            self._log_line(f"  ★ FTDI  index {i}  —  série « {sn_s} »", ok)
+            self._log_line(f"  ★ FTDI  index {i}  -  série « {sn_s} »", ok)
 
         # ── 5/6 : ouverture + envoi de frames ────────────────────────────────
         self._log_line("")
@@ -1683,7 +1683,7 @@ class DmxSetupDialog(QDialog):
         # False mais continue de tourner et retente `ftd2xx.open()` une fois par
         # seconde (artnet_dmx._d2xx_loop). Se fier à `connected` menait donc le
         # diagnostic à ouvrir un 2e handle pendant que le thread se battait pour
-        # le même — « deux writers » — d'où un DEVICE_NOT_OPENED intermittent et
+        # le même - « deux writers » - d'où un DEVICE_NOT_OPENED intermittent et
         # le conseil trompeur « fermez QLC+ » alors que le concurrent était
         # MyStrow lui-même (rapport utilisateur du 12/08/2026).
         _thr = getattr(self._dmx, '_d2xx_thread', None)
@@ -1705,7 +1705,7 @@ class DmxSetupDialog(QDialog):
 
         if dev is not None:
             # Le thread live détient la puce : on réutilise SON handle.
-            self._log_line("  ⚠  Puce déjà ouverte par MyStrow — réutilisation (D2XX)", warn)
+            self._log_line("  ⚠  Puce déjà ouverte par MyStrow - réutilisation (D2XX)", warn)
         else:
             if live_thread and not pause_ack:
                 self._log_line("  ⚠  La sortie live n'a pas rendu la main en 2 s", warn)
@@ -1758,14 +1758,14 @@ class DmxSetupDialog(QDialog):
             _time.sleep(0.025)
 
         if ok_count == 10:
-            self._log_line(f"  ✓  10/10 frames envoyées — DMX D2XX opérationnel", ok)
+            self._log_line(f"  ✓  10/10 frames envoyées - DMX D2XX opérationnel", ok)
             self._log_line("      Si les projecteurs ne répondent pas → vérifiez le patch", warn)
         elif ok_count > 0:
-            self._log_line(f"  ⚠  {ok_count}/10 frames OK — connexion instable", warn)
+            self._log_line(f"  ⚠  {ok_count}/10 frames OK - connexion instable", warn)
             if last_err:
                 self._log_line(f"      Dernière erreur : {last_err[:60]}", err)
         else:
-            self._log_line(f"  ✗  0/10 frames — envoi impossible", err)
+            self._log_line(f"  ✗  0/10 frames - envoi impossible", err)
             if last_err:
                 self._log_line(f"      Erreur : {last_err[:70]}", err)
 
@@ -1778,7 +1778,7 @@ class DmxSetupDialog(QDialog):
             self._dmx._d2xx_pause = False
             # Le thread reprend la puce en ~1 s (branche de reconnexion). Sans
             # cette attente, l'étape 7 qui suit immédiatement afficherait encore
-            # « Connecté : NON » juste après une ouverture réussie — un rapport
+            # « Connecté : NON » juste après une ouverture réussie - un rapport
             # qui se contredit tout seul.
             if opened_here:
                 _wait = _time.monotonic() + 2.0
@@ -1865,7 +1865,7 @@ class DmxSetupDialog(QDialog):
         _PENDING_CONNECTS.add(worker)
         # Libération portée par le thread lui-même : si le dialogue est fermé
         # avant la fin, ses slots sont déconnectés et ne rendraient jamais la
-        # référence — le thread resterait dans le set pour toujours.
+        # référence - le thread resterait dans le set pour toujours.
         worker.finished.connect(lambda w=worker: _PENDING_CONNECTS.discard(w))
         worker.result.connect(self._on_connect_result)
         worker.finished.connect(self._on_connect_finished)
@@ -1890,7 +1890,7 @@ class DmxSetupDialog(QDialog):
             tr("ent3_038", connect_name=self._connect_name), "error")
 
     def _on_connect_result(self, ok, transport):
-        """Résultat du thread — peut arriver après le délai (connexion lente)."""
+        """Résultat du thread - peut arriver après le délai (connexion lente)."""
         if self._connect_timer is not None:
             self._connect_timer.stop()
         if ok:

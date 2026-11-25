@@ -2,7 +2,7 @@
 
 Demande du 28/08/2026 : la bande « Répartir X/Z de -5 m à 5 m » du tableau de
 la fenêtre 3D doit aussi exister sur l'onglet « Plan de feu », réduite à ses
-deux axes visibles — X (jardin/cour) et Y (avant/fond de scène).
+deux axes visibles - X (jardin/cour) et Y (avant/fond de scène).
 
 ⚠️ Le plan 2D ne couvre que 18 m en X et 10 m en Y. Au-delà la position n'est
 plus représentable : les bornes de la barre sont limitées à l'emprise de l'axe
@@ -50,7 +50,7 @@ def test_repartition_sur_y():
 
 
 def test_laxe_non_choisi_ne_bouge_pas():
-    """Répartir sur X ne doit toucher que X — c'est la promesse du sélecteur."""
+    """Répartir sur X ne doit toucher que X - c'est la promesse du sélecteur."""
     projs = [_proj(f"P{i}", cy=0.3 + 0.1 * i) for i in range(3)]
     avant = [p.canvas_y for p in projs]
     repartir_canvas(projs, True, -4.0, 4.0)

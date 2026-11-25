@@ -1,5 +1,5 @@
 """
-Script de correction — passe les licences annuelles mal enregistrées en "monthly"
+Script de correction - passe les licences annuelles mal enregistrées en "monthly"
 vers le bon plan "annual" avec la bonne date d'expiration.
 
 Usage :
@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
-STRIPE_SECRET_KEY  = ""  # rk_live_... — set via env var or directly before use
+STRIPE_SECRET_KEY  = ""  # rk_live_... - set via env var or directly before use
 STRIPE_PRICE_ANNUAL = "price_1TPh4x1gGkNcl6cau8xipXnj"
 ANNUAL_DAYS         = 366
 
