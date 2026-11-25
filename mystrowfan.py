@@ -1068,7 +1068,11 @@ class Fenetre(QMainWindow):
         l.setContentsMargins(20, 16, 20, 16)
         l.setSpacing(10)
         t = QHBoxLayout()
-        titre = QLabel(f"📦  {c['quantity']} × interface USB-DMX")
+        # « libelle » : la CF le renvoie depuis que Fanny expédie aussi des packs
+        # quand le stock Amazon est épuisé (25/11/2026).
+        quoi = c.get("libelle") or "interface"
+        titre = QLabel(f"📦  {c['quantity']} × "
+                       + ("interface USB-DMX" if quoi == "interface" else quoi.upper()))
         titre.setStyleSheet("font-size:17px; font-weight:800;")
         t.addWidget(titre)
         t.addStretch()

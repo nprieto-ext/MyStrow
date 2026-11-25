@@ -207,7 +207,11 @@ jobs:
             $wrapper = (Resolve-Path installer\sign_sslcom.cmd).Path
             # $f (littéral, d'où les apostrophes) = fichier à signer, mis entre
             # guillemets par Inno. Les secrets restent dans l'environnement.
-            $tool = '/Ssslcom=cmd /c "' + $wrapper + '" $f'
+            # $q = guillemet côté Inno : un " littéral est échappé en \" par
+            # pwsh, que ISCC ne comprend pas (→ « '\D:\...cmd\' is not
+            # recognized », release 3.2.21). Paire externe en plus : cmd /c
+            # retire le 1er et le dernier guillemet quand il y en a plus de 2.
+            $tool = '/Ssslcom=cmd /c $q$q' + $wrapper + '$q $f$q'
             & $iscc $tool /DSIGN installer\maestro.iss
           } else {
             & $iscc installer\maestro.iss

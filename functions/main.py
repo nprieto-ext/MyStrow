@@ -1760,6 +1760,17 @@ _STOCK_FANNY_CLES = (("boitier_2", "Boîtiers 2 mois"),
                      ("boitier", "Interfaces vierges"),
                      ("cartes", "Cartes à monter / flasher"))
 _STOCK_PILE_OFFRE = {0: "boitier", 2: "boitier_2", 12: "boitier_12"}
+# Pile de l'étagère de Fanny que vide l'expédition d'une commande, par plan.
+# Le pack à vie part dans une boîte 1 an (la carte est superflue).
+_STOCK_FANNY_PLAN = {"boitier": "boitier", "pack_2m": "boitier_2",
+                     "pack_1a": "boitier_12", "pack_vie": "boitier_12"}
+_STOCK_FANNY_QUOI = {"boitier": "interface", "pack_2m": "pack 2 mois",
+                     "pack_1a": "pack 1 an", "pack_vie": "pack à vie (boîte 1 an)"}
+
+
+def _expediee_par_fanny(cmd: dict) -> bool:
+    """Commande que Fanny expédie : interface seule, ou pack détourné d'Amazon."""
+    return cmd.get("plan") == "boitier" or cmd.get("expediteur") == "fanny"
 
 
 def _interfaces_reservees(db) -> int:
@@ -1869,6 +1880,16 @@ MCF : <b>{order_id}</b><br>{address.get('postal_code', '')} {address.get('city',
         # réf. MCF) ou rembourse.
         print(f"[Pack] ÉCHEC création MCF {order_id} : {e}")
         order_ref.update({"status": "mcf_error", "mcf_error": str(e)[:500]})
+        if "ItemQuantityUnavailable" in str(e) and pack.get("plan") in _STOCK_FANNY_PLAN:
+            # Stock FBA épuisé (25/11/2026 : MS-DMX-2M à 0, 12 en route) : Fanny
+            # a interfaces + cartes, elle prépare la boîte et l'expédie.
+            try:
+                _expedition_fanny(order_ref, order_id, ref_client, email, address,
+                                  pack["quantity"], None, plan=pack["plan"],
+                                  motif=f"stock Amazon épuisé ({pack['sku']})")
+                return
+            except Exception as ex:
+                print(f"[Pack] Repli Fanny KO {order_id} : {ex}")
         _alert_admin("⚠️ MyStrow - Pack payé mais NON expédié", f"""
 <h2>La commande Amazon MCF a échoué</h2>
 <div class="box">{email}<br>{pack['sku']} × {pack['quantity']}<br>
@@ -1888,8 +1909,17 @@ def _jeton_expedition(order_id: str) -> str:
 
 
 def _expedition_fanny(order_ref, order_id: str, ref_client: str, email: str,
-                      address: dict, quantity: int, amount_ttc: float | None) -> None:
-    """Interface seule : la commande part par mail chez Fanny, qui expédie."""
+                      address: dict, quantity: int, amount_ttc: float | None,
+                      plan: str = "boitier", motif: str = "") -> None:
+    """La commande part par mail chez Fanny, qui expédie.
+
+    Interface seule (plan « boitier ») : toujours. Pack : quand Amazon MCF ne
+    peut pas l'expédier (stock FBA épuisé) - Fanny prépare la boîte avec
+    MyStrowFan puis l'envoie. `expediteur: fanny` sur la commande la fait
+    entrer dans tout le circuit (MyStrowFan, lien du mail, admin).
+    """
+    pack = plan != "boitier"
+    quoi = _STOCK_FANNY_QUOI.get(plan, "interface")
     lien = (f"https://us-central1-mystrow-907be.cloudfunctions.net/boitier_expedie"
             f"?id={urllib.parse.quote(order_id)}&k={_jeton_expedition(order_id)}")
     e = lambda k: html_escape(str(address.get(k) or ""))
@@ -1897,13 +1927,25 @@ def _expedition_fanny(order_ref, order_id: str, ref_client: str, email: str,
         e("name"), e("line1"), e("line2"), f"{e('postal_code')} {e('city')}",
         e("country") if address.get("country") != "FR" else "",
         f"Tél. {e('phone')}" if address.get("phone") else "") if x.strip())
+    if pack:
+        a_preparer = (f"<p>⚠️ Si tu n'as pas de {html_escape(quoi)} prêt, prépare-le d'abord "
+                      "dans MyStrowFan (onglet Préparation), puis expédie la boîte complète "
+                      "(interface + câble + carte).</p>")
+        if address.get("country") not in ("", "FR", None):
+            a_preparer += ("<p>🌍 Envoi <b>hors de France</b> : Colissimo international "
+                           "(n° de suivi obligatoire).</p>")
+        titre, detail = f"📦 Un {html_escape(quoi)} à expédier", html_escape(_plan_label(plan))
+    else:
+        a_preparer = ""
+        titre, detail = "📦 Une interface à expédier", "Interface USB-DMX</b> (boîtier nu + câble USB)<b>"
     contenu = f"""
-<h2>📦 Une interface à expédier</h2>
-<div class="box"><b>{quantity} × Interface USB-DMX</b> (boîtier nu + câble USB)<br>
+<h2>{titre}</h2>
+<div class="box"><b>{quantity} × {detail}</b><br>
 Réf. commande : <b>{ref_client}</b><br>
 Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
 <p><b>Adresse à mettre sur l'étiquette :</b></p>
 <div class="box">{etiquette}</div>
+{a_preparer}
 <p>Une fois le colis déposé, clique ici pour envoyer le n° de suivi au client :</p>
 <p><a href="{lien}" style="display:inline-block;background:#e2ce16;color:#111;padding:12px 22px;border-radius:8px;font-weight:700;text-decoration:none">J'ai expédié → saisir le n° de suivi</a></p>
 """
@@ -1911,11 +1953,12 @@ Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
     for dest in sorted({x.strip().lower() for x in
                         _cfg("EXPEDITION_EMAILS", "fanny@jofagist.fr").split(",") if x.strip()}):
         try:
-            _send_email(dest, f"MyStrow - Interface à expédier ({ref_client})", contenu,
-                        raise_on_error=True)
+            _send_email(dest, f"MyStrow - {quoi[:1].upper() + quoi[1:]} à expédier ({ref_client})",
+                        contenu, raise_on_error=True)
         except Exception as ex:
             erreurs.append(f"{dest} : {ex}")
-    order_ref.update({"status": "a_expedier", "expediteur": "fanny"})
+    order_ref.update({"status": "a_expedier", "expediteur": "fanny",
+                      "fanny_utc": time.time()})
 
     # Le stock physique baisse à l'expédition ; ici on calcule ce qui reste
     # VENDABLE (étagère − commandes pas encore parties, celle-ci comprise).
@@ -1924,9 +1967,25 @@ Acheteur : <a href="mailto:{html_escape(email)}">{html_escape(email)}</a></div>
         db = _get_db()
         s = db.collection(_STOCK_FANNY[0]).document(_STOCK_FANNY[1]).get()
         if s.exists:
-            reste = int((s.to_dict() or {}).get("boitier", 0)) - _interfaces_reservees(db)
+            sd = s.to_dict() or {}
+            reste = (int(sd.get(_STOCK_FANNY_PLAN.get(plan, "boitier"), 0))
+                     - (0 if pack else _interfaces_reservees(db)))
     except Exception as ex:
         print(f"[Boîtier] Stock Fanny non lu : {ex}")
+    if pack:
+        _alert_admin(f"MyStrow - Pack envoyé chez Fanny ({ref_client})"
+                     f"{' - ⚠️ MAIL FANNY KO' if erreurs else ''}", f"""
+<h2>Pack expédié par Fanny au lieu d'Amazon</h2>
+<div class="box">{html_escape(email)} - {quantity} × {html_escape(_plan_label(plan))}<br>
+Réf. <b>{ref_client}</b> · Firestore boitier_commandes/{order_id}
+{'<br>Motif : ' + html_escape(motif) if motif else ''}</div>
+<div class="box">{etiquette}</div>
+{"<p>⚠️ Le mail à Fanny n'est PAS parti : " + html_escape("; ".join(erreurs)) + "</p>" if erreurs
+ else "<p>Commande transmise à Fanny par mail (et dans MyStrowFan).</p>"}
+<p>{html_escape(quoi)} prêts chez Fanny : <b>{reste if reste is not None else '?'}</b>
+{' - elle doit en préparer un' if reste is not None and reste <= 0 else ''}</p>""")
+        print(f"[Pack] {order_id} transmis à Fanny ({plan}) - {email}")
+        return
 
     alerte = ("<p>⚠️ Le mail à Fanny n'est PAS parti : " + html_escape("; ".join(erreurs))
               + "<br>Lui transmettre cette commande à la main.</p>") if erreurs else \
@@ -2368,8 +2427,10 @@ def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
         maj["shipped_utc"] = float(cmd.get("shipped_utc") or time.time())
     else:
         maj["shipped_utc"] = time.time()
-        # L'interface quitte l'étagère de Fanny (quel que soit le chemin de saisie).
-        _stock_fanny_bouger(_get_db(), boitier=-int(cmd.get("quantity") or 1))
+        # L'interface (ou la boîte du pack) quitte l'étagère de Fanny, quel
+        # que soit le chemin de saisie.
+        pile = _STOCK_FANNY_PLAN.get(cmd.get("plan") or "boitier", "boitier")
+        _stock_fanny_bouger(_get_db(), **{pile: -int(cmd.get("quantity") or 1)})
         if _par_fanny(par):
             # Montant figé sur la commande : un changement de tarif ne touche
             # pas les colis déjà expédiés. Une correction ne le repose pas.
@@ -2377,10 +2438,13 @@ def _enregistrer_suivi(ref, cmd: dict, order_id: str, transp: str, suivi: str,
     ref.update(maj)
     ref_client = order_id.replace("MS-", "")[:8]
     _email_pack_expedie(cmd.get("email", ""), [colis], ref_client,
-                        cmd.get("lang") or "fr", objet="interface", correction=correction)
+                        cmd.get("lang") or "fr",
+                        objet="interface" if cmd.get("plan") == "boitier" else "pack",
+                        correction=correction)
     a = cmd.get("address") or {}
     dest = html_escape(f"{a.get('name', '')} - {a.get('postal_code', '')} {a.get('city', '')}")
-    quoi = "Suivi corrigé" if correction else "Interface expédiée"
+    quoi = ("Suivi corrigé" if correction else
+            "Interface expédiée" if cmd.get("plan") == "boitier" else "Pack expédié")
     _alert_admin(f"MyStrow - {quoi} ({ref_client}, par {par})",
                  f"<p>{html_escape(cmd.get('email', ''))} → {dest}<br>{nom} : <b>{code}</b></p>")
     return colis
@@ -2408,7 +2472,7 @@ def boitier_expedie(req: https_fn.Request) -> https_fn.Response:
                                 "<p>Reprends le bouton du mail de commande.</p>", 403)
     ref = _get_db().collection("boitier_commandes").document(order_id)
     cmd = ref.get().to_dict() or {}
-    if cmd.get("plan") != "boitier":
+    if not _expediee_par_fanny(cmd):
         return _page_expedition("Commande inconnue", "<h1 class='err'>Commande introuvable</h1>", 404)
     ref_client = order_id.replace("MS-", "")[:8]
     a = cmd.get("address") or {}
@@ -2463,7 +2527,7 @@ def admin_boitier_suivi(req: https_fn.Request) -> https_fn.Response:
         return https_fn.Response(json.dumps({"error": "order_id manquant"}), status=400, headers=h)
     ref = _get_db().collection("boitier_commandes").document(order_id)
     cmd = ref.get().to_dict() or {}
-    if cmd.get("plan") != "boitier":
+    if not _expediee_par_fanny(cmd):
         return https_fn.Response(json.dumps({"error": "Commande d'interface seule introuvable"}),
                                  status=404, headers=h)
     colis = _enregistrer_suivi(ref, cmd, order_id, str(body.get("transporteur") or ""),
@@ -5968,6 +6032,8 @@ def _fan_vue_commande(order_id: str, d: dict) -> dict:
         # lui, les avis « disponible en point relais » partent chez l'expéditeur.
         "email":       str(d.get("email") or ""),
         "quantity":    int(d.get("quantity") or 1),
+        "plan":        str(d.get("plan") or "boitier"),
+        "libelle":     _STOCK_FANNY_QUOI.get(d.get("plan") or "boitier", "interface"),
         "created_utc": float(d.get("created_utc") or 0),
         "shipped_utc": float(d.get("shipped_utc") or 0),
         "shipped_by":  str(d.get("shipped_by") or ""),
@@ -6010,8 +6076,14 @@ def boitier_expeditions(req: https_fn.Request) -> https_fn.Response:
         if action == "liste":
             limite = time.time() - _FAN_EXPE_JOURS * 86400
             commandes = []
-            for snap in db.collection("boitier_commandes").where(
-                    "plan", "==", "boitier").stream():
+            col = db.collection("boitier_commandes")
+            vus = set()
+            snaps = list(col.where("plan", "==", "boitier").stream()) + \
+                list(col.where("expediteur", "==", "fanny").stream())
+            for snap in snaps:
+                if snap.id in vus:
+                    continue
+                vus.add(snap.id)
                 d = snap.to_dict() or {}
                 if _suivi_enregistre(d):
                     if float(d.get("shipped_utc") or d.get("corrected_utc") or 0) < limite:
@@ -6073,7 +6145,7 @@ def boitier_expeditions(req: https_fn.Request) -> https_fn.Response:
                 return _rep({"ok": False, "error": "bad_order"}, 400)
             ref = db.collection("boitier_commandes").document(order_id)
             cmd = ref.get().to_dict() or {}
-            if cmd.get("plan") != "boitier":
+            if not _expediee_par_fanny(cmd):
                 return _rep({"ok": False, "error": "not_found"}, 404)
             if _suivi_enregistre(cmd):
                 return _rep({"ok": False, "error": "already_shipped",
