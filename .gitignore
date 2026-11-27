@@ -33,3 +33,6 @@ ffmpeg.exe
 # App mobile (Capacitor) : dépendances et copie générée de tablet/
 mobile/node_modules/
 mobile/www/
+
+# Dossiers de travail temporaires des agents Claude Code
+.claude/worktrees/

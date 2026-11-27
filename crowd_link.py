@@ -1,8 +1,8 @@
-"""crowd_link.py — MyStrow Up : les téléphones du public deviennent des projecteurs.
+"""crowd_link.py — MyStrow Light : les téléphones du public deviennent des projecteurs.
 
-L'utilisateur ajoute dans son patch DMX la fixture « MyStrow Up · Téléphones du
-public » (fabricant MyStrow Up, cf. builtin_fixtures.py), dans le groupe de son
-choix, comme un PAR. Chaque MyStrow Up du patch est une ZONE de la salle : les
+L'utilisateur ajoute dans son patch DMX la fixture « MyStrow Light · Téléphones du
+public » (fabricant MyStrow Light, cf. builtin_fixtures.py), dans le groupe de son
+choix, comme un PAR. Chaque MyStrow Light du patch est une ZONE de la salle : les
 téléphones sont répartis équitablement entre les zones. On lit la couleur
 EFFECTIVE de chaque fixture (`proj.color` : niveau, pads, effets, mémoires…) et
 son strobe : le public suit son groupe comme n'importe quel projecteur. La
@@ -27,20 +27,49 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal, Qt
 from PySide6.QtGui import QImage, QPixmap, QColor, QFont
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QWidget)
+                               QPushButton, QWidget, QFrame, QProgressBar)
 
 from i18n import tr
 
+# Thème de la fenêtre MyStrow Light : cartes sombres, accents cyan (MyStrow) et jaune (Light / pass).
+_STYLE_LIGHT = """
+QDialog { background: #0e0e0e; }
+QLabel { color: #e8e8e8; font-size: 13px; background: transparent; border: none; }
+QLabel#titre { font-size: 22px; font-weight: 900; letter-spacing: 1px; color: #ffffff; }
+QLabel#sous { color: #9a9a9a; font-size: 13px; }
+QLabel#url { color: #6f6f6f; font-size: 11px; }
+QLabel#petit { color: #a8a8a8; font-size: 12px; }
+QLabel#compteur { font-size: 26px; font-weight: 900; color: #ffffff; }
+QLabel#qr { background: #ffffff; border-radius: 12px; color: #999; }
+QFrame#carte { background: #161616; border: 1px solid #262626; border-radius: 14px; }
+QFrame#cartePass { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #241f05, stop:1 #141414);
+                   border: 1px solid #6b5a00; border-radius: 14px; }
+QPushButton { background: #222; color: #e8e8e8; border: 1px solid #333; border-radius: 9px;
+              padding: 8px 14px; font-size: 13px; }
+QPushButton:hover { border-color: #00d4ff; }
+QPushButton#primary { background: #00d4ff; color: #041014; border: none; font-size: 15px; font-weight: 800; }
+QPushButton#primary:hover { background: #33ddff; }
+QPushButton#pass { background: #ffd600; color: #111; border: none; font-weight: 800; }
+QPushButton#pass:hover { background: #ffe14d; }
+QPushButton:disabled, QPushButton#primary:disabled { background: #161616; color: #4a4a4a; border: 1px solid #222; }
+QProgressBar { background: #262626; border: none; border-radius: 4px; }
+QProgressBar::chunk { background: #00d4ff; border-radius: 4px; }
+QToolTip { background: #1e1e1e; color: #eee; border: 1px solid #444; }
+"""
+
 # Nom interne du groupe → lettre AKAI (même table que main_window.AKAI_GROUP_MAP),
-# pour dire à l'utilisateur dans quels groupes sont ses MyStrow Up.
+# pour dire à l'utilisateur dans quels groupes sont ses MyStrow Light.
 LETTRE_GROUPE = {"face": "A", "lat": "B", "contre": "C", "douche1": "D",
                  "douche2": "E", "douche3": "F", "groupe_g": "G", "groupe_h": "H"}
-MYSTROW_UP_FABRICANT = "MyStrow Up"   # fixture du patch (builtin_fixtures.py)
+MYSTROW_UP_FABRICANT = "MyStrow Light"   # fixture du patch (builtin_fixtures.py)
+MAX_ZONES_LIGHT = 3   # 27/11/2026 : 3 MyStrow Light au plus dans le patch (= 3 zones dans la salle)
+# Ancien nom (« MyStrow Up », jusqu'au 27/11/2026) encore présent dans les patchs enregistrés.
+MYSTROW_UP_FABRICANTS = (MYSTROW_UP_FABRICANT, "MyStrow Up")
 
 
 def est_mystrow_up(proj) -> bool:
-    """Projecteur « MyStrow Up » du patch (virtuel : téléphones du public)."""
-    return getattr(proj, "manufacturer", "") == MYSTROW_UP_FABRICANT
+    """Projecteur « MyStrow Light » du patch (virtuel : téléphones du public)."""
+    return getattr(proj, "manufacturer", "") in MYSTROW_UP_FABRICANTS
 
 
 FPS = 25
@@ -76,7 +105,32 @@ def message_refus(refus: str) -> str:
     return tr(_CLES_REFUS.get(refus, "up_refus_reseau"))
 
 
-def obtenir_ticket() -> tuple[str, int, str]:
+# Pass événement (500 téléphones / 24 h, 72 €) : état renvoyé par up_ticket,
+# {"etat": "actif"|"dispo"|"", "fin": ts}. Lien de paiement Stripe à renseigner.
+PASS_ETAT: dict = {}
+PASS_CAP = 500
+URL_PASS = "https://buy.stripe.com/fZubIT48Jf7G48M7wM08g0g"   # Payment Link Stripe du pass (27/11/2026)
+URL_PASS_SHOP = "https://mystrow.fr/shop#pass-light"
+
+
+def url_achat_pass() -> str:
+    """Lien d'achat du pass, rattaché au compte connecté (client_reference_id = uid)."""
+    if not URL_PASS:
+        return URL_PASS_SHOP
+    try:
+        import license_manager as lm
+        compte = lm._load_account(lm.get_machine_id()) or {}
+    except Exception:
+        compte = {}
+    params = {}
+    if compte.get("uid"):
+        params["client_reference_id"] = compte["uid"]
+    if compte.get("email"):
+        params["prefilled_email"] = compte["email"]
+    return URL_PASS + ("?" + urllib.parse.urlencode(params) if params else "")
+
+
+def obtenir_ticket(demarrage: bool = False) -> tuple[str, int, str]:
     """Ticket signé par la Cloud Function up_ticket (licence vérifiée dans
     Firestore) → (ticket, plafond, refus). Licence payée → 50 + code du QR
     PERMANENT (mémorisé pour télécharger le QR sans session ni réseau) ;
@@ -92,12 +146,16 @@ def obtenir_ticket() -> tuple[str, int, str]:
         jeton = fc.refresh_id_token(compte["refresh_token"])["id_token"]
         # Jeton dans le corps : l'en-tête Authorization n'arrive pas intact à la
         # fonction (Cloud Run), comme pour create_portal_session.
+        # « demarrage » : vrai lancement de session → un pass événement non
+        # entamé démarre ses 24 h ; jamais à la simple ouverture de la fenêtre.
         req = urllib.request.Request(URL_TICKET, method="POST",
-                                     data=json.dumps({"id_token": jeton}).encode(),
+                                     data=json.dumps({"id_token": jeton, "demarrage": demarrage}).encode(),
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as r:
             rep = json.loads(r.read().decode())
         _memoriser_sid_fixe(str(rep.get("sid") or ""))
+        PASS_ETAT.clear()
+        PASS_ETAT.update(rep.get("pass") or {})
         return rep.get("ticket", ""), int(rep.get("cap", CAP_ESSAI)), ""
     except urllib.error.HTTPError as e:
         print(f"[Up] ticket refusé (HTTP {e.code})")
@@ -111,7 +169,7 @@ def obtenir_ticket() -> tuple[str, int, str]:
 
 
 def droit_refuse(window) -> str:
-    """Message si la licence interdit MyStrow Up (essai ou licence expirés),
+    """Message si la licence interdit MyStrow Light (essai ou licence expirés),
     sinon "". Contrôle côté PC ; le serveur, lui, refuse toute session sans ticket."""
     try:
         from license_manager import LicenseState
@@ -242,12 +300,12 @@ class CrowdLink(QObject):
     def actif(self) -> bool:
         return self._actif
 
-    # ── Zones = fixtures « MyStrow Up » du patch ────────────────────────────
+    # ── Zones = fixtures « MyStrow Light » du patch ────────────────────────────
     def fixtures_up(self) -> list:
         return [p for p in (getattr(self.window, "projectors", []) or []) if est_mystrow_up(p)]
 
     def groupes_up(self) -> str:
-        """« G » ou « A, G » : groupes qui contiennent des MyStrow Up."""
+        """« G » ou « A, G » : groupes qui contiennent des MyStrow Light."""
         vus = []
         for p in self.fixtures_up():
             g = LETTRE_GROUPE.get(getattr(p, "group", ""), str(getattr(p, "group", "?")))
@@ -263,7 +321,7 @@ class CrowdLink(QObject):
             else:
                 c = p.color
                 out.append([c.red(), c.green(), c.blue(), 255, self._strobe(p)])
-        return out[:8]
+        return out[:MAX_ZONES_LIGHT]
 
     @staticmethod
     def _strobe(p) -> int:
@@ -298,7 +356,7 @@ class CrowdLink(QObject):
         log = getattr(self.window, "_log_message", None)
         if log:
             try:
-                log(f"📱 MyStrow Up : {texte}", niveau)
+                log(f"📱 MyStrow Light : {texte}", niveau)
             except Exception:
                 pass
 
@@ -390,7 +448,7 @@ class CrowdLink(QObject):
         # reste (WebSocket) vit dans la boucle Qt : QtWebSockets est livré avec
         # PySide6, aucune dépendance en plus (la lib « websockets » manquait
         # dans le Python de MyStrow → ModuleNotFoundError).
-        threading.Thread(target=lambda: self._ticket_recu.emit(gen, *obtenir_ticket()),
+        threading.Thread(target=lambda: self._ticket_recu.emit(gen, *obtenir_ticket(demarrage=True)),
                          name="crowd-ticket", daemon=True).start()
         self._timer.start()
         # Filet : si rien n'est prêt au bout de 20 s, on le dit au lieu de rester muet.
@@ -545,60 +603,150 @@ class CrowdDialog(QDialog):
         super().__init__(window)
         self.link = link
         self.setWindowTitle(tr("up_dlg_titre"))
-        self.setMinimumWidth(440)
-        # Même thème sombre que les dialogues OBS / vMix / manette : sans lui, la
-        # feuille de style de la fenêtre principale laisse un dialogue gris illisible.
-        from video_link import STYLE_DIALOGUE
-        # STYLE_DIALOGUE n'a pas d'état désactivé : un bouton bleu reste bleu
-        # même inactif, et on ne voit pas qu'il est grisé.
-        self.setStyleSheet(STYLE_DIALOGUE + """
-QPushButton:disabled, QPushButton#primary:disabled {
-    background: #161616; color: #4a4a4a; border: 1px solid #222;
-}""")
+        # Mise en page « carte » (27/11/2026) : en-tête, QR à gauche, zones /
+        # public / pass à droite, grand bouton en bas. Largeur fixe et hauteur
+        # compacte : l'ancienne colonne unique dépassait la hauteur que Windows
+        # accorde aux fenêtres (adjustSize = 2/3 de l'écran) → QR et textes se
+        # chevauchaient, surtout sur les petits écrans.
+        self.setFixedWidth(820)
+        self.setStyleSheet(_STYLE_LIGHT)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 18, 22, 20)
+        lay.setSpacing(14)
 
-        intro = QLabel(tr("up_intro"))
-        intro.setWordWrap(True)
-        lay.addWidget(intro)
-        self.zones = QLabel()
-        self.zones.setWordWrap(True)
-        lay.addWidget(self.zones)
-        self.btn_patch = QPushButton(tr("up_ajout_patch"))
-        self.btn_patch.clicked.connect(self._ajouter_au_patch)
-        lay.addWidget(self.btn_patch)
+        # ── En-tête : logo, titre, sous-titre ─────────────────────────────
+        tete = QHBoxLayout()
+        tete.setSpacing(14)
+        logo = QLabel()
+        _lp = Path(__file__).with_name("logo.png")
+        if _lp.exists():
+            logo.setPixmap(QPixmap(str(_lp)).scaled(46, 46, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        tete.addWidget(logo)
+        titres = QVBoxLayout()
+        titres.setSpacing(2)
+        titre = QLabel('MYSTROW <span style="background:#ffd600;color:#0b0b0b;padding:0 6px;'
+                       'border-radius:4px">&nbsp;LIGHT&nbsp;</span>')
+        titre.setObjectName("titre")
+        titre.setTextFormat(Qt.RichText)
+        sous = QLabel(tr("up_sous_titre"))
+        sous.setObjectName("sous")
+        sous.setToolTip(tr("up_intro"))
+        titres.addWidget(titre)
+        titres.addWidget(sous)
+        tete.addLayout(titres, 1)
+        lay.addLayout(tete)
 
+        corps = QHBoxLayout()
+        corps.setSpacing(16)
+
+        # ── Colonne gauche : le QR ────────────────────────────────────────
+        gauche = QFrame()
+        gauche.setObjectName("carte")
+        gl = QVBoxLayout(gauche)
+        gl.setContentsMargins(16, 16, 16, 14)
+        gl.setSpacing(8)
         self.qr = QLabel(alignment=Qt.AlignCenter)
-        self.qr.setMinimumHeight(260)
-        lay.addWidget(self.qr)
+        self.qr.setFixedSize(236, 236)
+        self.qr.setObjectName("qr")
+        gl.addWidget(self.qr, 0, Qt.AlignHCenter)
         self.url = QLabel(alignment=Qt.AlignCenter)
+        self.url.setObjectName("url")
         self.url.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        lay.addWidget(self.url)
+        gl.addWidget(self.url)
         self.info_qr = QLabel(alignment=Qt.AlignCenter)
+        self.info_qr.setObjectName("petit")
         self.info_qr.setWordWrap(True)
-        lay.addWidget(self.info_qr)
-        self.nb = QLabel(alignment=Qt.AlignCenter)
-        f = QFont(); f.setPointSize(16); f.setBold(True)
-        self.nb.setFont(f)
-        lay.addWidget(self.nb)
-        self.etat = QLabel(alignment=Qt.AlignCenter)
-        self.etat.setStyleSheet("color:#888")
-        lay.addWidget(self.etat)
-
-        boutons = QHBoxLayout()
-        self.btn = QPushButton()
-        self.btn.setObjectName("primary")
-        self.btn.clicked.connect(self._basculer)
+        gl.addWidget(self.info_qr)
+        gl.addStretch(1)
+        bq = QHBoxLayout()
         self.btn_qr = QPushButton(tr("up_btn_qr"))
         self.btn_qr.clicked.connect(self._qr_grand)
         self.btn_png = QPushButton(tr("up_btn_png"))
         self.btn_png.clicked.connect(self._telecharger)
-        boutons.addWidget(self.btn, 2)
-        boutons.addWidget(self.btn_qr, 1)
-        boutons.addWidget(self.btn_png, 1)
-        lay.addLayout(boutons)
+        bq.addWidget(self.btn_qr)
+        bq.addWidget(self.btn_png)
+        gl.addLayout(bq)
+        gauche.setFixedWidth(300)
+        corps.addWidget(gauche)
+
+        # ── Colonne droite : zones, public, pass ──────────────────────────
+        droite = QVBoxLayout()
+        droite.setSpacing(12)
+
+        cz = QFrame()
+        cz.setObjectName("carte")
+        zl = QVBoxLayout(cz)
+        zl.setContentsMargins(16, 12, 16, 12)
+        zl.setSpacing(8)
+        zt = QHBoxLayout()
+        zt.addWidget(self._rubrique(tr("up_rub_zones")))
+        zt.addStretch(1)
+        self.pastilles = []
+        for _ in range(MAX_ZONES_LIGHT):
+            pz = QLabel()
+            pz.setFixedSize(16, 16)
+            self.pastilles.append(pz)
+            zt.addWidget(pz)
+        zl.addLayout(zt)
+        self.zones = QLabel()
+        self.zones.setWordWrap(True)
+        zl.addWidget(self.zones)
+        self.btn_patch = QPushButton(tr("up_ajout_patch"))
+        self.btn_patch.clicked.connect(self._ajouter_au_patch)
+        zl.addWidget(self.btn_patch)
+        droite.addWidget(cz)
+
+        cp = QFrame()
+        cp.setObjectName("carte")
+        pl = QVBoxLayout(cp)
+        pl.setContentsMargins(16, 12, 16, 12)
+        pl.setSpacing(6)
+        pl.addWidget(self._rubrique(tr("up_rub_public")))
+        self.nb = QLabel(tr("up_telephones", n=0, cap=self.link.cap if self.link.actif else CAP_LICENCE))
+        self.nb.setObjectName("compteur")
+        pl.addWidget(self.nb)
+        self.jauge = QProgressBar()
+        self.jauge.setTextVisible(False)
+        self.jauge.setFixedHeight(8)
+        self.jauge.setRange(0, 100)
+        self.jauge.setValue(0)
+        pl.addWidget(self.jauge)
+        self.etat = QLabel()
+        self.etat.setObjectName("petit")
+        self.etat.setWordWrap(True)
+        pl.addWidget(self.etat)
+        droite.addWidget(cp)
+
+        cpass = QFrame()
+        cpass.setObjectName("cartePass")
+        pal = QVBoxLayout(cpass)
+        pal.setContentsMargins(16, 12, 16, 12)
+        pal.setSpacing(6)
+        pal.addWidget(self._rubrique(tr("up_rub_pass"), "#ffd600"))
+        self.info_pass = QLabel(tr("up_pass_pitch", n=PASS_CAP))
+        self.info_pass.setObjectName("petit")
+        self.info_pass.setWordWrap(True)
+        pal.addWidget(self.info_pass)
+        self.btn_pass = QPushButton(tr("up_btn_pass"))
+        self.btn_pass.setObjectName("pass")
+        self.btn_pass.setToolTip(tr("up_btn_pass_tip"))
+        self.btn_pass.clicked.connect(self._acheter_pass)
+        pal.addWidget(self.btn_pass)
+        droite.addWidget(cpass)
+        droite.addStretch(1)
+        corps.addLayout(droite, 1)
+        lay.addLayout(corps)
+
+        # ── Pied : démarrer / compte ──────────────────────────────────────
+        self.btn = QPushButton()
+        self.btn.setObjectName("primary")
+        self.btn.setMinimumHeight(48)
+        self.btn.clicked.connect(self._basculer)
+        lay.addWidget(self.btn)
         # Sans compte / essai expiré : on renvoie vers le bon écran de licence.
         self.btn_compte = QPushButton()
         self.btn_compte.setObjectName("primary")
+        self.btn_compte.setMinimumHeight(44)
         self.btn_compte.clicked.connect(self._ouvrir_compte)
         self.btn_compte.hide()
         lay.addWidget(self.btn_compte)
@@ -615,29 +763,45 @@ QPushButton:disabled, QPushButton#primary:disabled {
         if not link.actif:
             link.precharger_qr()     # licence ou essai ? (met à jour le QR permanent)
 
+    @staticmethod
+    def _rubrique(texte, couleur="#8a8a8a"):
+        lb = QLabel(texte.upper())
+        lb.setStyleSheet(f"color:{couleur}; font-size:11px; font-weight:800; letter-spacing:2px;"
+                         " background:transparent; border:none;")
+        return lb
+
     def _compte(self, n, cap):
         self.nb.setText(tr("up_telephones", n=n, cap=cap))
+        self.jauge.setValue(int(100 * n / cap) if cap else 0)
 
     def _statut(self, texte):
         self.etat.setText(texte)
 
     def _zones_maj(self):
         n = len(self.link.fixtures_up())
+        couleurs = ["#ff3b5c", "#22e5e5", "#ffd600"]
+        for i, pz in enumerate(self.pastilles):
+            on = i < n
+            pz.setStyleSheet(f"background:{couleurs[i] if on else '#262626'}; border-radius:8px;"
+                             f" border:1px solid {'#000' if on else '#3a3a3a'};")
+            pz.setToolTip(f"Zone {i + 1}")
         if n:
-            self.zones.setText(tr("up_zones_ok", n=n, g=self.link.groupes_up(), z=min(n, 8)))
-            self.zones.setStyleSheet("color:#00cc66")
+            self.zones.setText(tr("up_zones_ok", n=n, g=self.link.groupes_up(), z=min(n, MAX_ZONES_LIGHT)))
+            self.zones.setStyleSheet("color:#22c55e")
             self.btn_patch.setText(tr("up_ajout_zone"))
         else:
             self.zones.setText(tr("up_zones_aucune"))
             self.zones.setStyleSheet("color:#ffb347")
             self.btn_patch.setText(tr("up_ajout_patch"))
+        # 3 zones au maximum : plus rien à ajouter
+        self.btn_patch.setVisible(n < MAX_ZONES_LIGHT)
 
     def _ajouter_au_patch(self):
-        """Ouvre le patch DMX directement sur l'ajout de la fixture MyStrow Up."""
+        """Ouvre le patch DMX directement sur l'ajout de la fixture MyStrow Light."""
         w = self.link.window
         self.accept()
         if hasattr(w, "show_dmx_patch_config"):
-            w.show_dmx_patch_config(add_search="MyStrow Up")
+            w.show_dmx_patch_config(add_search="MyStrow Light")
 
     def _maj(self, *_):
         actif = self.link.actif
@@ -657,38 +821,51 @@ QPushButton:disabled, QPushButton#primary:disabled {
         self.btn_qr.setEnabled(bool(url))
         self.btn_png.setEnabled(bool(url))
         if url:
-            self.qr.setPixmap(qr_pixmap(url, 240))
-            self.qr.show()
-            self.url.setText(url)
+            self.qr.setPixmap(qr_pixmap(url, 220))
+            self.url.setText(url.replace("https://", ""))
         else:
             self.qr.clear()
-            self.qr.hide()
+            self.qr.setText("QR")
             self.url.setText("")
         if not actif:
-            self.nb.setText("")
+            self.nb.setText(tr("up_telephones", n=0, cap=CAP_LICENCE))
+            self.jauge.setValue(0)
+        etat_pass = PASS_ETAT.get("etat", "")
+        if etat_pass == "actif":
+            fin = time.strftime("%d/%m %H:%M", time.localtime(float(PASS_ETAT.get("fin") or 0)))
+            self.info_pass.setText(tr("up_pass_actif", n=PASS_CAP, fin=fin))
+        elif etat_pass == "dispo":
+            self.info_pass.setText(tr("up_pass_dispo", n=PASS_CAP))
+        else:
+            self.info_pass.setText(tr("up_pass_pitch", n=PASS_CAP))
+        self.btn_pass.setVisible(etat_pass == "")
         if refus in _CLES_REFUS:
             self.info_qr.setText("⚠ " + message_refus(refus))
             self.info_qr.setStyleSheet("color:#ff6b6b")
+            self.info_qr.setToolTip("")
         elif self.link.qr_permanent():
-            self.info_qr.setText(tr("up_qr_permanent"))
-            self.info_qr.setStyleSheet("color:#00cc66")
+            self.info_qr.setText(tr("up_qr_permanent_court"))
+            self.info_qr.setToolTip(tr("up_qr_permanent"))
+            self.info_qr.setStyleSheet("color:#22c55e")
         elif url:
             self.info_qr.setText(tr("up_qr_essai"))
             self.info_qr.setStyleSheet("color:#ffb347")
+            self.info_qr.setToolTip("")
         else:
             self.info_qr.setText(tr("up_qr_essai_vide"))
             self.info_qr.setStyleSheet("color:#888")
-        self.adjustSize()
+            self.info_qr.setToolTip("")
 
     def _basculer(self):
         if self.link.actif:
             self.link.stop()
             self._maj()
             return
-        refus = droit_refuse(self.link.window)
+        # Un pass événement acheté suffit, même sans licence active.
+        refus = "" if PASS_ETAT.get("etat") in ("dispo", "actif") else droit_refuse(self.link.window)
         if refus:
             from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "MyStrow Up", refus)
+            QMessageBox.information(self, "MyStrow Light", refus)
             return
         self.link.refus = ""     # revérifié par le serveur au démarrage
         self.link.start()
@@ -699,6 +876,11 @@ QPushButton:disabled, QPushButton#primary:disabled {
     def _qr_grand(self):
         self.accept()
         self.link.ouvrir_qr()
+
+    def _acheter_pass(self):
+        """Paiement Stripe du pass événement, rattaché au compte connecté."""
+        import webbrowser
+        webbrowser.open(url_achat_pass())
 
     def _ouvrir_compte(self):
         w = self.link.window

@@ -49,6 +49,7 @@ ACTIONS = [
     ("color_pink",     "P",                 "mwy_094",           "mwy_076"),
     ("color_black",    "K",                 "mwy_096",           "mwy_076"),
     ("strobe",         "S",                 "mwy_098",           "mwy_076"),
+    ("blackout",       "Backspace",         "sc_blackout",       "mwy_076"),
     ("flash",          "F",                 "sc_flash",          "mwy_076"),
 ] + [
     (f"fx_{i + 1}", f"F{i + 5}", f"mwy_{101 + 2 * i:03d}", "mwy_099") for i in range(8)

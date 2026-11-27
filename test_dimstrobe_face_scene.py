@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Canal « Dimmer + Strobe » et repère « face scène » (Discord, 18/11/2026).
+"""Canal « Dimmer + Strobe » (Discord, 18/11/2026).
 
 1) BoomTone Wash 7x12 / Lytor wash 7 LED : dimmer et strobe sur UN canal
    (0-134 luminosité qui scintille, 135-240 strobe, 241-255 plein feu).
-2) RaykeN / Tutur : une lyre qui vise le centre de la scène se dessinait de
-   travers en 2D/3D, le plan supposant que Pan 32768 = face scène.
+(Le « face scène » est devenu « 🎯 Définir le centre », cf. test_centre_lyre.py.)
 """
 import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -16,8 +15,6 @@ app = QApplication.instance() or QApplication([])
 
 from artnet_dmx import ArtNetDMX
 from projector import Projector
-from core import pan_front_offset, pan_from_front, pan_to_front
-from plan_de_feu import beam_geometry
 
 WASH = ['Pan', 'Tilt', 'Speed', 'R', 'G', 'B', 'W', 'DimStrobe']
 
@@ -77,26 +74,6 @@ def test_dimstrobe_noir():
     p.muted = True
     dmx.update_from_projectors([p])
     assert val(dmx, ch, 'DimStrobe') == 0
-
-
-def test_face_scene_defaut_inchange():
-    p = Projector('lyre', "x", "Moving Head")
-    assert pan_front_offset(p) == 0
-    assert pan_from_front(p, 40000) == 40000 and pan_to_front(p, 40000) == 40000
-
-
-def test_face_scene_calibree():
-    p = Projector('lyre', "x", "Moving Head")
-    p.pan_front = 21845                          # lyre 540° accrochée de biais
-    # Centre du pad → la lyre va sur son face scène
-    assert pan_from_front(p, 32768) == 21845
-    # Et elle se dessine droite (angle 0) quand elle y est
-    angle, _l, _w = beam_geometry(pan_to_front(p, 21845), 40000, 13)
-    assert abs(angle) < 1e-6
-    # Bornes DMX respectées
-    assert pan_from_front(p, 0) == 0
-    p.pan_front = None                           # patch ancien / bidouillé
-    assert pan_front_offset(p) == 0
 
 
 if __name__ == "__main__":

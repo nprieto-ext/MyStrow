@@ -218,8 +218,8 @@
     "Pas encore d'interface ?": "No interface yet?", "Voir l'interface MyStrow ↗": "See the MyStrow interface ↗", "Commander l'interface ↗": "Order the interface ↗",
     "L'interface USB-DMX MyStrow se branche sur la prise USB-C de la tablette et est reconnue toute seule, sans réglage.":
       "The MyStrow USB-DMX interface plugs into the tablet's USB-C port and is recognized automatically, no setup needed.",
-    "L'interface USB-DMX MyStrow se branche sur la prise USB-C de l'iPad ou de l'iPhone et est reconnue toute seule, sans réglage. 69 € TTC, livrée en France métropolitaine.":
-      "The MyStrow USB-DMX interface plugs into the USB-C port of your iPad or iPhone and is recognized automatically, no setup needed. €69 incl. VAT, shipped within mainland France.",
+    "L'interface USB-DMX MyStrow se branche sur la prise USB-C de l'iPad ou de l'iPhone et est reconnue toute seule, sans réglage. 79 € TTC, livrée en France métropolitaine.":
+      "The MyStrow USB-DMX interface plugs into the USB-C port of your iPad or iPhone and is recognized automatically, no setup needed. €79 incl. VAT, shipped within mainland France.",
     "La tablette pilote elle-même vos projecteurs, par une interface USB-DMX ou un node Art-Net.": "The tablet controls your fixtures itself, through a USB-DMX interface or an Art-Net node.",
     "Connexion au PC": "Connect to the PC", "Sur le PC, dans MyStrow :": "On the PC, in MyStrow:", "Connexion › Entrée externe": "Connection › External input",
     "Entrée externe": "External input", "La tablette et le PC sur": "The tablet and the PC on", "le même Wi-Fi": "the same Wi-Fi",

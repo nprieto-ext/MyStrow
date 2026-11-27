@@ -1149,9 +1149,10 @@ class ExtWindow(QMainWindow):
             self._flash_status(tr("ext3_033", n=n))
             self._clear_color_latches()       # les pastilles couleur ne reflètent plus l'état
         elif t == "blackout":
-            owner._ext_blackout()
-            self._flash_status("Blackout")
-            self._clear_all_latches()
+            # Blackout MAINTENU (on / off) : tient même en Live IA, et le
+            # rallumage rend le show tel quel - les pastilles restent donc.
+            on = owner.toggle_blackout()
+            self._flash_status("Blackout ON" if on else "Blackout OFF")
         elif t == "stop_fx":
             owner._ext_stop_effects()
             self._flash_status(tr("ext3_034"))

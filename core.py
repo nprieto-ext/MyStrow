@@ -72,7 +72,7 @@ AV_EXTENSIONS_FILTER = _ext_filter(tr("core3_001"), AUDIO_EXTENSIONS, VIDEO_EXTE
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.2.23"
+VERSION = "3.2.24"
 
 # Période du timer d'envoi DMX, en millisecondes (25 ms = 40 fps).
 # Constante partagée et non valeur recopiée : le timer était relancé à 40 ms
@@ -691,36 +691,30 @@ def pan_tilt_angles(proj, pan_dmx, tilt_dmx):
             (tilt_dmx - 32768) / 32768.0 * math.radians(tilt_deg / 2.0))
 
 
-def pan_front_offset(proj):
-    """Décalage Pan (DMX 16 bits) entre le milieu de course et le « face scène ».
+def pantilt_offset(proj, axe):
+    """Décalage (DMX 16 bits, signé) du centre de la lyre sur l'axe 'pan' ou 'tilt'.
 
-    Le plan 2D, la 3D, le pad Pan/Tilt et ses presets travaillent dans un repère
-    où 32768 = la lyre regarde la scène. C'est vrai par construction tant que
-    `pan_front` vaut 32768 (défaut, comportement historique) ; une lyre
-    calibrée (« 📍 Face scène ») décale ce repère d'autant.
+    « 🎯 Définir le centre » (Patch DMX, clic sur le canal Pan/Tilt). Tout
+    MyStrow raisonne dans un repère où 32768 = la lyre au centre : face au
+    public en Pan, dans l'axe du socle en Tilt. Une lyre tournée sur son
+    accroche (BoomTone accrochées écrans vers le public : centre à 90° sur la
+    droite, client Alan, 27/11/2026) a son vrai centre ailleurs. Le décalage
+    est ajouté EN SORTIE (`artnet_dmx`), donc pointeur, presets, 3D, effets
+    et LIVE suivent sans rien savoir de lui.
 
-        valeur du pad / du dessin = proj.pan − offset
-        proj.pan                  = valeur du pad + offset
-
-    Tolère l'attribut absent (patch antérieur), None et les valeurs hors 0-65535.
+    Tolère l'attribut absent (patch antérieur), None et les valeurs hors bornes.
     """
     try:
-        front = int(getattr(proj, 'pan_front', 32768))
+        off = int(getattr(proj, f'{axe}_offset', 0) or 0)
     except (TypeError, ValueError):
         return 0
-    if not 0 <= front <= 65535:
-        return 0
-    return front - 32768
+    return off if -65535 <= off <= 65535 else 0
 
 
-def pan_from_front(proj, pad_pan):
-    """Valeur DMX à poser sur la lyre pour une visée `pad_pan` relative au face scène."""
-    return int(max(0, min(65535, int(pad_pan) + pan_front_offset(proj))))
-
-
-def pan_to_front(proj, pan):
-    """Inverse de `pan_from_front` : visée relative au face scène (non bornée)."""
-    return int(pan) - pan_front_offset(proj)
+def pantilt_out(proj, pan, tilt):
+    """Repère de l'application → valeurs avant swap/inversion (décalage appliqué)."""
+    return (max(0, min(65535, int(pan)  + pantilt_offset(proj, 'pan'))),
+            max(0, min(65535, int(tilt) + pantilt_offset(proj, 'tilt'))))
 
 
 def pan_angular_ratio(proj):

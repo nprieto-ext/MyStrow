@@ -264,6 +264,9 @@
       // Pan/Tilt : limites d'abord (repère de l'app), puis swap et inversion.
       let pan = Math.max(attr("pan_min", 0), Math.min(attr("pan_max", 65535), attr("pan", 32768)));
       let tilt = Math.max(attr("tilt_min", 0), Math.min(attr("tilt_max", 65535), attr("tilt", 32768)));
+      // Centre calibré de la lyre (core.pantilt_offset côté PC), avant swap/inversion.
+      pan = Math.max(0, Math.min(65535, pan + (Number(f.pan_offset) || 0)));
+      tilt = Math.max(0, Math.min(65535, tilt + (Number(f.tilt_offset) || 0)));
       if (f.pan_tilt_swap) [pan, tilt] = [tilt, pan];
       if (f.pan_invert) pan = 65535 - pan;
       if (f.tilt_invert) tilt = 65535 - tilt;

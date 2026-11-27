@@ -1,4 +1,4 @@
-﻿# Met en ligne phone.html sur le serveur MyStrow Up (live.mystrow.fr).
+﻿# Met en ligne phone.html sur le serveur MyStrow Light (live.mystrow.fr).
 # Pas de redémarrage : le relais relit la page à chaque visite, les shows en cours ne sont pas coupés.
 #   Clic droit > Exécuter avec PowerShell, ou :  powershell -ExecutionPolicy Bypass -File mettre_en_ligne_phone.ps1
 

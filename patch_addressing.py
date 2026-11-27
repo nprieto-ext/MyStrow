@@ -78,3 +78,21 @@ def plan_shift_following(units, anchor):
         else:
             cursor = u["end"] + 1
     return moves, None
+
+
+def next_free_slot(spans, size, uni=0):
+    """Première adresse libre pour un appareil de `size` canaux (26/11/2026).
+
+    spans = [(univers, début, fin)] des fixtures déjà patchées. On se place à
+    la suite du dernier appareil de l'univers `uni` ; s'il n'y tient plus
+    (fin > 512), on passe à l'univers suivant. Avant, l'ajout et la
+    duplication continuaient à compter dans U1 : « U1 · CH 567–580 ».
+    Renvoie (univers, adresse) ou None si U4 est plein lui aussi.
+    """
+    size = max(1, int(size))
+    for u in range(max(0, uni), N_UNIVERSES):
+        ends = [e for (uu, _s, e) in spans if uu == u]
+        start = (max(ends) + 1) if ends else 1
+        if start + size - 1 <= UNIVERSE_SIZE:
+            return u, start
+    return None

@@ -4102,8 +4102,8 @@ class AdminPanel(QMainWindow):
         self._btn_nav_asst.clicked.connect(lambda: self._switch_view(9))
         nav_lay.addWidget(self._btn_nav_asst)
 
-        # MyStrow Up : sessions en direct et historique (relais live.mystrow.fr).
-        self._btn_nav_up = QPushButton("MyStrow Up")
+        # MyStrow Light : sessions en direct et historique (relais live.mystrow.fr).
+        self._btn_nav_up = QPushButton("MyStrow Light")
         self._btn_nav_up.setFixedHeight(38)
         self._btn_nav_up.setStyleSheet(_nav_idle)
         self._btn_nav_up.clicked.connect(lambda: self._switch_view(11))
@@ -4330,14 +4330,14 @@ class AdminPanel(QMainWindow):
         self._cm_panel = CodemagicPanel()
         self._content_stack.addWidget(self._cm_panel)
 
-        # ── Page 11 : MyStrow Up (direct + historique des sessions) ───────────
+        # ── Page 11 : MyStrow Light (direct + historique des sessions) ───────────
         from up_panel import UpPanel
         self._up_tok = ""
         self._up_panel = UpPanel(resoudre_clients=self._up_resoudre_clients)
         self._content_stack.addWidget(self._up_panel)
 
     def _up_resoudre_clients(self, uids) -> dict:
-        """uid → email pour l'onglet MyStrow Up (appelé dans un fil) : la liste des
+        """uid → email pour l'onglet MyStrow Light (appelé dans un fil) : la liste des
         licences déjà chargée, sinon une lecture avec le jeton pris au clic."""
         clients = getattr(self, "_clients", None) or []
         noms = {c.get("_uid"): c.get("email", "") for c in clients if c.get("_uid")}

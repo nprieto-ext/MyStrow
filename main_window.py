@@ -631,8 +631,8 @@ _PANTILT_META_FIELDS = (
     # patch antérieur : `_apply_pantilt_meta` ignore les clés à None, la lyre
     # garde donc les 540/270 par défaut de `Projector`.
     "pan_range", "tilt_range",
-    # « Face scène » de la lyre (cf. `core.pan_front_offset`).
-    "pan_front",
+    # Centre calibré de la lyre (cf. `core.pantilt_offset`).
+    "pan_offset", "tilt_offset",
 )
 
 
@@ -956,7 +956,7 @@ class MessageLogWidget(QWidget):
         # ── Zone texte ──────────────────────────────────────────────────────
         # QTextBrowser (un QTextEdit en lecture seule) pour rendre cliquables
         # les liens d'action « mystrow:… » (ex. « Arrêter la session » de
-        # MyStrow Up). Les liens ne sont jamais ouverts comme des URL.
+        # MyStrow Light). Les liens ne sont jamais ouverts comme des URL.
         from PySide6.QtWidgets import QTextBrowser
         self._text = QTextBrowser()
         self._text.setOpenLinks(False)
@@ -5858,7 +5858,9 @@ class MainWindow(QMainWindow):
         self._editor_live_overrides = None
         self._fx_level_ids = set()   # cf. update_effect / _apply_pad_overrides_htp
         self._editor_live_channels  = None   # couches « Canal » de la sortie live
-        self.blackout_active = False
+        self.blackout_active = False   # Blackout MAINTENU (cf. toggle_blackout)
+        self._bo_t0 = None             # début du fondu en cours (monotonic)
+        self._bo_from = 1.0            # facteur de sortie au début du fondu
         self._last_fader_mode = "FX"   # "FX" ou "MASTER" pour le fader 9
         self.master_level = 100        # 0-100, appliqué en sortie DMX
 
@@ -6003,6 +6005,7 @@ class MainWindow(QMainWindow):
         self.seq.live_panel.set_sequences_getter(self._get_live_sequences)
         self.seq.live_panel.settings_applied.connect(self._on_live_settings_applied)
         self.seq.live_panel.ia_mode_changed.connect(self._on_live_ia_mode_changed)
+        self.seq.live_panel.blackout_clicked.connect(lambda: self.toggle_blackout())
         self.seq.live_panel.source_changed.connect(self._on_live_source_changed)
         # Détecteur de logiciels DJ/audio (démarré au besoin dans _on_live_toggle)
         self.software_detector = None
@@ -6243,6 +6246,14 @@ class MainWindow(QMainWindow):
         trans_menu.aboutToShow.connect(
             lambda: trans_actions[self.playlist_transition].setChecked(True))
         trans_group.triggered.connect(self._set_playlist_transition)
+        # 🔁 Boucle de toute la playlist : option du show, rangée ici à côté de
+        # la Transition (le bouton du transport a été retiré le 27/11/2026).
+        # Aussi au clic droit d'un média ; le bandeau sous le transport la signale.
+        loop_act = edit_menu.addAction(tr("mw_menu_playlist_loop"))
+        loop_act.setCheckable(True)
+        loop_act.setToolTip(tr("mw_loop_playlist_tip"))
+        loop_act.toggled.connect(self.set_playlist_loop)
+        self.playlist_loop_action = loop_act
 
         # Connexion avant Affichage : c'est le menu qu'on ouvre en premier au
         # montage (contrôleur, sortie DMX, audio, vidéo).
@@ -6253,7 +6264,8 @@ class MainWindow(QMainWindow):
         # Action directe : ouvre le hub contrôleur (liste des contrôleurs
         # compatibles + détecté/sélectionné, puis diagnostic ports + reconnecter).
         ctrl_menu.addAction(tr("menu_akai_mini"), self._open_akai_diagnostic)
-        ctrl_menu.addAction(tr("mw_menu_ctrl_settings"), self._open_akai_layout_editor)
+        # « Paramètres contrôleur » retiré du menu (27/11/2026) : déjà accessible
+        # depuis la page d'accueil (roue crantée de l'AKAI).
 
         ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
         ctrl_menu.addAction(tr("api_net_menu"), self._open_api_network_dialog)
@@ -6280,8 +6292,8 @@ class MainWindow(QMainWindow):
         # source de controle ENTRANTE, au meme titre que la manette ou la regie
         # video. Rien a voir avec le menu « Sortie DMX », qui parle du parc.
         ctrl_menu.addAction(tr("mw_menu_dmx_in"), self._open_dmx_in_dialog)
-        # PROTOTYPE MyStrow Up : les téléphones du public = un groupe.
-        # Libellé pas encore dans i18n.
+        # MyStrow Light : les téléphones du public deviennent des projecteurs
+        # (fixtures « MyStrow Light » du patch, 3 zones au maximum).
         ctrl_menu.addAction(tr("up_menu"), self._open_crowd_dialog)
         # « Ajouter mon contrôleur MIDI » est désormais un bouton dans le hub
         # Contrôleur MIDI (AkaiDiagnosticDialog), plus une entrée de menu.
@@ -8686,52 +8698,59 @@ class MainWindow(QMainWindow):
         nxt.setToolTip(tr("mw_next_media"))
         nxt.clicked.connect(lambda: self.seq.play_row(self.seq.current_row + 1))
 
+        # Pastille 🔁 à droite de « Suivant » : visible seulement quand une boucle
+        # est active (média ou playlist). Un clic la coupe ; pour la remettre,
+        # on repasse par le menu Édition ou le clic droit du média.
+        self.loop_badge = QToolButton()
+        self.loop_badge.setIcon(create_icon("loop", "#00d4ff"))
+        self.loop_badge.setIconSize(QSize(20, 20))
+        self.loop_badge.setFixedSize(34, 34)
+        self.loop_badge.setCursor(Qt.PointingHandCursor)
+        self.loop_badge.setStyleSheet("""
+            QToolButton {
+                background: rgba(0, 212, 255, 0.12);
+                border: 1px solid #00d4ff;
+                border-radius: 17px;
+            }
+            QToolButton:hover {
+                background: rgba(255, 80, 80, 0.18);
+                border: 1px solid #ff6b6b;
+            }
+        """)
+        self.loop_badge.clicked.connect(self._stop_all_loops)
+        _sp = self.loop_badge.sizePolicy()
+        _sp.setRetainSizeWhenHidden(True)      # le transport ne bouge pas quand elle apparaît
+        self.loop_badge.setSizePolicy(_sp)
+        self.loop_badge.hide()
+        _equilibre = QWidget()                  # même largeur à gauche : transport toujours centré
+        _equilibre.setFixedSize(34 + 10, 34)
+
         btns.addStretch()
+        btns.addWidget(_equilibre)
         btns.addWidget(prev)
         btns.addSpacing(4)
         btns.addWidget(self.play_btn)
         btns.addSpacing(4)
         btns.addWidget(nxt)
-        btns.addSpacing(4)
+        btns.addSpacing(10)
+        btns.addWidget(self.loop_badge)
 
-        # 🔁 Boucle de toute la playlist : allumé (cyan) = la playlist repart
-        # du 1er média à la fin. Ne pas confondre avec la boucle d'un média
-        # (clic droit sur le média) - le bandeau dessous dit laquelle joue.
-        self.loop_btn = QToolButton()
-        self.loop_btn.setCheckable(True)
-        self.loop_btn.setIconSize(QSize(24, 24))
-        self.loop_btn.setFixedSize(44, 44)
-        self.loop_btn.setStyleSheet(side_style + """
-            QToolButton:checked {
-                background: #003344;
-                border: 2px solid #00d4ff;
-            }
-        """)
-        self.loop_btn.setToolTip(tr("mw_loop_playlist_tip"))
-        self.loop_btn.toggled.connect(self.set_playlist_loop)
-        btns.addWidget(self.loop_btn)
         btns.addStretch()
         layout.addLayout(btns)
 
-        # Avertissement « joue en boucle » sous le transport : sans lui, rien
-        # ne dit pourquoi le show ne s'arrête pas à la fin.
-        self.loop_banner = QLabel("")
-        self.loop_banner.setAlignment(Qt.AlignCenter)
-        self.loop_banner.setStyleSheet(
-            "color: #00d4ff; font-weight: bold; font-size: 12px;"
-            " background: transparent; border: none;")
-        self.loop_banner.hide()
-        layout.addWidget(self.loop_banner)
+        # La pastille 🔁 (à droite de « Suivant ») remplace l'ancien bandeau texte
+        # « joue en boucle » (27/11/2026) : sans elle, rien ne dit pourquoi le show
+        # ne s'arrête pas à la fin.
         self.refresh_loop_banner()
 
         return frame
 
     def set_playlist_loop(self, enabled):
-        """Active/désactive la boucle de toute la playlist (bouton 🔁, clic droit, show)."""
+        """Active/désactive la boucle de toute la playlist (menu Édition, clic droit, show)."""
         enabled = bool(enabled)
         changed = enabled != self.playlist_loop
         self.playlist_loop = enabled
-        btn = getattr(self, 'loop_btn', None)
+        btn = getattr(self, 'playlist_loop_action', None)
         if btn is not None and btn.isChecked() != enabled:
             btn.blockSignals(True)
             btn.setChecked(enabled)
@@ -8741,23 +8760,30 @@ class MainWindow(QMainWindow):
         self.refresh_loop_banner()
 
     def refresh_loop_banner(self):
-        """Icône du bouton 🔁 + bandeau : ce média en boucle prime sur la playlist."""
-        btn = getattr(self, 'loop_btn', None)
-        if btn is not None:
-            btn.setIcon(create_icon("loop", "#00d4ff" if self.playlist_loop else "#cccccc"))
-        banner = getattr(self, 'loop_banner', None)
-        if banner is None:
+        """Pastille 🔁 à droite du transport : visible quand une boucle est active
+        (ce média en boucle prime sur la playlist pour l'infobulle)."""
+        badge = getattr(self, 'loop_badge', None)
+        if badge is None:
             return
         seq = getattr(self, 'seq', None)
         row = seq.current_row if seq is not None else -1
         if seq is not None and row >= 0 and seq.is_row_loop(row):
-            banner.setText(tr("mw_loop_banner_media"))
-            banner.show()
+            badge.setToolTip(tr("mw_loop_banner_media") + "\n" + tr("mw_loop_badge_tip"))
+            badge.show()
         elif self.playlist_loop:
-            banner.setText(tr("mw_loop_banner_playlist"))
-            banner.show()
+            badge.setToolTip(tr("mw_loop_banner_playlist") + "\n" + tr("mw_loop_badge_tip"))
+            badge.show()
         else:
-            banner.hide()
+            badge.hide()
+
+    def _stop_all_loops(self):
+        """Clic sur la pastille 🔁 : coupe la boucle du média en cours ET celle de la playlist."""
+        seq = getattr(self, 'seq', None)
+        if seq is not None and seq.current_row >= 0 and seq.is_row_loop(seq.current_row):
+            seq.set_row_loop(seq.current_row, False)
+            seq.is_dirty = True
+        self.set_playlist_loop(False)
+        self.refresh_loop_banner()
 
     def playlist_first_row(self):
         """Ligne où repart la playlist en boucle, ou None (pas de boucle / liste vide)."""
@@ -21982,7 +22008,7 @@ class MainWindow(QMainWindow):
         from obs_link import ObsDialog
         ObsDialog(self, self._get_obs_link()).exec()
 
-    # ── MyStrow Up : téléphones du public (PROTOTYPE) ──────────────────────
+    # ── MyStrow Light : téléphones du public ──────────────────────────────────
 
     def _open_crowd_dialog(self):
         # Création paresseuse, comme OBS : rien n'est chargé tant que personne
@@ -23551,23 +23577,116 @@ class MainWindow(QMainWindow):
         os.execv(python, [python] + sys.argv)
 
     def toggle_blackout_from_midi(self):
-        """Toggle le blackout depuis le bouton 9 de l'AKAI"""
-        self.blackout_active = not self.blackout_active
+        """Bouton 9 de l'AKAI : Blackout maintenu (on / off)."""
+        self.toggle_blackout()
 
-        if self.blackout_active:
-            for proj in self.projectors:
-                proj.color = QColor("black")
-                proj.level = 0
+    # ── Blackout MAINTENU ────────────────────────────────────────────
+    # L'ancien bouton noircissait les projecteurs UNE fois : en Live IA (et
+    # avec un effet, la timeline…) le moteur repeignait tout 40 ms plus tard,
+    # le noir ne tenait pas (client Chris, 26/11/2026 : « un black out en mode
+    # IA entre 2 titres »). Le noir est donc une PORTE posée juste avant
+    # l'envoi DMX, comme FLASH KILL : aucun moteur n'est arrêté ni modifié -
+    # l'IA continue d'écouter et de suivre le tempo, et au rallumage les
+    # lumières repartent exactement où le show en est.
+    # Machines à effets (fumée, étincelles…) épargnées, comme le fondu au
+    # silence du Musical IA : le blackout coupe la LUMIÈRE.
+    BLACKOUT_FADE_S = 0.3
 
-            if MIDI_AVAILABLE and self.midi_handler.midi_out:
-                self.midi_handler.midi_out.send_message([0x90, 122, 3])
-        else:
-            for i, fader in self.faders.items():
-                if i < 8:
-                    self.set_proj_level(i, fader.value)
+    def toggle_blackout(self, on=None):
+        """Bascule (on=None) ou force le Blackout maintenu. Retourne l'état."""
+        import time as _t
+        on = (not self.blackout_active) if on is None else bool(on)
+        if on == self.blackout_active:
+            return on
+        self._bo_from = self._blackout_factor()
+        self._bo_t0 = _t.monotonic()
+        self.blackout_active = on
+        self._refresh_blackout_display()
+        try:
+            self._log_message("Blackout ON" if on else "Blackout OFF", "info")
+        except Exception:
+            pass
+        return on
 
-            if MIDI_AVAILABLE and self.midi_handler.midi_out:
-                self.midi_handler.midi_out.send_message([0x90, 122, 0])
+    def _blackout_factor(self):
+        """Facteur appliqué à la sortie : 1 = normal, 0 = noir (fondu compris)."""
+        import time as _t
+        target = 0.0 if self.blackout_active else 1.0
+        t0 = getattr(self, '_bo_t0', None)
+        if t0 is None:
+            return target
+        frac = (_t.monotonic() - t0) / self.BLACKOUT_FADE_S
+        if frac >= 1.0:
+            self._bo_t0 = None
+            return target
+        start = getattr(self, '_bo_from', 1.0)
+        return start + (target - start) * max(0.0, frac)
+
+    def _apply_blackout_gate(self):
+        """Porte Blackout : même principe et même format que `_apply_flash_kill_gate`
+        (restauration par `_restore_flash_kill_gate`)."""
+        f = self._blackout_factor()
+        if f >= 1.0 and not self.blackout_active:
+            return None
+        f = min(f, 1.0)
+        saved = []
+        for proj in self.projectors:
+            if fixture_is_fx_machine(proj):
+                continue
+            saved.append((proj, proj.level, QColor(proj.color), QColor(proj.base_color),
+                          [getattr(proj, c, 0) for c in self._KILL_EXTRA_CHANNELS],
+                          getattr(proj, 'effect_channels', None)))
+            proj.effect_channels = {}
+            proj.level = int(proj.level * f)
+            for attr in ('color', 'base_color'):
+                c = getattr(proj, attr)
+                setattr(proj, attr, QColor(int(c.red() * f), int(c.green() * f), int(c.blue() * f)))
+            for c in self._KILL_EXTRA_CHANNELS:
+                if hasattr(proj, c):
+                    # le strobe ne se « fond » pas : il s'arrête net
+                    setattr(proj, c, 0 if c == "strobe_speed" else int(getattr(proj, c, 0) * f))
+        return saved
+
+    def _refresh_blackout_display(self):
+        """Bandeau rouge cliquable + LED AKAI : un noir posé doit SE VOIR,
+        sinon on croit l'appli plantée."""
+        on = self.blackout_active
+        ban = getattr(self, '_bo_banner', None)
+        if ban is None and on:
+            from PySide6.QtWidgets import QPushButton as _QPB
+            ban = _QPB(self)
+            ban.setCursor(Qt.PointingHandCursor)
+            ban.setStyleSheet(
+                "QPushButton { background: #cc0000; color: white; font-weight: bold; "
+                "font-size: 14px; border: 2px solid #ff5555; border-radius: 6px; padding: 6px 18px; }"
+                "QPushButton:hover { background: #e01010; }")
+            ban.clicked.connect(lambda: self.toggle_blackout(False))
+            self._bo_banner = ban
+        if ban is not None:
+            if on:
+                ban.setText(tr("mw_blackout_banner"))
+                ban.adjustSize()
+                self._place_blackout_banner()
+                ban.show()
+                ban.raise_()
+            else:
+                ban.hide()
+        _lp = getattr(getattr(self, 'seq', None), 'live_panel', None)
+        if _lp is not None and hasattr(_lp, 'set_blackout_state'):
+            _lp.set_blackout_state(on)
+        if MIDI_AVAILABLE and getattr(self, 'midi_handler', None) and self.midi_handler.midi_out:
+            try:
+                self.midi_handler.midi_out.send_message([0x90, 122, 3 if on else 0])
+            except Exception:
+                pass
+
+    def _place_blackout_banner(self):
+        ban = getattr(self, '_bo_banner', None)
+        if ban is None:
+            return
+        x = max(0, (self.width() - ban.width()) // 2)
+        if ban.x() != x or ban.y() != 36:
+            ban.move(x, 36)
 
     def toggle_fader_mute_from_midi(self, fader_idx):
         """Toggle le mute d'un fader depuis l'AKAI physique - tous independants"""
@@ -23729,6 +23848,9 @@ class MainWindow(QMainWindow):
             if not event.isAutoRepeat():
                 self._flash_begin()
                 self._held_shortcuts[event.key()] = aid
+        elif aid == "blackout":
+            if not event.isAutoRepeat():
+                self.toggle_blackout()
         elif aid == "strobe":
             self._apply_strobe_shortcut()
         elif aid in self._COLOR_ACTIONS:
@@ -23781,7 +23903,7 @@ class MainWindow(QMainWindow):
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
             self._update_color_wheel(proj, color)
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
 
@@ -23806,7 +23928,7 @@ class MainWindow(QMainWindow):
             proj.level = 100
             proj.color = QColor(color.red(), color.green(), color.blue())
             self._update_color_wheel(proj, color)
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
         return len(targets)
@@ -23830,7 +23952,7 @@ class MainWindow(QMainWindow):
         for proj in targets:
             proj.strobe_speed = new_val
             self._track_manual_strobe(proj, new_val)
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
 
@@ -23929,7 +24051,7 @@ class MainWindow(QMainWindow):
             p.base_color = QColor("black")
             p.color = QColor("black")
             p.level = 0
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         self._ext_clear_selection()
 
@@ -23940,7 +24062,7 @@ class MainWindow(QMainWindow):
     def _ext_blackout(self):
         """Blackout complet (projecteurs, pads, effets)."""
         self.full_blackout()
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         if getattr(self, "plan_de_feu", None):
             self.plan_de_feu.refresh()
@@ -24005,7 +24127,7 @@ class MainWindow(QMainWindow):
             for c, v in zip(self._EXT_SNAP_CHANNELS, entry[4] if len(entry) > 4 else ()):
                 if hasattr(p, c):
                     setattr(p, c, v)
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         if getattr(self, "plan_de_feu", None):
             self.plan_de_feu.refresh()
@@ -24022,7 +24144,7 @@ class MainWindow(QMainWindow):
     def _ext_stop_effects(self):
         """Arrête tous les effets en cours."""
         self.turn_off_all_effects()
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         if getattr(self, "plan_de_feu", None):
             self.plan_de_feu.refresh()
@@ -24058,7 +24180,7 @@ class MainWindow(QMainWindow):
         for proj in targets:
             proj.strobe_speed = val
             self._track_manual_strobe(proj, val)
-        if self.dmx:
+        if self.dmx and not self.blackout_active:   # sinon : envoyé au tick, après la porte Blackout
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
 
@@ -26418,8 +26540,8 @@ class MainWindow(QMainWindow):
         def _get_conflicts():
             occ = {}
             for i, fd in enumerate(fixture_data):
-                # MyStrow Up : virtuel, n'émet rien → jamais en conflit d'adresse.
-                if fd.get('manufacturer') == "MyStrow Up":
+                # MyStrow Light : virtuel, n'émet rien → jamais en conflit d'adresse.
+                if fd.get('manufacturer') in ("MyStrow Light", "MyStrow Up"):
                     continue
                 uni = fd.get('universe', 0)
                 for c in range(fd['start_address'], fd['start_address'] + len(fd['profile'])):
@@ -26707,6 +26829,36 @@ class MainWindow(QMainWindow):
                     tog_row.addWidget(btn_swap)
 
                     wl.addLayout(tog_row)
+
+                    # ── 🎯 Définir le centre (calibrage, cf. pantilt_center_dialog) ──
+                    from pantilt_center_dialog import CentreDialog, axe_modele, offset_degres
+                    _axe_c = axe_modele(proj_pt, ch_type)
+                    _deg_c = offset_degres(proj_pt, _axe_c)
+                    btn_ctr = QPushButton(
+                        tr("ctr_button") + (f"  ({_deg_c:+d}°)" if _deg_c else ""))
+                    btn_ctr.setToolTip(tr("ctr_button_tip"))
+                    btn_ctr.setStyleSheet(_TOG_SS)
+
+                    def _open_centre(_=False, p=proj_pt, ct=ch_type, si=snap_idx):
+                        import re
+                        m.close()
+                        prof_p = list(self.dmx._get_profile(f"{p.group}_{si}"))
+                        base = lambda n: re.sub(r"[\s#\-_]*\d+$", "", (n or "").strip())
+                        freres = [
+                            q for j, q in enumerate(self.projectors)
+                            if q is not p
+                            and getattr(q, 'manufacturer', '') == getattr(p, 'manufacturer', '')
+                            and getattr(q, 'fixture_type', '') == getattr(p, 'fixture_type', '')
+                            and base(q.name) == base(p.name)
+                            and list(self.dmx._get_profile(f"{q.group}_{j}")) == prof_p
+                        ]
+                        dlg = CentreDialog(p, ct, freres, base(p.name) or p.name, self)
+                        dlg.exec()
+                        if dlg.changed():
+                            _mark_dirty()
+
+                    btn_ctr.clicked.connect(_open_centre)
+                    wl.addWidget(btn_ctr, 0, Qt.AlignHCenter)
 
                 # ── Shutter : bande DMX du strobe ────────────────────────────
                 # Uniquement quand la fixture n'a PAS de canal Strobe dedie -
@@ -27308,7 +27460,9 @@ class MainWindow(QMainWindow):
 
             _uni_n = fd.get('universe', 0) + 1
             chl = QLabel(f'<span style="color:#2a6670">U{_uni_n}</span>'
-                         f'<span style="color:#00d4ff">  ·  CH {fd["start_address"]}–{end_ch}</span>')
+                         f'<span style="color:#00d4ff">  ·  CH {fd["start_address"]}–{end_ch}</span>'
+                         if fd.get('manufacturer', '') not in ("MyStrow Light", "MyStrow Up")
+                         else f'<span style="color:#ffd600">📱 {tr("up_sans_adresse")}</span>')
             chl.setTextFormat(Qt.RichText)
             chl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             chl.setStyleSheet("font-size:11px; font-weight:bold; border:none; background:transparent;")
@@ -27481,7 +27635,7 @@ class MainWindow(QMainWindow):
                 for j, fd2 in enumerate(fixture_data):
                     if j == idx: continue
                     if fd2.get('universe', 0) != fd.get('universe', 0): continue
-                    if fd2.get('manufacturer') == "MyStrow Up": continue
+                    if fd2.get('manufacturer') in ("MyStrow Light", "MyStrow Up"): continue
                     s1, e1 = fd['start_address'], fd['start_address'] + len(fd['profile']) - 1
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
@@ -27640,6 +27794,8 @@ class MainWindow(QMainWindow):
                 card._chlbl.setText(
                     f'<span style="color:#2a6670">U{_u}</span>'
                     f'<span style="color:#00d4ff">  ·  CH {_s}–{_e}</span>'
+                    if fd.get('manufacturer', '') not in ("MyStrow Light", "MyStrow Up")
+                    else f'<span style="color:#ffd600">📱 {tr("up_sans_adresse")}</span>'
                 )
                 card._upd(True, idx in conflicts)
             lbl_det_name.setText(fd['name'])
@@ -27652,7 +27808,7 @@ class MainWindow(QMainWindow):
                 for j, fd2 in enumerate(fixture_data):
                     if j == idx: continue
                     if fd2.get('universe', 0) != fd.get('universe', 0): continue
-                    if fd2.get('manufacturer') == "MyStrow Up": continue
+                    if fd2.get('manufacturer') in ("MyStrow Light", "MyStrow Up"): continue
                     s1, e1 = fd['start_address'], fd['start_address'] + len(fd['profile']) - 1
                     s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
                     if s1 <= e2 and s2 <= e1:
@@ -27887,13 +28043,6 @@ class MainWindow(QMainWindow):
                        if _mxg else [idx])
             uni = getattr(src, 'universe', 0)
 
-            def _next_free(universe):
-                # Dans l'univers de la source : la copie d'une machine de U2
-                # ne doit pas atterrir derrière la dernière adresse de U1.
-                ends = [p.start_address + len(getattr(p, 'dmx_profile', None) or [])
-                        for p in self.projectors if getattr(p, 'universe', 0) == universe]
-                return max(ends) if ends else 1
-
             # « Lyre 3 » → Lyre 4, Lyre 5… ; « Lyre » → Lyre 2, Lyre 3…
             _mt = _re.match(r"^(.*?)(\s*#?)(\d+)$", src_name)
             if _mt and _mt.group(1).strip():
@@ -27912,7 +28061,18 @@ class MainWindow(QMainWindow):
                 new_name = f"{base}{sep}{num}"
                 used.add(new_name)
 
-                offset = _next_free(uni) - self.projectors[members[0]].start_address
+                # Place de l'appareil entier dans l'univers de la source, ou
+                # dans le suivant s'il dépasserait 512 (avant : U1 · CH 567…).
+                _first = self.projectors[members[0]].start_address
+                _size = max(self.projectors[j].start_address
+                            + len(getattr(self.projectors[j], 'dmx_profile', None) or [1])
+                            for j in members) - _first
+                _slot = _free_slot(_size, uni)
+                if _slot is None:
+                    QMessageBox.warning(dialog, tr("mw_auto_address"),
+                                        tr("mw_auto_no_room"))
+                    break
+                offset = _slot[1] - _first
                 ref = self.projectors[members[0]]
                 dx = dy = 0.0
                 if ref.canvas_x is not None and ref.canvas_y is not None:
@@ -27930,6 +28090,7 @@ class MainWindow(QMainWindow):
                     for _k in ('pos_3d_x', 'pos_3d_z', 'pos_3d_src'):
                         cfg.pop(_k, None)
                     cfg['start_address'] = p_src.start_address + offset
+                    cfg['universe'] = _slot[0]
                     if cfg.get('pos_x') is not None:
                         cfg['pos_x'] = max(0.02, min(0.98, cfg['pos_x'] + dx))
                     if cfg.get('pos_y') is not None:
@@ -28088,6 +28249,22 @@ class MainWindow(QMainWindow):
             res = self._show_fixture_library_dialog(initial_search=search, initial_qty=qty)
             if not res: return
             preset, qty, custom_name = res
+            _light_zones = []
+            if preset.get('manufacturer', '') in ("MyStrow Light", "MyStrow Up"):
+                # MyStrow Light : 3 au maximum (= 3 zones dans la salle), sans
+                # adresse DMX, et chacun nommé par sa zone pour les distinguer.
+                from crowd_link import MAX_ZONES_LIGHT
+                _pris = {p.name for p in self.projectors if getattr(p, 'manufacturer', '') in ("MyStrow Light", "MyStrow Up")}
+                _light_zones = [z for z in range(1, MAX_ZONES_LIGHT + 1)
+                                if f"MyStrow Light · Zone {z}" not in _pris]
+                _reste = MAX_ZONES_LIGHT - sum(1 for p in self.projectors
+                                               if getattr(p, 'manufacturer', '') in ("MyStrow Light", "MyStrow Up"))
+                if _reste <= 0:
+                    QMessageBox.information(dialog, "MyStrow Light", tr("up_max_zones", n=MAX_ZONES_LIGHT))
+                    return
+                if qty > _reste:
+                    QMessageBox.information(dialog, "MyStrow Light", tr("up_max_zones", n=MAX_ZONES_LIGHT))
+                    qty = _reste
             _push_history()
             _CH = {"PAR LED": 5, "Moving Head": 8, "Laser": 8, "Barre LED": 5,
                    "Stroboscope": 2, "Machine a fumee": 2,
@@ -28141,11 +28318,23 @@ class MainWindow(QMainWindow):
             if _spec is not None:
                 _grp = preset.get('group', 'face')
                 _uni = preset.get('universe', 0)
+                _last_first = None
                 for n in range(qty):
                     _spec_n = _dc_replace(_spec, name=_numbered(n))
                     projs = generate_matrix_projectors(
-                        _spec_n, base_address=_next_free_address(),
+                        _spec_n, base_address=1,
                         universe=_uni, group=_grp, name=_spec_n.name)
+                    # Place réelle de la barre entière (jamais à cheval sur 512)
+                    _size = max(p.start_address + len(p.dmx_profile or []) - 1
+                                for p in projs)
+                    _slot = _free_slot(_size, _uni)
+                    if _slot is None:
+                        QMessageBox.warning(dialog, tr("mw_auto_address"),
+                                            tr("mw_auto_no_room"))
+                        break
+                    for p in projs:
+                        p.universe = _slot[0]
+                        p.start_address += _slot[1] - 1
                     cx, cy = _find_free_canvas_pos(self.projectors, *canvas_positions[n])
                     # C'est l'appareil entier qui occupe la largeur calculée,
                     # pas chaque pixel. Sinon une barre 8 px mangeait le plan.
@@ -28177,27 +28366,32 @@ class MainWindow(QMainWindow):
                 _build_cards(filter_bar.text())
                 # Sélectionner la carte parente (1er membre = adresse la plus
                 # basse), pas le dernier pixel, qui n'a pas de carte.
-                _select_card(_last_first)
-                _mark_dirty()
+                if _last_first is not None:
+                    _select_card(_last_first)
+                    _mark_dirty()
                 return
 
             for n in range(qty):
-                if self.projectors:
-                    last = max(self.projectors, key=lambda p: p.start_address)
-                    last_idx = self.projectors.index(last)
-                    last_profile = getattr(last, 'dmx_profile', None)
-                    if not (isinstance(last_profile, list) and last_profile):
-                        last_profile = list(self.dmx._get_profile(f"{last.group}_{last_idx}"))
-                    next_addr = last.start_address + len(last_profile)
-                else:
-                    next_addr = 1
+                # Univers du preset, débordement dans le suivant au-delà de
+                # 512 (avant : « U1 · CH 567–580 », adresse impossible).
+                # Sans profil : mode par défaut du DMX (5CH)
+                _nch = len(_preset_profile or self.dmx._get_profile("__new__")) or 1
+                # MyStrow Light : pas d'adresse (adresse 1 fictive, ignorée partout)
+                _slot = (0, 1) if _light_zones else _free_slot(_nch, preset.get('universe', 0))
+                if _slot is None:
+                    QMessageBox.warning(dialog, tr("mw_auto_address"),
+                                        tr("mw_auto_no_room"))
+                    break
+                next_addr = _slot[1]
                 name = _numbered(n)
+                if _light_zones:
+                    name = f"MyStrow Light · Zone {_light_zones[n] if n < len(_light_zones) else n + 1}"
                 p = Projector(
                     preset.get('group', 'face'),
                     name=name,
                     fixture_type=preset.get('fixture_type', 'PAR LED')
                 )
-                p.universe = preset.get('universe', 0)
+                p.universe = _slot[0]
                 p.manufacturer = preset.get('manufacturer', '')
                 p.start_address = next_addr
                 if _preset_profile:
@@ -28238,16 +28432,29 @@ class MainWindow(QMainWindow):
             _select_card(new_idx)
             _mark_dirty()
 
+        def _proj_spans():
+            """[(univers, début, fin)] de chaque fixture patchée."""
+            spans = []
+            for i, p in enumerate(self.projectors):
+                # MyStrow Light = téléphones du public, virtuel : n'occupe aucun canal.
+                if getattr(p, 'manufacturer', '') in ("MyStrow Light", "MyStrow Up"):
+                    continue
+                prof = getattr(p, 'dmx_profile', None)
+                if not (isinstance(prof, list) and prof):
+                    prof = list(self.dmx._get_profile(f"{p.group}_{i}"))
+                s = p.start_address
+                spans.append((getattr(p, 'universe', 0), s, s + max(1, len(prof)) - 1))
+            return spans
+
+        def _free_slot(size, uni=0):
+            """(univers, adresse) libre pour `size` canaux, sans jamais
+            dépasser 512 : un univers plein déborde dans le suivant."""
+            return patch_addressing.next_free_slot(_proj_spans(), size, uni)
+
         def _next_free_address():
-            """Prochaine adresse DMX libre (à la suite du dernier fixture)."""
-            if not self.projectors:
-                return 1
-            last = max(self.projectors, key=lambda p: p.start_address)
-            last_idx = self.projectors.index(last)
-            last_profile = getattr(last, 'dmx_profile', None)
-            if not (isinstance(last_profile, list) and last_profile):
-                last_profile = list(self.dmx._get_profile(f"{last.group}_{last_idx}"))
-            return last.start_address + len(last_profile)
+            """Prochaine adresse DMX libre (à la suite du dernier fixture de U1)."""
+            slot = _free_slot(1, 0)
+            return slot[1] if slot and slot[0] == 0 else 1
 
         def _add_matrix():
             res = self._show_matrix_dialog(default_addr=_next_free_address())
@@ -31022,6 +31229,11 @@ class MainWindow(QMainWindow):
         p.preset_slots      = dict(fd.get('preset_slots', {}) or {})
         _apply_pantilt_meta(p, fd)
         p.manufacturer  = fd.get('manufacturer', '')
+        # « MyStrow Up » renommé « MyStrow Light » le 27/11/2026 : les patchs
+        # enregistrés avant gardent l'ancien fabricant → migrés au chargement.
+        if p.manufacturer == "MyStrow Up":
+            p.manufacturer = "MyStrow Light"
+            p.name = (p.name or "").replace("MyStrow Up", "MyStrow Light")
         _apply_matrix_meta(p, fd)
         return p
 
@@ -32397,6 +32609,11 @@ class MainWindow(QMainWindow):
             from node_connection import _open_network_connections
             btn_net.clicked.connect(_open_network_connections)
         btn_row.addWidget(btn_net)
+        # 2e rangée : 7 boutons sur une ligne réclamaient ~900 px et se
+        # chevauchaient (capture 27/11/2026). Actions réseau en haut,
+        # support / analyse / fermer en bas.
+        btn_row2 = QHBoxLayout()
+        btn_row2.addStretch()
         btn_close = QPushButton(tr("mw_close"))
         btn_close.setFixedHeight(30)
         fit_button(btn_close)
@@ -32406,8 +32623,9 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: #333333; color: white; }"
         )
         btn_close.clicked.connect(dlg.accept)
-        btn_row.addWidget(btn_close)
+        btn_row2.addWidget(btn_close)
         root.addLayout(btn_row)
+        root.addLayout(btn_row2)
 
         # ── Fonction de vérification (appelée à l'ouverture et sur Actualiser) ──
         def _run_checks():
@@ -32537,6 +32755,13 @@ class MainWindow(QMainWindow):
 
             if not net_ok or not node_ok:
                 btn_config.show()
+                # setMinimumSize explicite => la fenêtre ne suit pas seule le
+                # minimum du layout quand ce bouton apparaît : on l'élargit.
+                QApplication.processEvents()
+                _need = root.minimumSize()
+                if dlg.width() < _need.width() or dlg.height() < _need.height():
+                    dlg.resize(max(dlg.width(), _need.width()),
+                               max(dlg.height(), _need.height()))
 
             btn_refresh.setEnabled(True)
             btn_refresh.setText(tr("mw_refresh_m"))
@@ -32545,6 +32770,7 @@ class MainWindow(QMainWindow):
         # Bouton Actualiser (inséré avant Fermer)
         btn_refresh = QPushButton(tr("mw_refresh_m"))
         btn_refresh.setFixedHeight(30)
+        fit_button(btn_refresh)
         btn_refresh.setStyleSheet(
             "QPushButton { background: #1a2a1a; color: #66cc66; border: 1px solid #336633;"
             " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
@@ -32553,7 +32779,7 @@ class MainWindow(QMainWindow):
         )
         btn_refresh.setToolTip(tr("mw_rescan_net"))
         btn_refresh.clicked.connect(_run_checks)
-        btn_row.insertWidget(btn_row.count() - 1, btn_refresh)   # juste avant Fermer
+        btn_row.addWidget(btn_refresh)
 
         # Envoi du rapport : on relit les libellés affichés, c'est exactement ce
         # que l'utilisateur a sous les yeux au moment où il clique.
@@ -32575,13 +32801,14 @@ class MainWindow(QMainWindow):
         btn_send.clicked.connect(lambda: send_report_email(
             dlg, "Test RJ45 (réseau / Node Art-Net)", _rj45_report(),
             intro="Bonjour,\n\nVoici le rapport du test RJ45 (réseau / Node Art-Net)."))
-        btn_row.insertWidget(btn_row.count() - 1, btn_send)
+        btn_row2.insertWidget(btn_row2.count() - 1, btn_send)
 
         # Analyse approfondie : les deux voyants disent SI ça marche, pas
         # POURQUOI ça ne marche pas. Ce bouton ouvre le détail - cartes, route,
         # conflit de port, réponse ArtPoll nominative - avec copie et envoi.
         btn_deep = QPushButton(tr("mw_detailed_scan"))
         btn_deep.setFixedHeight(30)
+        fit_button(btn_deep)
         btn_deep.setStyleSheet(
             "QPushButton { background: #1a2a3a; color: #66aadd; border: 1px solid #2a4a6a;"
             " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
@@ -32591,7 +32818,7 @@ class MainWindow(QMainWindow):
         btn_deep.clicked.connect(lambda: self._show_diag_report(
             "Analyse réseau détaillée", self._rj45_deep_report(),
             "Diagnostic réseau / Art-Net"))
-        btn_row.insertWidget(btn_row.count() - 1, btn_deep)
+        btn_row2.insertWidget(btn_row2.count() - 1, btn_deep)
 
         dlg.show()
         _run_checks()
@@ -33295,7 +33522,11 @@ class MainWindow(QMainWindow):
         # touche), donc le plan 2D restait allume alors que les lampes etaient
         # noires - le solo avait l'air de ne rien faire.
         if hasattr(self.plan_de_feu, 'set_kill_display'):
-            self.plan_de_feu.set_kill_display(self._kill_solo_groups())
+            # Blackout maintenu : tout éteint à l'écran aussi (set vide = aucun groupe épargné)
+            self.plan_de_feu.set_kill_display(
+                set() if self.blackout_active else self._kill_solo_groups())
+        if self.blackout_active:
+            self._place_blackout_banner()
 
         if self.plan_de_feu.is_dmx_enabled() and self.dmx.connected:
             # Appliquer temporairement HTP memoires
@@ -33317,12 +33548,15 @@ class MainWindow(QMainWindow):
             # suivant) : la coupure se fait donc ICI, juste avant l'envoi, et se
             # défait aussitôt après. Aucun état du show n'est modifié.
             saved_kill = self._apply_flash_kill_gate()
+            # BLACKOUT maintenu : vraiment le dernier mot (cf. toggle_blackout)
+            saved_bo = self._apply_blackout_gate()
 
             # Envoyer DMX
             self.dmx.update_from_projectors(self.projectors, self.effect_speed)
             self.dmx.send_dmx()
 
             # Restaurer dans l'ordre inverse de l'application
+            self._restore_flash_kill_gate(saved_bo)
             self._restore_flash_kill_gate(saved_kill)
             self._restore_editor_live_overrides(saved_editor)
 

@@ -1,4 +1,4 @@
-"""MyStrow Up — relais entre MyStrow (le PC) et les téléphones du public.
+"""MyStrow Light — relais entre MyStrow (le PC) et les téléphones du public.
 
 Le public flashe un QR code → page web → WebSocket vers CE serveur.
 MyStrow se connecte aussi ici (WebSocket « contrôleur ») et pousse l'état des
@@ -11,7 +11,7 @@ Résultat : les téléphones changent ensemble malgré une latence 4G de 50 à
 LIMITES (c'est le serveur qui compte, pas le QR code) :
   - plafond de téléphones par session : celui du TICKET signé par la Cloud
     Function up_ticket (licence payée → 50, compte en essai → 1 = aperçu) ; SANS ticket
-    valide, la session est refusée (403) : pas de compte = pas de MyStrow Up ;
+    valide, la session est refusée (403) : pas de compte = pas de MyStrow Light ;
     le suivant reçoit « full » ;
   - 1 session ouverte max par compte (licence : toujours celle de son QR permanent) ;
   - reprendre une session exige le jeton contrôleur (le sid du QR est public) ;
@@ -54,7 +54,7 @@ MAX_ZONES = 8
 FICHIER_PAGE = Path(__file__).with_name("phone.html")
 
 # Historique des sessions (une ligne JSON par session terminée) : lu par l'onglet
-# « MyStrow Up » du panneau admin via /stats. Le service tourne en ProtectSystem=strict :
+# « MyStrow Light » du panneau admin via /stats. Le service tourne en ProtectSystem=strict :
 # seul le dossier STATE_DIRECTORY (StateDirectory=mystrow-live → /var/lib/mystrow-live)
 # est inscriptible. En local : à côté du script.
 FICHIER_STATS = Path(os.environ.get("CROWD_STATS") or
@@ -428,7 +428,7 @@ def make_app() -> web.Application:
 
 
 if __name__ == "__main__":
-    print(f"MyStrow Up — relais sur le port {PORT} (licence {CAP_MAX} / essai {CAP_ESSAI} téléphones)"
+    print(f"MyStrow Light — relais sur le port {PORT} (licence {CAP_MAX} / essai {CAP_ESSAI} téléphones)"
           + ("" if TICKET_SECRET else " ⚠ UP_TICKET_SECRET absent : tout le monde en essai"))
     # Arrêt rapide : sans ça, un redémarrage attendait 30 s la fin des
     # WebSockets ouverts (téléphones + MyStrow restent reconnectés tout seuls).

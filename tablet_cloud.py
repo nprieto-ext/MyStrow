@@ -38,7 +38,7 @@ _FIXTURE_KEYS = (
     "channel_defaults", "channel_ranges", "shutter_inverted", "shutter_strobe_min",
     "shutter_strobe_max", "ring_follow", "preset_slots",
     "pan_min", "pan_max", "tilt_min", "tilt_max", "pan_invert", "tilt_invert",
-    "pan_tilt_swap", "pan_range", "tilt_range",
+    "pan_tilt_swap", "pan_range", "tilt_range", "pan_offset", "tilt_offset",
 )
 
 _POS_COL_MAX = 5
@@ -101,10 +101,10 @@ def convert(patch: dict, akai: dict, custom_fx: list, library_fx: dict, assign_f
         group_lists.setdefault(f.get("group"), []).append(i)
 
     for i, f in enumerate(pc_fixtures):
-        # MyStrow Up (téléphones du public) : fixture virtuelle du PC, sans
+        # MyStrow Light (téléphones du public) : fixture virtuelle du PC, sans
         # sortie DMX. La tablette, qui émet elle-même le DMX, l'aurait sortie
         # sur les câbles par-dessus un vrai appareil à la même adresse.
-        if f.get("manufacturer") == "MyStrow Up":
+        if f.get("manufacturer") in ("MyStrow Light", "MyStrow Up"):
             continue
         if int(f.get("universe", 0) or 0) != 0:
             warnings.append(f"{f.get('name', '?')} : univers {f.get('universe')} (la tablette ne sort que l'univers 1)")

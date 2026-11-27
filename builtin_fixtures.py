@@ -19,17 +19,17 @@ _B = True  # builtin shorthand
 BUILTIN_FIXTURES = [
 
     # ──────────────────────────────────────────────────────────────────────────
-    # MyStrow Up : les téléphones du public (cf. crowd_link.py)
+    # MyStrow Light : les téléphones du public (cf. crowd_link.py)
     # ──────────────────────────────────────────────────────────────────────────
     # Fixture VIRTUELLE : rien ne sort en DMX (artnet_dmx la saute) et son
     # adresse ne compte pas dans les chevauchements. Pour le reste de MyStrow
-    # c'est un PAR LED (groupes, pads, effets, plan de feu). Chaque MyStrow Up
+    # c'est un PAR LED (groupes, pads, effets, plan de feu). Chaque MyStrow Light
     # du patch = une zone de la salle. Reconnue par son FABRICANT (sauvegardé
     # avec le patch, contrairement au nom que l'utilisateur peut changer) :
     # garder MYSTROW_UP_FABRICANT de crowd_link synchronisé.
     # Fixture intégrée (et non bibliothèque Firebase) : elle ne marche qu'avec
     # le code de la release qui l'accompagne.
-    {"name": "MyStrow Up · Téléphones du public",     "manufacturer": "MyStrow Up", "fixture_type": "PAR LED",        "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
+    {"name": "MyStrow Light · Téléphones du public",     "manufacturer": "MyStrow Light", "fixture_type": "PAR LED",        "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
 
     # ──────────────────────────────────────────────────────────────────────────
     # Générique  (profils de base, sans marque spécifique)

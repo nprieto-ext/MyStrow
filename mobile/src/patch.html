@@ -888,8 +888,8 @@
   // SEULE (matériel physique, autorisé hors App Store - règle 3.1.3(e)) ; jamais
   // de pack avec licence sur iOS (contenu numérique ⇒ achat intégré obligatoire,
   // 3.1.1 ; cf. PACK_OK de standalone.js).
-  const BUY_URL = IOS ? "https://buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d" : "https://mystrow.fr/shop?utm_source=app_tablette#pack-mystrow";
-  if (IOS) { $("buy-txt").textContent = "L'interface USB-DMX MyStrow se branche sur la prise USB-C de l'iPad ou de l'iPhone et est reconnue toute seule, sans réglage. 69 € TTC, livrée en France métropolitaine."; $("buy-btn").textContent = "Commander l'interface ↗"; }
+  const BUY_URL = IOS ? "https://buy.stripe.com/dRmcMXeNnbVueNq5oE08g0f" : "https://mystrow.fr/shop?utm_source=app_tablette#pack-mystrow";
+  if (IOS) { $("buy-txt").textContent = "L'interface USB-DMX MyStrow se branche sur la prise USB-C de l'iPad ou de l'iPhone et est reconnue toute seule, sans réglage. 79 € TTC, livrée en France métropolitaine."; $("buy-btn").textContent = "Commander l'interface ↗"; }
   $("buy-btn").addEventListener("click", () => {
     // En natif, Capacitor ouvre tout autre domaine hors de l'app (navigateur).
     if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) location.href = BUY_URL;

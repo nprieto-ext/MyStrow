@@ -125,12 +125,11 @@ class Projector:
         # Sert a convertir DMX -> angle : plan de feu 3D (corps et faisceau) et
         # amplitude pan des effets. Voir `core.pan_tilt_angles`.
         self.pan_range  = core.PAN_RANGE_DEFAULT
-        # Valeur Pan (16 bits) pour laquelle CETTE lyre fait face a la scene.
-        # 32768 par defaut = milieu de course, l'hypothese d'avant. Sur une
-        # lyre 540° accrochee de biais, le « face scene » tombe ailleurs : le
-        # plan 2D/3D la dessinait de travers alors qu'elle visait bien le
-        # centre (RaykeN, Tutur, 18/11/2026). Cf. `core.pan_front_offset`.
-        self.pan_front  = 32768
+        # Centre calibre de la lyre (« 🎯 Definir le centre ») : decalage DMX
+        # 16 bits ajoute en sortie. 0 = milieu de course, l'hypothese d'avant.
+        # Cf. `core.pantilt_offset`.
+        self.pan_offset  = 0
+        self.tilt_offset = 0
         self.tilt_range = core.TILT_RANGE_DEFAULT
         # ── Couronne LED (« ring ») ──────────────────────────────────────────
         # True : la couronne suit le show - même couleur, même niveau et même

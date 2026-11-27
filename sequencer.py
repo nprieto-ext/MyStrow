@@ -751,7 +751,11 @@ class _ColorTile(QWidget):
         self._label  = label
         self._state  = 'idle'   # 'idle' | 'selected' | 'playing'
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(self.D + 8, self.D + 16)
+        # Hauteur fixe, largeur souple : la grille COULEURS occupe toute la
+        # largeur du panneau comme les SÉQUENCES (le cercle reste centré).
+        self.setFixedHeight(self.D + 16)
+        self.setMinimumWidth(self.D + 8)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
     def set_state(self, selected: bool, playing: bool):
@@ -1082,6 +1086,51 @@ class _VuSensWidget(QWidget):
         self.update()
 
 
+class BlackoutButton(QPushButton):
+    """Bouton BLACKOUT maintenu. `compact=True` (panneau Live) : petite tuile
+    discrète au bout de la rangée Musical / Ambiance / Manuel, même look que
+    les tuiles au repos ; elle ne passe au rouge vif que quand le noir est posé."""
+
+    _COMPACT_OFF = ("QPushButton { background: #1a1a1a; color: #888; border: 1px solid #2a2a2a;"
+                    " border-radius: 8px; font-size: 10px; font-weight: bold; letter-spacing: 1px; }"
+                    "QPushButton:hover { color: #ff5555; border-color: #552222; }"
+                    "QPushButton:pressed { background: #2a0000; }")
+    _COMPACT_ON = ("QPushButton { background: #cc0000; color: white; border: 2px solid #ff4444;"
+                   " border-radius: 8px; font-size: 10px; font-weight: bold; letter-spacing: 1px; }"
+                   "QPushButton:hover { background: #e00000; }")
+
+    _OFF = ("QPushButton { background: #2a0000; color: #ff4444; border: 2px solid #aa0000;"
+            " border-radius: 8px; font-size: 18px; font-weight: 900; letter-spacing: 3px; }"
+            "QPushButton:hover { background: #440000; border-color: #ff3333; color: #ff6666; }"
+            "QPushButton:pressed { background: #660000; }")
+    _ON = ("QPushButton { background: #ee0000; color: white; border: 3px solid #ffffff;"
+           " border-radius: 8px; font-size: 18px; font-weight: 900; letter-spacing: 3px; }"
+           "QPushButton:hover { background: #ff1a1a; }")
+
+    def __init__(self, parent=None, height=56, compact=False):
+        super().__init__(parent)
+        self._compact = compact
+        if compact:
+            self.setFixedSize(84, 84)   # carré, hauteur des tuiles de mode
+        else:
+            self.setMinimumHeight(height)
+            # le texte ne doit jamais élargir le panneau
+            self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)   # Espace/Entrée gardent Play
+        self.set_state(False)
+
+    def set_state(self, on: bool):
+        txt = tr("seq_blackout_on") if on else tr("seq_blackout_off")
+        if self._compact:
+            txt = txt.replace(" ", "\n", 1)   # « ■ » au-dessus du mot
+            self.setStyleSheet(self._COMPACT_ON if on else self._COMPACT_OFF)
+        else:
+            self.setStyleSheet(self._ON if on else self._OFF)
+        self.setText(txt)
+        self.setToolTip(tr("seq_blackout_tip"))
+
+
 class LiveModePanel(QWidget):
     """Panneau de controle du mode LIVE - remplace la playlist quand actif"""
 
@@ -1098,6 +1147,7 @@ class LiveModePanel(QWidget):
     movement_changed    = Signal(str)     # pattern mouvement lyre
     dimmers_changed     = Signal(dict)    # {groupe: 0–100} dimmer max par groupe
     sequences_changed   = Signal(list)    # [(mem_col, row), ...] pool de mémoires
+    blackout_clicked    = Signal()        # gros bouton BLACKOUT (main_window bascule)
 
     # Sources fixes + périphériques dynamiques (ajoutés à l'init)
     _SOURCES_STATIC = [
@@ -1250,6 +1300,11 @@ class LiveModePanel(QWidget):
         self._pulse_timer = QTimer(self)
         self._pulse_timer.timeout.connect(self._pulse_tick)
         self._pulse_timer.start(120)
+
+    def set_blackout_state(self, on: bool):
+        btn = getattr(self, 'blackout_btn', None)
+        if btn is not None:
+            btn.set_state(on)
 
     @property
     def ia_mode(self) -> str:
@@ -1491,8 +1546,15 @@ class LiveModePanel(QWidget):
 
         layout.addWidget(self._separator())
 
-        # ── Sélecteur de mode IA ────────────────────────────────────────────
-        layout.addLayout(self._build_mode_tiles())
+        # ── Sélecteur de mode IA + BLACKOUT maintenu en bout de rangée ──────
+        # (client Chris, 26/11/2026 : noir entre deux titres en Musical IA).
+        # Tuile discrète, rouge seulement quand le noir est posé. L'état réel
+        # vit dans main_window : il rappelle `set_blackout_state`.
+        mode_row = self._build_mode_tiles()
+        self.blackout_btn = BlackoutButton(compact=True)
+        self.blackout_btn.clicked.connect(self.blackout_clicked)
+        mode_row.addWidget(self.blackout_btn)
+        layout.addLayout(mode_row)
 
         layout.addWidget(self._separator())
 
@@ -2579,6 +2641,8 @@ class LiveModePanel(QWidget):
 
     # ── Page 2 : Couleurs lyres ───────────────────────────────────────────────
 
+    _COLOR_COLS = 8   # colonnes de la grille COULEURS (et des épinglés)
+
     def _build_color_content(self) -> QWidget:
         """Grille de tuiles couleur par section CHAUD/FROID/NEUTRE/BI + épinglage + DURÉE."""
         if not hasattr(self, '_pinned_colors'):
@@ -2599,16 +2663,6 @@ class LiveModePanel(QWidget):
                 " background:transparent; padding:2px 0 1px 0;")
             return lbl
 
-        def _make_row(keys_subset):
-            row = QHBoxLayout()
-            row.setSpacing(4)
-            for key in keys_subset:
-                tile = self._color_tiles.get(key)
-                if tile:
-                    row.addWidget(tile)
-            row.addStretch()
-            return row
-
         # Créer toutes les tuiles
         for tdef in self._COLOR_TILES:
             key, c1, c2, label = tdef[0], tdef[1], tdef[2], tdef[3]
@@ -2625,8 +2679,11 @@ class LiveModePanel(QWidget):
 
         # ── Section Épinglés ──────────────────────────────────────────────
         self._pinned_section_lbl = _sec_lbl(tr("lv_pinned"))
-        self._pinned_row_layout  = QHBoxLayout()
-        self._pinned_row_layout.setSpacing(4)
+        self._pinned_row_layout  = QGridLayout()
+        self._pinned_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._pinned_row_layout.setHorizontalSpacing(4)
+        for _c in range(self._COLOR_COLS):
+            self._pinned_row_layout.setColumnStretch(_c, 1)
         self._pinned_section_container = QWidget()
         self._pinned_section_container.setStyleSheet("background:transparent;")
         psc_v = QVBoxLayout(self._pinned_section_container)
@@ -2639,9 +2696,18 @@ class LiveModePanel(QWidget):
 
         # ── Toutes les couleurs en grille ─────────────────────────────────
         all_keys = [row[0] for row in self._COLOR_TILES]
-        cols = 8
-        for i in range(0, len(all_keys), cols):
-            vbox.addLayout(_make_row(all_keys[i:i + cols]))
+        cols = self._COLOR_COLS
+        grid = self._color_grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(4)
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        for i, key in enumerate(all_keys):
+            tile = self._color_tiles.get(key)
+            if tile:
+                grid.addWidget(tile, i // cols, i % cols)
+        vbox.addLayout(grid)
 
         # ── Nombre de couleurs max simultanées ────────────────────────────
         max_row = QHBoxLayout()
@@ -2742,15 +2808,20 @@ class LiveModePanel(QWidget):
             return
         # Vider la rangée épinglés
         while self._pinned_row_layout.count():
-            item = self._pinned_row_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
+            self._pinned_row_layout.takeAt(0)
         pinned = [row[0] for row in self._COLOR_TILES if row[0] in self._pinned_colors]
-        for key in pinned:
+        grid = getattr(self, '_color_grid', None)
+        if grid is not None:
+            for i, row in enumerate(self._COLOR_TILES):
+                tile = self._color_tiles.get(row[0])
+                if tile and row[0] not in self._pinned_colors and grid.indexOf(tile) < 0:
+                    grid.addWidget(tile, i // self._COLOR_COLS, i % self._COLOR_COLS)
+                    tile.show()
+        for i, key in enumerate(pinned):
             tile = self._color_tiles.get(key)
             if tile:
-                self._pinned_row_layout.addWidget(tile)
-        self._pinned_row_layout.addStretch()
+                self._pinned_row_layout.addWidget(
+                    tile, i // self._COLOR_COLS, i % self._COLOR_COLS)
         has_pins = bool(pinned)
         if hasattr(self, '_pinned_section_container'):
             self._pinned_section_container.setVisible(has_pins)

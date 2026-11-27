@@ -29,6 +29,8 @@ Ajouts pour l'assistant IA (serveur MCP, dossier mcp/) :
   POST /api/projectors               → {"events": [...]} au format tablette :
                                        proj_color / proj_level / proj_strobe / proj_mute
   POST /api/blackout                 → noir complet (faders, effets, strobe)
+  POST /api/blackout/{toggle|on|off} → Blackout MAINTENU (porte de sortie, tient
+                                       même en Live IA ; off = le show reprend)
   POST /api/stop_effects             → coupe tous les effets en cours
   POST /api/speed/{0-100}            → vitesse des effets (fader Vit. FX)
   GET  /api/fixtures?q=texte         → recherche dans la bibliothèque locale
@@ -150,6 +152,7 @@ class _StreamDeckBridge(QObject):
     go_back_requested    = Signal()           # GO- : mémoire précédente
     remote_event_requested = Signal(object)   # dict au format des events tablette
     blackout_requested   = Signal()
+    blackout_hold_requested = Signal(str)     # "toggle" / "on" / "off"
     stop_effects_requested = Signal()
     speed_requested      = Signal(int)        # vitesse effets 0-100
     fixture_save_requested = Signal(object)   # _FixtureJob (attendu par le thread HTTP)
@@ -742,7 +745,16 @@ def _make_handler(bridge: _StreamDeckBridge, window_ref: list):
                     self._send_error(str(exc))
 
             elif action == "blackout":
-                bridge.blackout_requested.emit()
+                # Sans argument : noir complet historique (MCP, domotique).
+                # /toggle /on /off : Blackout maintenu, réversible.
+                mode = parts[2].lower() if len(parts) > 2 else ""
+                if mode in ("toggle", "on", "off"):
+                    bridge.blackout_hold_requested.emit(mode)
+                elif mode:
+                    self._send_error("attendu : /api/blackout[/toggle|/on|/off]")
+                    return
+                else:
+                    bridge.blackout_requested.emit()
                 self._send_json({"ok": True})
 
             elif action == "stop_effects":
@@ -840,6 +852,8 @@ class StreamDeckAPIServer:
         b.go_back_requested.connect(window._go_back)
         b.remote_event_requested.connect(self._on_remote_event)
         b.blackout_requested.connect(window.full_blackout)
+        b.blackout_hold_requested.connect(
+            lambda m: window.toggle_blackout(None if m == "toggle" else m == "on"))
         b.stop_effects_requested.connect(self._on_stop_effects)
         b.speed_requested.connect(self._on_speed)
         b.fixture_save_requested.connect(self._on_fixture_save)

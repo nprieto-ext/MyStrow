@@ -1,4 +1,4 @@
-"""up_panel.py - onglet « MyStrow Up » du panneau admin.
+"""up_panel.py - onglet « MyStrow Light » du panneau admin.
 
 Lit https://live.mystrow.fr/stats (relais crowd/relay_server.py) : sessions EN
 DIRECT (téléphones connectés maintenant) et HISTORIQUE (une ligne par session
@@ -93,7 +93,7 @@ class UpPanel(QWidget):
         h = QHBoxLayout(hdr)
         h.setContentsMargins(20, 0, 20, 0)
         h.setSpacing(10)
-        titre = QLabel("MyStrow Up")
+        titre = QLabel("MyStrow Light")
         titre.setFont(QFont("Segoe UI", 12, QFont.Bold))
         titre.setStyleSheet(f"color:{TEXT}; background:transparent;")
         h.addWidget(titre)

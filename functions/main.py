@@ -358,6 +358,7 @@ def _get_plan_price_ttc(plan_type: str) -> float:
         "pack_1a":  _stripe_price_pack_1a,
         "pack_vie": _stripe_price_pack_vie,
         "boitier":  lambda: _cfg("STRIPE_PRICE_BOITIER"),
+        "pass_light": lambda: _cfg("STRIPE_PRICE_PASS_LIGHT", _PRICE_PASS_LIGHT),
     }
     fn = _map.get(plan_type)
     if not fn:
@@ -381,6 +382,7 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "pack_1a":  "Pack MyStrow - Interface USB-DMX + licence 1 an",
             "pack_vie": "Pack MyStrow - Interface USB-DMX + licence à vie",
             "boitier":  "Interface USB-DMX MyStrow (sans licence)",
+            "pass_light": "Pass événement MyStrow Light - 500 téléphones pendant 24 h",
         },
         "en": {
             "monthly":  "MyStrow License - Monthly",
@@ -390,6 +392,7 @@ def _plan_label(plan_type: str, lang: str = "fr") -> str:
             "pack_1a":  "MyStrow Pack - USB-DMX interface + 1-year license",
             "pack_vie": "MyStrow Pack - USB-DMX interface + lifetime license",
             "boitier":  "MyStrow USB-DMX interface (no license)",
+            "pass_light": "MyStrow Light event pass - 500 phones for 24 h",
         },
     }
     table   = labels.get(lang, labels["fr"])
@@ -1672,6 +1675,10 @@ def _on_checkout_completed(session: dict) -> None:
     # Pack boîtier : AUCUNE licence à créer ici (le code est sur la carte
     # dans la boîte, cf. activate_code). Sans ce détour, un paiement unique
     # sans abonnement retombait sur « lifetime » et offrait une licence à vie.
+    if not sub_id and _est_pass_light(session):
+        _on_pass_light_checkout(session, email, lang, amount_ttc, cust_name, cust_address,
+                                tax_rate, stripe_tax, vat_number)
+        return
     if not sub_id:
         pack = _pack_from_session(session)
         if pack:
@@ -1746,7 +1753,10 @@ _PACKS = {"pack_2m": "MS-DMX-2M", "pack_1a": "MS-DMX-1A", "pack_vie": "MS-DMX-1A
 # Interface seule (USB Node Electroconcept nu, sans licence) : PAS de stock
 # FBA. Expédiée par Fanny depuis chez elle, qui reçoit la commande par mail
 # et saisit le n° de suivi via `boitier_expedie`. Stock : meta/stock_fanny.
-_PAYMENTLINK_BOITIER = "plink_1UTsof1gGkNcl6caYrEYn3oY"   # buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d
+_PAYMENTLINK_BOITIER = "plink_1Ug1E11gGkNcl6caveETxFJN"   # 79 € depuis le 26/11/2026 : buy.stripe.com/dRmcMXeNnbVueNq5oE08g0f
+# Ancien lien à 69 €, toujours dans l'app iOS publiée : reste reconnu tant
+# qu'il est actif dans Stripe.
+_PAYMENTLINKS_BOITIER_ANCIENS = ("plink_1UTsof1gGkNcl6caYrEYn3oY",)   # buy.stripe.com/bJe7sD34F8Ji8p28AQ08g0d
 _STOCK_FANNY = ("meta", "stock_fanny")
 # Stock PHYSIQUE chez Fanny (ce qu'elle a sur l'étagère). « boitier » = interfaces
 # seules (nom historique, lu par le site) ; elles baissent à l'EXPÉDITION, pas à
@@ -1793,6 +1803,111 @@ def _stock_fanny_bouger(db, **deltas) -> None:
         print(f"[Stock Fanny] non mis à jour {deltas} : {ex}")
 
 
+# ── Pass événement MyStrow Light (27/11/2026) ────────────────────────────────
+# 72 € TTC, paiement unique : jusqu'à 500 téléphones pendant 24 h, à partir du
+# PREMIER démarrage de session qui suit l'achat (pas de l'achat : on l'achète
+# à l'avance pour un événement). Un document par pass dans `light_passes`.
+# Acheté depuis MyStrow : rattaché au compte par client_reference_id (uid).
+# Acheté sur /shop : rattaché par l'adresse du paiement.
+_PASS_LIGHT_CAP = 500
+_PASS_LIGHT_S = 24 * 3600
+# Créés le 27/11/2026 (Stripe live) : produit prod_Vhw24PahtNnPvi, 72 € TTC,
+# lien buy.stripe.com/fZubIT48Jf7G48M7wM08g0g. Surchargeables par functions/.env.
+_PAYMENTLINK_PASS_LIGHT = "plink_1UgWAk1gGkNcl6cageqhP6Lm"
+_PRICE_PASS_LIGHT = "price_1UgWAd1gGkNcl6caIZjbbNlq"
+
+
+def _est_pass_light(session: dict) -> bool:
+    lien = (session.get("payment_link") or "").strip()
+    return bool(lien) and lien == _cfg("STRIPE_PAYMENTLINK_PASS_LIGHT", _PAYMENTLINK_PASS_LIGHT).strip()
+
+
+def _on_pass_light_checkout(session: dict, email: str, lang: str, amount_ttc,
+                            cust_name: str, cust_address: dict, tax_rate, stripe_tax: bool,
+                            vat_number: str) -> None:
+    stripe_ref = session.get("payment_intent") or session.get("id", "")
+    uid = (session.get("client_reference_id") or "").strip()
+    if not uid and email:
+        try:
+            uid = auth.get_user_by_email(email).uid
+        except Exception:
+            uid = ""   # pas encore de compte : le pass attend, rattaché à l'adresse
+    ref = _get_db().collection("light_passes").document(session.get("id") or stripe_ref)
+    ref.set({
+        "uid": uid, "email": (email or "").strip().lower(), "lang": lang,
+        "cap": _PASS_LIGHT_CAP, "duree_s": _PASS_LIGHT_S,
+        "debut_utc": None, "fin_utc": None,
+        "amount_ttc": amount_ttc, "stripe_ref": stripe_ref, "created_utc": time.time(),
+    }, merge=True)
+    invoice_url = ""
+    try:
+        company_id = _axonaut_get_or_create_company(email, cust_name, address=cust_address,
+                                                    vat_number=vat_number)
+        invoice_url = _axonaut_create_invoice(company_id, "pass_light", amount_ttc,
+                                              stripe_ref=stripe_ref, uid=uid,
+                                              tax_rate_stripe=tax_rate, stripe_tax=stripe_tax) or ""
+        if invoice_url:
+            ref.update({"invoice_url": invoice_url})
+    except Exception as e:
+        print(f"[Pass] Facture Axonaut KO : {e}")
+    _email_pass_light(email, lang, invoice_url, compte=bool(uid))
+    _alert_admin("🎟 MyStrow Light : pass événement vendu",
+                 f"<p>{html_escape(email or '?')} - {amount_ttc} € TTC - compte : "
+                 f"{'oui' if uid else 'NON (rattaché à l’adresse du paiement)'}</p>")
+
+
+def _email_pass_light(email: str, lang: str = "fr", invoice_url: str = "", compte: bool = True) -> None:
+    facture = ""
+    if invoice_url:
+        lien = html_escape(invoice_url)
+        facture = (f'<p>🧾 &nbsp;Your invoice: <a href="{lien}">download the PDF</a>.</p>' if lang == "en" else
+                   f'<p>🧾 &nbsp;Votre facture : <a href="{lien}">télécharger le PDF</a>.</p>')
+    sans_compte = "" if compte else (
+        "<p>⚠ No MyStrow account uses this address yet: create it in MyStrow with <b>this same address</b> "
+        "and the pass will be waiting for you.</p>" if lang == "en" else
+        "<p>⚠ Aucun compte MyStrow n'utilise encore cette adresse : créez-le dans MyStrow avec <b>cette même "
+        "adresse</b>, le pass vous y attendra.</p>")
+    if lang == "en":
+        subject = "MyStrow Light - Your event pass is ready"
+        content = f"""<h2>Your event pass is ready!</h2>
+<div class="box">🎟 &nbsp;<b>{_plan_label("pass_light", "en")}</b></div>
+<p>It starts the first time you <b>start a MyStrow Light session</b> (Connection › Control › MyStrow Light),
+then lasts 24 hours: up to 500 phones at the same time.</p>{sans_compte}{facture}"""
+    else:
+        subject = "MyStrow Light - Votre pass événement est prêt"
+        content = f"""<h2>Votre pass événement est prêt !</h2>
+<div class="box">🎟 &nbsp;<b>{_plan_label("pass_light")}</b></div>
+<p>Il démarre la première fois que vous <b>lancez une session MyStrow Light</b> (Connexion › Contrôle ›
+MyStrow Light), puis dure 24 heures : jusqu'à 500 téléphones en même temps.</p>{sans_compte}{facture}"""
+    _send_email(email, subject, content, lang=lang)
+
+
+def _pass_light_du_compte(uid: str, adresse: str, demarrage: bool) -> dict:
+    """Pass du compte : {"etat": "actif"|"dispo"|"", "fin": ts}. Au démarrage d'une
+    session, un pass non entamé démarre (24 h) ; un pass actif prime sur un neuf."""
+    db = _get_db()
+    docs = {}
+    for champ, val in (("uid", uid), ("email", (adresse or "").lower())):
+        if val:
+            for d in db.collection("light_passes").where(champ, "==", val).stream():
+                docs[d.id] = d
+    now = time.time()
+    actifs = [d.to_dict() for d in docs.values() if (d.to_dict().get("fin_utc") or 0) > now]
+    if actifs:
+        return {"etat": "actif", "fin": max(x["fin_utc"] for x in actifs)}
+    neufs = sorted((d for d in docs.values() if not d.to_dict().get("debut_utc")),
+                   key=lambda d: d.to_dict().get("created_utc") or 0)
+    if not neufs:
+        return {"etat": "", "fin": 0}
+    if not demarrage:
+        return {"etat": "dispo", "fin": 0}
+    d = neufs[0]
+    fin = now + float(d.to_dict().get("duree_s") or _PASS_LIGHT_S)
+    d.reference.update({"debut_utc": now, "fin_utc": fin, "uid": uid})
+    print(f"[Pass] démarré {uid} jusqu'à {_fmt_date_iso(fin)}")
+    return {"etat": "actif", "fin": fin}
+
+
 def _pack_from_session(session: dict) -> dict | None:
     """{"plan", "sku", "quantity"} si la session achète un pack, sinon None.
 
@@ -1808,7 +1923,8 @@ def _pack_from_session(session: dict) -> dict | None:
          c'est ce que donnerait le repli « pas d'abonnement → lifetime ».
     """
     link = session.get("payment_link") or ""
-    if link and link == _cfg("STRIPE_PAYMENTLINK_BOITIER", _PAYMENTLINK_BOITIER).strip():
+    if link and (link == _cfg("STRIPE_PAYMENTLINK_BOITIER", _PAYMENTLINK_BOITIER).strip()
+                 or link in _PAYMENTLINKS_BOITIER_ANCIENS):
         return {"plan": "boitier", "sku": "", "quantity": 1}
     for plan in _PACKS:
         if link and link == _cfg(f"STRIPE_PAYMENTLINK_{plan.upper()}").strip():
@@ -2295,10 +2411,15 @@ def livraison_estimation(req: https_fn.Request) -> https_fn.Response:
                                  headers=_ESTIM_H)
     try:
         heure = time.strftime("%Y%m%d%H", time.gmtime())
-        est = _estim_cached(("cp", pays, cp[:2], heure), 3600,
-                            lambda: amazon_mcf.preview(cp, country=pays))
         stock = _estim_cached(("stock",), 600,
                               lambda: amazon_mcf.get_inventory(list(_PACKS.values())))
+        # Estimer sur un pack EN STOCK : sur un SKU à 0, Amazon répond par une
+        # date de réassort (pack 2 mois épuisé le 27/11/2026 : « livré d'ici le
+        # 21 janvier » affiché alors que 18 packs 1 an attendaient au dépôt).
+        sku = next((s for s in dict.fromkeys(_PACKS.values()) if int(stock.get(s, 0)) > 0),
+                   "MS-DMX-2M")
+        est = _estim_cached(("cp", pays, cp[:2], heure, sku), 3600,
+                            lambda: amazon_mcf.preview(cp, sku=sku, country=pays))
     except Exception as e:
         print(f"[Estimation] {cp} : {e}")
         return https_fn.Response(json.dumps({"ok": False, "raison": "api"}),
@@ -6519,7 +6640,7 @@ def purge_journaux(event: scheduler_fn.ScheduledEvent) -> None:
     print(f"[Purge] {_run_purge_assistant()} remontée(s) de l'assistant de plus de 12 mois effacée(s)")
 
 
-# ── MyStrow Up : surveillance du relais live.mystrow.fr ──────────────────────
+# ── MyStrow Light : surveillance du relais live.mystrow.fr ──────────────────────
 # Toutes les 5 min : /health du relais (Hetzner). Mail à l'admin après 2 échecs
 # DE SUITE (≈ 10 min : un redémarrage du service ou un raté réseau ne réveille
 # personne), puis un mail « rétabli » quand il répond de nouveau. État gardé
@@ -6553,15 +6674,15 @@ def _run_up_surveillance() -> str:
     maj = {"echecs": echecs, "dernier": detail, "verifie_le": time.time()}
     if not ok and echecs >= UP_ECHECS_AVANT_ALERTE and not alerte:
         _alert_admin(
-            "⚠ MyStrow Up : serveur live.mystrow.fr injoignable",
-            f"<p>Le relais MyStrow Up ne répond plus depuis environ {echecs * 5} min.</p>"
+            "⚠ MyStrow Light : serveur live.mystrow.fr injoignable",
+            f"<p>Le relais MyStrow Light ne répond plus depuis environ {echecs * 5} min.</p>"
             f"<p>Dernière erreur : {html_escape(detail)}</p>"
             "<p>Vérifier : <code>ssh -i ~/.ssh/mystrow_live root@37.27.153.144</code> puis "
             "<code>systemctl status mystrow-live caddy</code>. Console Hetzner si la machine elle-même ne répond pas.</p>")
         maj["alerte"], maj["depuis"] = True, time.time() - echecs * 300
     elif ok and alerte:
         duree = int((time.time() - float(etat.get("depuis") or time.time())) / 60)
-        _alert_admin("✅ MyStrow Up : serveur rétabli",
+        _alert_admin("✅ MyStrow Light : serveur rétabli",
                      f"<p>live.mystrow.fr répond de nouveau ({html_escape(detail)}). "
                      f"Panne d'environ {duree} min.</p>")
         maj["alerte"] = False
@@ -6691,12 +6812,12 @@ Transaction : {html_escape(str(tx.get('transactionId', '-')))}</div>
     return https_fn.Response("ok")
 
 
-# ── MyStrow Up : ticket de session (téléphones du public) ────────────────────
+# ── MyStrow Light : ticket de session (téléphones du public) ────────────────────
 # Le relais live.mystrow.fr ne connaît pas Firestore : MyStrow vient chercher ici
 # un ticket signé (HMAC, secret partagé UP_TICKET_SECRET) qui dit combien de
 # téléphones la session a le droit d'accueillir. Licence payée active → 50 ;
 # compte en essai actif → 1 (aperçu, pas de show possible) ; sinon refus. Le relais REFUSE toute session
-# sans ticket : pas de compte = pas de MyStrow Up.
+# sans ticket : pas de compte = pas de MyStrow Light.
 _UP_CAP_LICENCE = 50
 _UP_CAP_ESSAI = 1        # essai = aperçu sur 1 téléphone (25/11/2026 : réservé aux licences)
 _UP_TICKET_S = 8 * 3600
@@ -6726,13 +6847,14 @@ def up_ticket(req: https_fn.Request) -> https_fn.Response:
     if not jeton and req.headers.get("Authorization", "").startswith("Bearer "):
         jeton = req.headers["Authorization"][7:]
     try:
-        uid = auth.verify_id_token(jeton)["uid"]
+        _tok = auth.verify_id_token(jeton)
+        uid, adresse_compte = _tok["uid"], str(_tok.get("email") or "")
     except Exception as e:
         print(f"[Up] jeton refusé : {type(e).__name__} {str(e)[:150]}")
         return https_fn.Response(json.dumps({"error": "unauthorized"}), status=401,
                                  content_type="application/json")
     # Licence payée active → 50 ; essai en cours → 1 (aperçu) ; sinon (essai ou licence
-    # expirés, pas de document) → refusé : pas de session MyStrow Up.
+    # expirés, pas de document) → refusé : pas de session MyStrow Light.
     cap, plan = 0, ""
     try:
         snap = _get_db().collection("licenses").document(uid).get()
@@ -6746,6 +6868,21 @@ def up_ticket(req: https_fn.Request) -> https_fn.Response:
         print(f"[Up] lecture licence {uid} : {e}")
         return https_fn.Response(json.dumps({"error": "unavailable"}), status=503,
                                  content_type="application/json")
+    # Pass événement : 500 téléphones pendant 24 h, même sans licence. Il ne
+    # démarre qu'au lancement réel d'une session (« demarrage »), jamais à la
+    # simple ouverture de la fenêtre MyStrow Light.
+    pass_info = {"etat": "", "fin": 0}
+    try:
+        pass_info = _pass_light_du_compte(uid, adresse_compte, bool(body.get("demarrage")))
+    except Exception as e:
+        print(f"[Up] lecture pass {uid} : {e}")
+    if pass_info["etat"] == "actif":
+        cap = max(cap, _PASS_LIGHT_CAP)
+        plan = plan or "pass"
+    elif pass_info["etat"] == "dispo" and not cap:
+        # Pass acheté sans licence, pas encore démarré : on laisse lancer la
+        # session (le pass démarre à ce moment-là, cf. « demarrage »).
+        cap, plan = _UP_CAP_ESSAI, "pass_dispo"
     if not cap:
         print(f"[Up] refus {uid} : ni licence ni essai actifs")
         return https_fn.Response(json.dumps({"error": "no_licence"}), status=403,
@@ -6761,7 +6898,7 @@ def up_ticket(req: https_fn.Request) -> https_fn.Response:
     ticket = _up_ticket_signe(data)
     print(f"[Up] ticket {uid} plan={plan} cap={cap} fixe={bool(sid_fixe)}")
     return https_fn.Response(json.dumps({"ticket": ticket, "cap": cap, "plan": plan, "exp": exp,
-                                         "sid": sid_fixe}),
+                                         "sid": sid_fixe, "pass": pass_info}),
                              content_type="application/json")
 
 

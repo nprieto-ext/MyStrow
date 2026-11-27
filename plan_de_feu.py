@@ -9,7 +9,7 @@ import time as _time
 from collections import Counter
 from i18n import tr, tr_name
 from core import (projector_selection_keys, ComboSansMolette, cw_slot_for_color,
-                  pan_from_front, pan_to_front, rest_pantilt, mount_is_hung,
+                  rest_pantilt, mount_is_hung, pantilt_offset,
                   fixture_motor_only,
                   CW_DEFAULT_SLOTS, cw_slot_at as _cw_slot_at,
                   color_wheel_display_color, fixture_projects_gobo,
@@ -1846,13 +1846,16 @@ def _ecrire_canal_modele(proj, ctype, valeur):
             axe_mod = "tilt" if axe_dmx == "pan" else "pan"
         inverse = getattr(proj, f"{axe_dmx}_invert", False)
 
-        sortie = int(getattr(proj, axe_mod, 32768))
+        # Le centre calibré (cf. `core.pantilt_offset`) s'ajoute en sortie
+        # avant l'inversion : on le retire au retour.
+        decal  = pantilt_offset(proj, axe_mod)
+        sortie = max(0, min(65535, int(getattr(proj, axe_mod, 32768)) + decal))
         if inverse:
             sortie = 65535 - sortie
         sortie = (sortie & 0xFF00) | v if fin else (sortie & 0x00FF) | (v << 8)
         if inverse:
             sortie = 65535 - sortie
-        setattr(proj, axe_mod, max(0, min(65535, sortie)))
+        setattr(proj, axe_mod, max(0, min(65535, sortie - decal)))
         proj._manual_move = True
         return True
 
@@ -2155,20 +2158,6 @@ class _PanTiltFloater(QFrame):
         ctr_row.setSpacing(4)
         ctr_row.addWidget(btn_center, 1)
 
-        # Calibrage « face scène » : la position ACTUELLE de chaque lyre devient
-        # son centre. Clic droit = revenir au milieu de course (32768).
-        btn_front = QPushButton(tr("pdf_front_set"))
-        btn_front.setFixedHeight(22)
-        btn_front.setToolTip(tr("pdf_front_set_tip"))
-        btn_front.setContextMenuPolicy(Qt.CustomContextMenu)
-        btn_front.setStyleSheet(
-            "QPushButton{background:#1a1a1a;color:#777;border:1px solid #222;"
-            "border-radius:4px;font-size:9px;padding:0 6px;}"
-            "QPushButton:hover{color:#ffcc44;border-color:#ffcc4444;}"
-        )
-        btn_front.clicked.connect(lambda: self._set_front(reset=False))
-        btn_front.customContextMenuRequested.connect(lambda _pos: self._set_front(reset=True))
-        ctr_row.addWidget(btn_front)
         lay.addLayout(ctr_row)
 
         self.adjustSize()
@@ -2184,10 +2173,7 @@ class _PanTiltFloater(QFrame):
 
         self._targets = projs
         if projs:
-            # Le pad parle dans le repère « face scène » de la lyre : son
-            # centre (double-clic, bouton Centre, preset « Centre ») = la scène.
-            pan  = max(0, min(65535, pan_to_front(projs[0],
-                                                  getattr(projs[0], 'pan', 32768))))
+            pan  = getattr(projs[0], 'pan', 32768)
             tilt = getattr(projs[0], 'tilt', 32768)
         else:
             pan, tilt = 32768, 32768
@@ -2257,7 +2243,7 @@ class _PanTiltFloater(QFrame):
                     d_pan, d_tilt, id(p) in mir)
         else:
             for p in self._targets:
-                p.pan  = pan_from_front(p, pan)
+                p.pan  = pan
                 p.tilt = tilt
         self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
         self._canvas.update()
@@ -2267,28 +2253,6 @@ class _PanTiltFloater(QFrame):
 
     def _apply_preset(self, pr):
         self._pad.set_values(pr["pan"], pr["tilt"], emit=True)
-
-    def _set_front(self, reset=False):
-        """« Face scène » = position actuelle de chaque lyre ciblée (ou 32768)."""
-        if not self._targets:
-            return
-        for p in self._targets:
-            p.pan_front = 32768 if reset else int(getattr(p, 'pan', 32768))
-        p0 = self._targets[0]
-        pad_pan = max(0, min(65535, pan_to_front(p0, getattr(p0, 'pan', 32768))))
-        tilt = getattr(p0, 'tilt', 32768)
-        self._pad.set_values(pad_pan, tilt)
-        self._sym_origin = {id(p): (getattr(p, 'pan', 32768),
-                                    getattr(p, 'tilt', 32768)) for p in self._targets}
-        self._sym_pad0 = (pad_pan, tilt)
-        self._lbl_vals.setText(f"P:{pad_pan}  T:{tilt}")
-        self._canvas.update()
-        mw = getattr(self._canvas.pdf, 'main_window', None)
-        if mw is not None and hasattr(mw, 'save_dmx_patch_config'):
-            try:
-                mw.save_dmx_patch_config()
-            except Exception:
-                pass
 
     def hide_floater(self):
         self._targets = []
@@ -2573,8 +2537,6 @@ class FixtureCanvas(QWidget):
             # Coordonnées dézoomées : sans ça, viser le même point du plan
             # donnait un tilt différent selon le zoom.
             pan_val, tilt_val = beam_aim(dx / self._zoom, dy / self._zoom, r)
-            # `beam_aim` rend une visée dans le repère du dessin (face scène).
-            pan_val = pan_from_front(proj, pan_val)
             # Le mode cible ne vise que l'avant-scène : on ne renvoie jamais
             # la lyre vers le fond (tilt < 32768).
             #
@@ -2834,9 +2796,8 @@ class FixtureCanvas(QWidget):
             # là où il n'est pas (l'ancien calcul avait sa propre formule,
             # avec un tilt ramené sur 0..1 au lieu d'un écart au centre -
             # une lyre au repos se voyait attribuer un cône de 71 px).
-            # Repère « face scène » de la lyre (cf. core.pan_front_offset).
             pan_angle, beam_len, beam_hw = beam_geometry(
-                pan_to_front(proj, getattr(proj, 'pan', 32768)),
+                getattr(proj, 'pan', 32768),
                 getattr(proj, 'tilt', 32768), r)
 
             # Transformer dans le repère local (centré + rotation inverse)
@@ -3011,14 +2972,12 @@ class FixtureCanvas(QWidget):
         if ftype in ("Moving Head", "Laser"):
             pan_val  = _htp_e[2] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'pan',  32768)
             tilt_val = _htp_e[3] if (_htp_e and len(_htp_e) >= 4) else getattr(proj, 'tilt', 32768)
-            # Dessin dans le repère « face scène » : une lyre calibrée qui vise
-            # le centre de la scène se dessine droite (cf. core.pan_front_offset).
             # Lyre posée (retournée) : même pan, profondeur inversée - miroir
             # de la géométrie 3D (rotation X de 180° : z → −z).
             if not mount_is_hung(proj):
                 tilt_val = 65536 - tilt_val
             pan_angle, beam_len, beam_hw = beam_geometry(
-                pan_to_front(proj, pan_val), tilt_val, r)
+                pan_val, tilt_val, r)
             # Base du cône : au bord de l'icône quand le faisceau est franc,
             # ramenée vers le centre quand il se rétracte - sans quoi un cône
             # plus court que `r` se dessinerait à l'envers (base au-delà de la
@@ -8118,9 +8077,6 @@ class PlanDeFeu(QFrame):
             else:
                 _pad_init_pan  = getattr(p0, 'pan',  32768)
                 _pad_init_tilt = getattr(p0, 'tilt', 32768)
-            # Pad dans le repère « face scène » (cf. core.pan_front_offset) ;
-            # les branches effet et SYM ne travaillent qu'en écarts : inchangées.
-            _pad_init_pan = max(0, min(65535, pan_to_front(p0, _pad_init_pan)))
 
             # Centre initial de chaque target pour le calcul du delta
             _init_centers = {}
@@ -8159,9 +8115,8 @@ class PlanDeFeu(QFrame):
                             p, init_c.get(id(p), (32768, 32768)),
                             d_pan, d_tilt, mirror)
                     else:
-                        # SYM éteint : le pad reste absolu (dans le repère
-                        # face scène de chaque lyre) : toutes vont au même endroit.
-                        p.pan  = pan_from_front(p, pan)
+                        # SYM éteint : le pad reste absolu, toutes vont au même endroit.
+                        p.pan  = pan
                         p.tilt = tilt
                 _flush()
             pt_pad.changed.connect(_on_pantilt)
@@ -8183,9 +8138,7 @@ class PlanDeFeu(QFrame):
                 pad.set_values(pan_g, tilt_g)
                 for p, g, i in t:
                     key = str(p.start_address)
-                    # per_proj = valeurs DMX exactes de CETTE lyre ; un preset
-                    # global (Centre, Face…) est relatif à son face scène.
-                    new_pan  = per_proj[key]["pan"]  if key in per_proj else pan_from_front(p, pan_g)
+                    new_pan  = per_proj[key]["pan"]  if key in per_proj else pan_g
                     new_tilt = per_proj[key]["tilt"] if key in per_proj else tilt_g
                     apply_pan_tilt(_mw, p, new_pan, new_tilt)
                 _flush()

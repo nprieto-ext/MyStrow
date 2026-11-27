@@ -208,7 +208,8 @@ _RING_DRIVEN = frozenset({
 # Canaux de sortie des machines a effet - point unique dans `core`, partage
 # avec le plan 2D, la 3D et les exclusions d'effets.
 from core import (FX_MACHINE_OUTPUT_CHANNELS, channel_range, scale_to_range,
-                  clamp_to_range, scale16_to_range, RANGE_SCALED_TYPES)
+                  clamp_to_range, scale16_to_range, RANGE_SCALED_TYPES,
+                  pantilt_out)
 from i18n import tr
 
 
@@ -1390,9 +1391,9 @@ class ArtNetDMX:
             proj_key = f"{proj.group}_{i}"
             if proj_key not in self.projector_channels:
                 continue
-            # MyStrow Up = téléphones du public (crowd_link) : fixture virtuelle,
+            # MyStrow Light = téléphones du public (crowd_link) : fixture virtuelle,
             # RIEN ne sort en DMX - son adresse peut chevaucher un vrai appareil.
-            if getattr(proj, 'manufacturer', '') == "MyStrow Up":
+            if getattr(proj, 'manufacturer', '') in ("MyStrow Light", "MyStrow Up"):
                 continue
 
             channels = self.projector_channels[proj_key]
@@ -1562,6 +1563,11 @@ class ArtNetDMX:
             _eff_tilt = max(getattr(proj, 'tilt_min', 0),
                             min(getattr(proj, 'tilt_max', 65535),
                                 getattr(proj, 'tilt', 32768)))
+            # Centre calibré de la lyre (« 🎯 Définir le centre », cf.
+            # `core.pantilt_offset`) : APRES les limites, qui vivent dans le
+            # repère de l'application, AVANT swap/inversion, qui corrigent le
+            # câblage. 0/0 par défaut : sortie inchangée au bit près.
+            _eff_pan, _eff_tilt = pantilt_out(proj, _eff_pan, _eff_tilt)
             if getattr(proj, 'pan_tilt_swap', False):
                 _eff_pan, _eff_tilt = _eff_tilt, _eff_pan
             if getattr(proj, 'pan_invert',  False):

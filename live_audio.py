@@ -1621,15 +1621,19 @@ class LiveAudioEngine(QObject):
             accent_groups=self._accent_groups)
         state['section'] = self._section_state
         state['bands']   = dict(self._band_norm)
-        self.state_ready.emit(state)
-        self.status_updated.emit(self._bpm, self._section_state)
-        if self._beat_pending:
-            self._beat_pending = False
-            self.beat_detected.emit()
-        # Émettre et vider les transitoires accumulés (thread Qt → thread-safe)
+        # Transitoires AVANT l'état : `_on_live_transient` pose les fenêtres de
+        # flash (contre / flash / strobe) que `_apply_live_state` rend aussitôt.
+        # Dans l'ordre inverse, le flash d'un kick ne partait qu'au tick suivant :
+        # 25 ms de retard systématique sur la grosse caisse (client, 26/11/2026 :
+        # « effets légèrement en retard sur la musique »).
         for t in self._pending_transients:
             self.transient_hit.emit(t)
         self._pending_transients.clear()
+        if self._beat_pending:
+            self._beat_pending = False
+            self.beat_detected.emit()
+        self.state_ready.emit(state)
+        self.status_updated.emit(self._bpm, self._section_state)
 
 
 class SoftwareDetector(QObject):
